@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>tazuna · replay footer directions</title>
+<style>
+:root{color-scheme:light;--desk:#e9e5dd;--paper:#f6f4ef;--card:#fffefb;--field:#efebe3;--ink:#23221e;--muted:#5b574f;--faint:#69655d;--line:#d8d2c5;--accent:#3d4aa8;--soft:#e9eaf5;--ok:#3b7d4f}
+:root.dark{color-scheme:dark;--desk:#11100e;--paper:#171613;--card:#211f1b;--field:#2a2823;--ink:#ece8df;--muted:#afaa9e;--faint:#9a958d;--line:#3a3731;--accent:#8f9bf0;--soft:#303246;--ok:#7cc08f}
+*{box-sizing:border-box}body{margin:0;background:var(--desk);color:var(--ink);font:14px/1.55 system-ui,sans-serif}button,select{font:inherit;color:inherit}button,select{border:1px solid var(--line);border-radius:7px;background:var(--card);padding:6px 10px}button{cursor:pointer}button:hover,select:hover{background:var(--field)}button[aria-pressed=true]{background:var(--soft);border-color:var(--accent);color:var(--accent)}button:focus-visible,select:focus-visible,a:focus-visible,.terminal-scroll:focus-visible{outline:2px solid var(--accent);outline-offset:3px}a{color:var(--accent)}
+.page{max-width:1560px;margin:auto;padding:38px 32px 50px}.heading{display:flex;align-items:start;justify-content:space-between;gap:24px}.eyebrow{font:11px/1.5 ui-monospace,monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}.brand{display:flex;gap:10px;align-items:center;margin-bottom:19px}.mark,.terminal-mark{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.mark{width:30px;height:30px;color:var(--accent)}.terminal-mark{display:inline-block;width:2ch;height:1.25em;vertical-align:-.22em}.brand strong{font-size:14px;letter-spacing:-.03em}h1{font:normal clamp(28px,3.1vw,43px)/1.1 Georgia,serif;letter-spacing:-.035em;margin:8px 0 13px}h2{font:normal 25px/1.2 Georgia,serif;margin:10px 0}.intro{max-width:700px;color:var(--muted);margin:0}.prototype{font:11px ui-monospace,monospace;color:var(--accent);border:1px solid var(--line);border-radius:20px;padding:6px 10px;white-space:nowrap}.boundary{color:var(--muted);font-size:12px;margin:18px 0 25px}
+.controls{display:flex;flex-wrap:wrap;align-items:end;gap:14px 24px;padding:17px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.control{display:flex;flex-direction:column;gap:5px}.control>span,.control>label{font-size:11px;color:var(--faint)}.buttons{display:flex;gap:5px}.controls button,.controls select{font-size:12px}.sample-status{font:11px ui-monospace,monospace;color:var(--muted);margin:11px 0 24px;min-height:17px}
+.comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:26px}.direction{min-width:0}.direction>header{min-height:146px}.tag{display:inline-block;font:11px ui-monospace,monospace;border:1px solid var(--line);border-radius:20px;padding:3px 9px;color:var(--muted)}.recommended{color:var(--accent);border-color:var(--accent)}.description{font-size:13px;max-width:550px;color:var(--muted);margin:0 0 19px}.terminal-frame{background:var(--paper);border:1px solid var(--line);border-radius:11px;box-shadow:0 14px 30px #00000008;overflow:hidden}.frame-heading{display:flex;gap:8px;justify-content:space-between;padding:9px 13px;background:var(--card);border-bottom:1px solid var(--line);color:var(--muted);font:10px ui-monospace,monospace}.terminal-scroll{padding:12px;overflow-x:auto}.terminal{font:12px/1.65 ui-monospace,"DejaVu Sans Mono",monospace;letter-spacing:0;font-variant-ligatures:none;white-space:pre;width:calc(var(--cols)*1ch);color:var(--ink)}.line{height:1.65em}.line.muted{color:var(--muted)}.line.faint{color:var(--faint)}.line.accent{color:var(--accent)}.line.ok{color:var(--ok)}.line.keys{background:var(--field)}.line.rule{color:var(--line)}.caption{font-size:12px;color:var(--muted);padding:12px 2px 0;margin:0}.caption strong{font-weight:500;color:var(--ink)}
+.notes{margin-top:30px;border-top:1px solid var(--line);padding-top:21px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:26px}.notes h3{font-size:13px;font-weight:600;margin:0 0 8px}.notes p,.notes li{font-size:12px;color:var(--muted);margin:6px 0}.notes ul{padding-left:18px;margin:0}.notes code{font:11px ui-monospace,monospace;color:var(--ink)}.notes kbd{font:11px ui-monospace,monospace;border:1px solid var(--line);border-radius:4px;padding:1px 4px}.decision{margin-top:25px;padding:18px 20px;border:1px solid var(--line);border-radius:9px;background:var(--paper);display:flex;align-items:baseline;gap:18px}.decision strong{font-size:13px;white-space:nowrap}.decision p{font-size:12px;color:var(--muted);margin:0}
+.wide-frames .page{max-width:2160px}
+@media(max-width:1050px){.comparison,.notes{grid-template-columns:1fr}.direction>header{min-height:0;margin-bottom:17px}.comparison{gap:32px}.page{padding:25px 20px}.heading{flex-wrap:wrap}.prototype{order:-1}.decision{align-items:start;flex-direction:column;gap:7px}}@media(prefers-reduced-motion:no-preference){button{transition:background .12s ease}}
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="heading">
+    <div><div class="brand"><!-- Existing 手 mark paths from app-icon.svg; no font dependency. --><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M16.2 4.6Q12.4 6 7.6 6.4M7.2 10.2h9.6M5.4 14.2h13.2M12 6.2v11.3a2 2 0 1 1-2.6-1.9"/></svg><strong>tazuna</strong><span class="eyebrow">review 01 / replay</span></div><h1>Replay, without the fake prompt.</h1><p class="intro">Two replay-only footer directions, side by side at terminal dimensions. Keep playback state and essential keys readable at 80 × 24, in Cockpit and Zen.</p></div>
+    <span class="prototype">Prototype only · no app changes</span>
+  </header>
+  <p class="boundary">These are illustrative frames, not renderer screenshots. Merging this file stores a mockup; it does not select a design or change the terminal. Live sessions stay unchanged.</p>
+  <div class="controls" aria-label="Prototype controls">
+    <div class="control"><label for="size">Terminal size</label><select id="size"><option value="80,24">80 × 24 · small</option><option value="120,34">120 × 34 · standard</option><option value="160,40">160 × 40 · wide</option></select></div>
+    <div class="control"><span id="layout-label">Layout</span><div class="buttons" role="group" aria-labelledby="layout-label"><button data-layout="cockpit" aria-pressed="true">Cockpit</button><button data-layout="zen" aria-pressed="false">Zen</button></div></div>
+    <div class="control"><span id="state-label">Playback state</span><div class="buttons" role="group" aria-labelledby="state-label"><button data-paused="true" aria-pressed="true">Paused</button><button data-paused="false" aria-pressed="false">Playing</button></div></div>
+    <div class="control"><label for="phase">Recording point</label><select id="phase"><option value="reply">Recorded reply</option><option value="start">First frame · offline</option></select></div>
+    <div class="control"><label for="speed">Speed</label><select id="speed"><option>0.25</option><option>0.5</option><option selected>1</option><option>2</option><option>4</option><option>8</option><option>16</option><option>32</option></select></div>
+    <div class="control"><span>Appearance</span><div class="buttons"><button id="theme" aria-pressed="false">Dark theme</button><button id="expand" aria-pressed="false">Expand steps</button></div></div>
+  </div>
+  <p class="sample-status"><output id="status" aria-live="polite"></output> · state previews only, no real playback</p>
+  <main class="comparison">
+    <article class="direction" aria-labelledby="a-title">
+      <header><span class="tag recommended">A · Recommended</span><h2 id="a-title">One compact control strip</h2><p class="description">State and the four essential actions share one row. Speed and scroll hints move to the replay metadata above; no inactive composer.</p></header>
+      <div class="terminal-frame"><div class="frame-heading"><span>A / compact strip</span><span class="dimensions"></span></div><div class="terminal-scroll" tabindex="0" role="region" aria-label="Option A terminal preview"><div class="terminal" id="terminal-a"></div></div></div>
+      <p class="caption"><strong>More room for the conversation.</strong> The footer always names Replay / Paused, Space, Tab, e and q. Playback details are one glance higher.</p>
+    </article>
+    <article class="direction" aria-labelledby="b-title">
+      <header><span class="tag">B · More explicit</span><h2 id="b-title">A two-line replay player</h2><p class="description">One line for state, elapsed time and speed. A second line for every playback key. More discoverable, with one fewer transcript row.</p></header>
+      <div class="terminal-frame"><div class="frame-heading"><span>B / two-line player</span><span class="dimensions"></span></div><div class="terminal-scroll" tabindex="0" role="region" aria-label="Option B terminal preview"><div class="terminal" id="terminal-b"></div></div></div>
+      <p class="caption"><strong>All playback controls together.</strong> State never competes with recorded agent activity, and no key hint is cut in half.</p>
+    </article>
+  </main>
+  <section class="notes" aria-label="Design notes">
+    <div><h3>What both directions fix</h3><ul><li>Replace <code>Message tazuna…</code> / <code>say something…</code> with an unmistakable replay surface.</li><li>Keep <code>q quit</code> and the paused state visible at 80 columns, without truncating <code>e expand</code>.</li><li>Label the first frame as an offline recording, never a live connection.</li><li>Retain the hand mark, existing terminal palette and both layouts. No new keys or help screen.</li></ul></div>
+    <div><h3>Try the states, not a live session</h3><p>The toolbar changes both frames together. Focus either preview and try <kbd>Space</kbd>, <kbd>e</kbd>, <kbd>←</kbd> / <kbd>→</kbd> or <kbd>r</kbd>. Use the toolbar for layout and scroll normally in the browser.</p><p>Browser Tab keeps normal focus navigation; the proposed <code>Tab layout</code> hint describes the terminal's existing key. Quit is a label only here. Text is selectable; no network, agent, storage or terminal process is used.</p><p>Column counts are preserved. A browser narrower than the selected terminal pair scrolls inside each preview; simulated rows are never truncated.</p></div>
+  </section>
+  <section class="decision" aria-label="Recommendation"><strong>Start with A.</strong><p>It fixes the misleading replay surface with the least height and keeps the transcript first. Choose B if keeping every playback hint beside the state matters more than that extra row. Neither direction is implemented.</p></section>
+</div>
+<script>
+const state = { cols:80, rows:24, layout:'cockpit', paused:true, phase:'reply', speed:1, expanded:false };
+const speeds = [.25,.5,1,2,4,8,16,32];
+const $ = (s) => document.querySelector(s);
+const cells = (s) => Array.from(s).reduce((n,c) => n + (c === '手' ? 2 : 1),0);
+const pad = (s,n) => s + ' '.repeat(Math.max(0,n-cells(s)));
+const split = (left,right,n) => left + ' '.repeat(Math.max(1,n-cells(left)-cells(right))) + right;
+const speedText = () => (state.speed < 1 ? String(state.speed) : state.speed.toFixed(1)) + '×';
+const elapsed = () => state.phase === 'start' ? '00:00' : '00:18';
+function wrap(text,width) {
+  const out = []; let row = '';
+  for (const word of text.split(' ')) { if (row && cells(row+' '+word)>width) { out.push(row); row=word; } else row += (row?' ':'')+word; }
+  if (row) out.push(row); return out;
+}
+function transcript(width) {
+  if (state.phase === 'start') return [['Offline recording · retry-test.jsonl','accent'],['',''],['Playback has not reached the first recorded event.','muted'],['No connection or agent is running.','muted']];
+  const content = [];
+  const add = (s,c='') => wrap(s,width).forEach(t=>content.push([t,c]));
+  add('› Why does the retry test fail on CI but pass locally?','accent'); add(' ');
+  add('The test uses real timers. A slower runner can hit the timeout before the final retry.'); add(' ');
+  add((state.expanded?'▾':'▸')+' 3 completed tool calls · e to '+(state.expanded?'fold':'expand'),'muted');
+  if (state.expanded) { add('  Read     src/client/retry.test.ts','muted'); add('  Edit     advance fake timers explicitly','muted'); add('  Run      npm test -- retry','muted'); }
+  add(' '); add('Use fake timers, advance them explicitly, and restore real timers after each test.'); add(' ');
+  add('✓ 12 tests passed · recorded result','ok'); add('Recorded reply · 18s · example usage, not live','muted');
+  return content;
+}
+function frame(which) {
+  const {cols,rows,layout,paused} = state;
+  const out=[]; const add=(s='',c='')=>out.push([pad(s,cols),c]);
+  const status=paused?'Paused':'Playing';
+  add(split(' 手 tazuna',layout === 'cockpit'?'recorded · example-model':'zen · recorded',cols),'accent');
+  // A uses metadata space for secondary controls; B keeps those controls in its player.
+  add(which==='a' ? split(' replay / retry-test.jsonl',elapsed()+'  '+speedText()+'  ←/→ speed  ↑/↓ scroll ',cols) : ' replay / retry-test.jsonl','muted');
+  const footerRows=which==='a'?2:3;
+  const bodyRows=rows-out.length-footerRows;
+  const side=layout==='cockpit' && cols>=110?34:0;
+  const main=cols-side, inner=layout==='cockpit'?main-6:Math.min(cols-6,98);
+  const content=transcript(inner), indent=layout==='zen'?' '.repeat(Math.max(2,Math.floor((cols-inner)/2))):'';
+  const sideRow=(text)=>'│ '+pad(text,30)+' │';
+  const instrument=['╭─ recorded session '+'─'.repeat(13)+'╮',sideRow('example-model'),sideRow('elapsed '+elapsed()),sideRow('usage is from the recording'),'╰'+'─'.repeat(32)+'╯','','╭─ playback '+'─'.repeat(21)+'╮',sideRow('Replay · '+status),sideRow(speedText()+' · offline'),'╰'+'─'.repeat(32)+'╯'];
+  for(let i=0;i<bodyRows;i++) {
+    let text='',color='';
+    if(layout==='cockpit') {
+      if(i===0) text='╭─ transcript '+'─'.repeat(main-15)+'╮';
+      else if(i===bodyRows-1) text='╰'+'─'.repeat(main-2)+'╯';
+      else { const line=content[i-1]??['','']; text='│  '+pad(line[0],main-6)+'  │'; color=line[1]; }
+      if(side) text += pad(instrument[i]??'',side);
+    } else { const line=content[i-1]??['','']; text=indent+line[0]; color=line[1]; }
+    add(text,color);
+  }
+  add('─'.repeat(cols),'rule');
+  if(which==='a') add(' Replay · '+status+'   Space '+(paused?'resume':'pause')+'  Tab layout  e '+(state.expanded?'fold':'expand')+'  q quit','keys');
+  else {
+    add(split(' Replay · '+status,elapsed()+' elapsed  ·  '+speedText()+'  ·  offline ',cols),'accent');
+    add(' Space '+(paused?'resume':'pause')+'  Tab layout  e '+(state.expanded?'fold':'expand')+'  q quit  ←/→ speed  ↑/↓ scroll','keys');
+  }
+  return out;
+}
+function fit() {
+  const measure=document.createElement('canvas').getContext('2d');
+  for(const el of document.querySelectorAll('.terminal')) {
+    const family=getComputedStyle(el).fontFamily; measure.font='12px '+family;
+    const ratio=measure.measureText('0').width/12;
+    const available=el.parentElement.clientWidth-24;
+    const size=Math.min(13,Math.max(8,available/(state.cols*ratio))).toFixed(3)+'px';
+    if(el.style.fontSize!==size) el.style.fontSize=size;
+  }
+}
+function render() {
+  document.body.classList.toggle('wide-frames',state.cols===160);
+  for(const which of ['a','b']) {
+    const el=$('#terminal-'+which); el.replaceChildren(); el.style.setProperty('--cols',state.cols);
+    for(const [text,color] of frame(which)) {
+      const row=document.createElement('div'); row.className='line '+color; row.dataset.cells=cells(text);
+      if(text.includes('手')) {
+        const [before,after]=text.split('手'); const mark=$('.mark').cloneNode(true);
+        mark.setAttribute('class','terminal-mark'); row.append(before,mark,after);
+      } else row.textContent=text;
+      el.append(row);
+    }
+  }
+  document.querySelectorAll('.dimensions').forEach(el=>el.textContent=state.cols+' × '+state.rows+' · '+state.layout);
+  document.querySelectorAll('[data-layout]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.layout===state.layout)));
+  document.querySelectorAll('[data-paused]').forEach(b=>b.setAttribute('aria-pressed',String((b.dataset.paused==='true')===state.paused)));
+  $('#expand').setAttribute('aria-pressed',String(state.expanded)); $('#expand').textContent=state.expanded?'Fold steps':'Expand steps';
+  $('#phase').value=state.phase; $('#speed').value=String(state.speed);
+  $('#status').textContent=(state.paused?'Paused':'Playing')+' · '+elapsed()+' · '+speedText()+' · '+(state.phase==='start'?'offline first frame':'recorded reply'); fit();
+}
+$('#size').onchange=e=>{[state.cols,state.rows]=e.target.value.split(',').map(Number);render();};
+document.querySelectorAll('[data-layout]').forEach(b=>b.onclick=()=>{state.layout=b.dataset.layout;render();});
+document.querySelectorAll('[data-paused]').forEach(b=>b.onclick=()=>{state.paused=b.dataset.paused==='true';render();});
+$('#phase').onchange=e=>{state.phase=e.target.value;render();};
+$('#speed').onchange=e=>{state.speed=Number(e.target.value);render();};
+$('#theme').onclick=()=>{const dark=document.documentElement.classList.toggle('dark');$('#theme').setAttribute('aria-pressed',String(dark));$('#theme').textContent=dark?'Light theme':'Dark theme';};
+$('#expand').onclick=()=>{state.expanded=!state.expanded;render();};
+document.querySelectorAll('.terminal-scroll').forEach(el=>el.addEventListener('keydown',e=>{
+  if(e.key===' ')state.paused=!state.paused;
+  else if(e.key==='e')state.expanded=!state.expanded;
+  else if(e.key==='r')state.phase='start';
+  else if(e.key==='ArrowLeft'||e.key==='ArrowRight')state.speed=speeds[Math.max(0,Math.min(speeds.length-1,speeds.indexOf(state.speed)+(e.key==='ArrowRight'?1:-1)))];
+  else return;
+  e.preventDefault();render();
+}));
+let lastWidth=0, fitFrame=0;
+new ResizeObserver(([entry])=>{
+  if(entry.contentRect.width===lastWidth) return;
+  lastWidth=entry.contentRect.width;
+  cancelAnimationFrame(fitFrame);
+  fitFrame=requestAnimationFrame(fit);
+}).observe($('.comparison'));
+render();
+</script>
+</body>
+</html>
