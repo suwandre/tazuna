@@ -15,7 +15,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     // the two clocks went (the status at the bottom says what runs), and the plan wrapped onto a second row at 120
     // columns (design review 9). A row that does not fit puts the plan under it, as before.
     let gap = || Span::raw("   ");
-    let mut right = vec![Span::styled(model_short(&s.model), st(th.dim)), Span::styled(format!(" {}", s.effort), st(th.faint)), gap(),
+    let mut right = vec![Span::styled(if !v.live && s.model.is_empty() { "recorded session".into() } else { model_short(&s.model) }, st(th.dim)), Span::styled(format!(" {}", s.effort), st(th.faint)), gap(),
         Span::styled(cost_str(s), st(th.ink2))];
     let mut extra: Vec<Span> = plan_spans(s, th).map(|p| [vec![Span::styled("Claude ", st(th.dim))], p].concat()).unwrap_or_default();
     if let Some(b) = balance_str(s) {
@@ -25,6 +25,18 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     if one_row && !extra.is_empty() {
         right.push(gap());
         right.append(&mut extra);
+    }
+    if !v.live {
+        let [top, under, metadata, _, body, footer] = Layout::vertical([
+            Constraint::Length(1), Constraint::Length(u16::from(!one_row && !extra.is_empty())),
+            Constraint::Length(1), Constraint::Length(1), Constraint::Min(3), Constraint::Length(2),
+        ]).areas(col);
+        split_row(f, top, Line::from(Span::styled("tazuna", st(th.faint).add_modifier(Modifier::ITALIC))), Line::from(right), None);
+        if !one_row && !extra.is_empty() { split_row(f, under, Line::default(), Line::from(extra), None); }
+        draw_replay_metadata(f, metadata, v, th);
+        let (last_block, trows, top_line) = render_transcript(f, body, transcript(s, v, th, &OPTS, body.width as usize), v.scroll, th);
+        draw_replay_footer(f, footer, v, th);
+        return Areas { pulse: top, last_block, transcript: body, rows: trows, top_line, ..Default::default() };
     }
     // the message box under the rule: the status on its right, and on its left the question, the draft on as many rows
     // as it takes (six at most, then it scrolls) with the `@` and `/` completions under it, or the placeholder. It was one

@@ -1283,6 +1283,10 @@ pub fn spinner(clock_ms: f64) -> &'static str {
 /// state); a question, a refused call and a failed run each read as what they are, where all three said "thinking" or
 /// "done" (design review, 2026-11-19).
 pub fn activity(s: &Session, v: &View, th: &Theme) -> (&'static str, String, Color) {
+    // Before a recording's init event there is no live agent to connect to or animate as thinking.
+    if !v.live && s.model.is_empty() && matches!(s.activity, Activity::Starting) {
+        return ("·", "recorded".into(), th.dim);
+    }
     let spin = spinner(v.clock_ms);
     // a permission question: nothing runs until it is answered, so no spinner
     if v.asking.is_some() {
@@ -1463,6 +1467,30 @@ pub fn play_str(v: &View, paused: &str) -> String {
         (false, true) => paused.into(),
         (false, false) => format!("▶ {:.1}×", v.speed),
     }
+}
+
+/// Replay's secondary controls live above the conversation, leaving a single strip for state and essential keys.
+fn draw_replay_metadata(f: &mut Frame, area: Rect, v: &View, th: &Theme) {
+    let speed = if v.speed < 1.0 { format!("{}×", v.speed) } else { format!("{:.1}×", v.speed) };
+    let details = format!("{}  {speed}  ←/→ speed · ↑/↓ scroll", clock_str((v.clock_ms - v.since_ms).max(0.0)));
+    split_row(f, area, Line::from(Span::styled("Offline recording", st(th.dim))),
+        Line::from(Span::styled(details, st(th.dim))), None);
+}
+
+/// Compact strip A: no input caret or live placeholder; always keep the way out when narrower than 80 columns.
+fn draw_replay_footer(f: &mut Frame, area: Rect, v: &View, th: &Theme) {
+    let [rule, row] = ratatui::layout::Layout::vertical([ratatui::layout::Constraint::Length(1), ratatui::layout::Constraint::Min(0)]).areas(area);
+    f.render_widget(Paragraph::new(Span::styled("─".repeat(rule.width as usize), st(th.border))), rule);
+    let state = format!("Replay · {}", if v.paused { "Paused" } else { "Playing" });
+    let label = if row.width as usize >= state.width() + 10 { state.as_str() } else { "Replay" };
+    let mut keys = vec![format!("Space {}", if v.paused { "resume" } else { "pause" }), "Tab layout".into(),
+        format!("e {}", if v.expand_all { "fold" } else { "expand" }), "q quit".into()];
+    while keys.len() > 1 && 1 + label.width() + 3 + keys.join("  ").width() > row.width as usize {
+        keys.remove(if keys.len() > 2 { 1 } else { 0 });
+    }
+    f.render_widget(ratatui::widgets::Block::new().style(Style::new().bg(th.field)), row);
+    f.render_widget(Paragraph::new(Line::from(vec![Span::styled(format!(" {label}   "), st(th.accent)),
+        Span::styled(keys.join("  "), st(th.text))])), row);
 }
 
 pub fn human(n: u64) -> String {
@@ -3090,6 +3118,48 @@ pub fn split_row(f: &mut Frame, area: Rect, left: Line<'static>, right: Line<'st
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn replay_strip_keeps_state_and_real_keys_without_a_live_composer() {
+        let mut s = Session::new("Why does the retry test fail?", "medium");
+        for design in [Design::Cockpit, Design::Zen] {
+            let mut v = View { design, expand_all: false, scroll: 0, clock_ms: 18_000.0, speed: 0.25, paused: false, live: false, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+            for (width, height) in [(40, 12), (80, 24), (120, 34), (160, 40)] {
+                for paused in [false, true] { for expanded in [false, true] { for initialized in [false, true] {
+                    (v.paused, v.expand_all) = (paused, expanded);
+                    s.model = if initialized { "example-model".into() } else { String::new() };
+                    let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+                    term.draw(|f| assert!(draw(f, &s, &v).composer.is_none())).unwrap();
+                    let buf = term.backend().buffer();
+                    let rows = (0..height).map(|y| (0..width).map(|x| buf[(x, y)].symbol()).collect::<String>()).collect::<Vec<_>>();
+                    let screen = rows.join("\n");
+                    let strip = rows.last().unwrap();
+                    assert!(strip.contains(if paused { "Replay · Paused" } else { "Replay · Playing" }) && strip.contains("q quit"), "{width} {design:?}: {screen}");
+                    assert!(!screen.contains("connecting") && !screen.contains("Message tazuna") && !screen.contains("say something"), "{screen}");
+                    if !initialized { assert!(!screen.contains("thinking"), "{screen}"); }
+                    assert!(screen.contains("Offline recording"), "{screen}");
+                    if width >= 80 {
+                        for key in [if paused { "Space resume" } else { "Space pause" }, "Tab layout", if expanded { "e fold" } else { "e expand" }] {
+                            assert!(strip.contains(key), "{width} {design:?}: {strip}");
+                        }
+                        assert!(rows.iter().any(|r| r.contains("00:18") && r.contains("0.25×") && r.contains("←/→ speed") && r.contains("↑/↓ scroll")), "{screen}");
+                    }
+                } } }
+                // The same layouts still expose a real draft area in live mode, never the replay strip.
+                (v.live, v.input, v.cursor) = (true, "a draft".into(), 7);
+                let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+                term.draw(|f| assert!(draw(f, &s, &v).composer.is_some())).unwrap();
+                let screen = term.backend().buffer().content().iter().map(|c| c.symbol()).collect::<String>();
+                assert!((width < 80 || screen.contains("a draft")) && !screen.contains("q quit") && !screen.contains("Offline recording"), "{screen}");
+                (v.live, v.input, v.cursor) = (false, String::new(), 0);
+            }
+            // Missing model metadata must not hide a recording's actual completion state.
+            s.model.clear();
+            s.activity = Activity::Done;
+            assert_eq!(activity(&s, &v, &DARK).1, "done");
+            s.activity = Activity::Starting;
+        }
+    }
+
     #[test]
     fn model_rows_read_as_names_and_even_prices() {
         assert_eq!(super::pretty_label("deepseek-v4.1-flash-1017 · fast"), "DeepSeek V4.1 Flash 1017, fast");
