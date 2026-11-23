@@ -351,7 +351,8 @@ impl Cx<'_> {
         let p = match (from, rest.strip_prefix('~')) {
             (Some(f), _) => f.join(rest.trim_start_matches('/')),
             (None, Some(r)) => crate::platform::home()?.join(r.trim_start_matches('/')),
-            (None, None) if Path::new(rest).is_absolute() => PathBuf::from(rest),
+            // "/x" is rooted in Git Bash too, where Path counts only "C:\x" as absolute
+            (None, None) if rest.starts_with('/') || Path::new(rest).is_absolute() => PathBuf::from(rest),
             (None, None) => self.dir.as_ref()?.join(rest),
         };
         let mut out = PathBuf::new();
@@ -484,7 +485,8 @@ mod tests {
         for c in runs {
             assert!(risky(c, cwd).is_none(), "should run: {c} ({:?})", risky(c, cwd));
         }
-        assert_eq!(risky(&format!("rm -rf {home}/x"), cwd).as_deref(), Some(format!("rm outside the project: {home}/x").as_str()));
+        // quoted: unquoted, bash reads a Windows home's backslashes as escapes
+        assert_eq!(risky(&format!("rm -rf '{home}/x'"), cwd).as_deref(), Some(format!("rm outside the project: {home}/x").as_str()));
     }
 
     /// It reads every question's command, so no line may make it panic.
