@@ -134,9 +134,13 @@ pub fn undo(cwd: &Path, before: &str, after: &str, changed: &[File]) -> Result<(
 }
 
 /// The work tree against HEAD as one unified diff, new untracked files included (as added whole): what "uncommitted"
-/// shows in the app's review.
+/// shows in the app's review. Before the first commit there is no HEAD: then against the empty tree, so staged files show.
 pub fn worktree_diff(cwd: &Path, max: usize) -> String {
-    let mut d = git(cwd, &["diff", "--no-renames", "HEAD"], None).unwrap_or_default();
+    let base = match git(cwd, &["rev-parse", "--verify", "-q", "HEAD"], None) {
+        Ok(_) => "HEAD".to_string(),
+        Err(_) => git(cwd, &["hash-object", "-t", "tree", "/dev/null"], None).map(|t| t.trim().to_string()).unwrap_or_default(),
+    };
+    let mut d = git(cwd, &["diff", "--no-renames", &base], None).unwrap_or_default();
     let untracked = git(cwd, &["ls-files", "--others", "--exclude-standard", "-z"], None).unwrap_or_default();
     for p in untracked.split('\0').filter(|p| !p.is_empty()) {
         // `git diff --no-index` exits 1 when the files differ, which they always do here
@@ -259,6 +263,21 @@ mod tests {
         apply_piece(&dir, &piece("a.txt"), false).unwrap();
         assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "one\ntwo\n", "reverted in the work tree");
         assert!(apply_piece(&dir, &piece("a.txt"), false).is_err(), "no longer fits");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_uncommitted_review_shows_files_before_the_first_commit() {
+        let dir = std::env::temp_dir().join(format!("tazuna-unborn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let run = |args: &[&str]| assert!(Command::new("git").args(args).current_dir(&dir).output().unwrap().status.success());
+        run(&["init", "-q"]);
+        std::fs::write(dir.join("staged.txt"), "s\n").unwrap();
+        std::fs::write(dir.join("untracked.txt"), "u\n").unwrap();
+        run(&["add", "staged.txt"]);
+        let d = worktree_diff(&dir, 100_000);
+        assert!(d.contains("+++ b/staged.txt") && d.contains("+++ b/untracked.txt"), "{d}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
