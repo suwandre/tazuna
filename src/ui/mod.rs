@@ -3118,6 +3118,18 @@ pub fn split_row(f: &mut Frame, area: Rect, left: Line<'static>, right: Line<'st
 
 #[cfg(test)]
 mod tests {
+    /// Under 110 columns the cockpit's header carries the cost, after the status: "● ready   ≈$0", not "≈$0● ready".
+    #[test]
+    fn the_narrow_header_puts_the_cost_after_the_status() {
+        let s = Session::new("", "medium");
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        term.draw(|f| { draw(f, &s, &v); }).unwrap();
+        let top = (0..80).map(|x| term.backend().buffer()[(x, 0)].symbol().to_string()).collect::<String>();
+        let (status, cost) = (top.find(&activity(&s, &v, Design::Cockpit.theme()).1).unwrap(), top.find("$").unwrap());
+        assert!(status < cost, "{top}");
+    }
+
     #[test]
     fn replay_strip_keeps_state_and_real_keys_without_a_live_composer() {
         let mut s = Session::new("Why does the retry test fail?", "medium");

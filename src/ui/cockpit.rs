@@ -50,8 +50,9 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         Span::styled(if !v.live && s.model.is_empty() { "recorded session".into() } else { model_short(&s.model) }, st(th.text)),
         Span::styled(format!("  {} ", s.effort), st(th.dim)),
     ];
+    // after the status (index 1: the full tag comes first); at 1 it read "≈$0● working" from 0.1.209 to 0.1.212
     if narrow {
-        right.splice(1..1, [Span::styled("   ", st(th.faint)), Span::styled(cost_str(s), st(th.ink2))]);
+        right.splice(2..2, [Span::styled("   ", st(th.faint)), Span::styled(cost_str(s), st(th.ink2))]);
     }
     split_row(f, header, left, Line::from(right), Some(th.surface));
 
