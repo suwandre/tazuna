@@ -216,7 +216,14 @@ fn quiet() -> bool {
     std::env::var_os("TAZUNA_NO_UPDATE_CHECK").is_some()
 }
 
-pub fn update_news(data: &Path) -> Option<String> {
+/// What an upgrade brought: the version it came from, this one, and each version's title in between (newest first).
+pub struct News {
+    pub from: String,
+    pub to: String,
+    pub items: Vec<(String, String)>,
+}
+
+pub fn update_news(data: &Path) -> Option<News> {
     let file = data.join("last-version");
     let current = env!("CARGO_PKG_VERSION");
     let last = std::fs::read_to_string(&file).ok().map(|t| t.trim().to_string());
@@ -227,13 +234,13 @@ pub fn update_news(data: &Path) -> Option<String> {
     let entries = if quiet() { vec![] } else { changelog(current) };
     let items: Vec<(String, String)> = entries.into_iter().filter(|e| older(&last, &e.version) && !older(current, &e.version))
         .map(|e| (e.version, e.title)).collect();
-    Some(news_text(&last, current, &items))
+    Some(News { from: last, to: current.to_string(), items })
 }
 
 /// One line: "updated from 0.1.189: the week reads "wk" in the terminal too   /changelog", the newest version's title (the
 /// welcome above already says which version runs); several versions say how many and where the rest is. Until 0.1.191
 /// it said the new version twice and listed four titles, folded into one row by the screen.
-fn news_text(from: &str, _to: &str, items: &[(String, String)]) -> String {
+pub fn news_text(from: &str, _to: &str, items: &[(String, String)]) -> String {
     match items {
         [] => format!("updated from {from}   /changelog"),
         [(_, t)] => format!("updated from {from}: {t}   /changelog"),

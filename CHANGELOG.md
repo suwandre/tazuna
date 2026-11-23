@@ -16,6 +16,17 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.200 (2026-11-23): what an update brought, a line per version; /update
+
+The user, on the first start after 0.1.199: "the updates are also not nicely styled in the terminal. it should be new line
+with styling so its obvious", and /update answered "unknown command".
+
+- The first session after an upgrade opens with a block of its own: "↑ updated to 0.1.199  from 0.1.197 · 2 versions" in
+  the accent, then each version (up to three) with its title on its own line, then "/changelog has every note". It was
+  one dim line, the titles and "/changelog" run together with spaces between.
+- /update (and /upgrade) runs `tazuna upgrade` from inside a session, off the screen, and says how it went ("Upgraded to
+  tazuna X: restart tazuna to use it", "already the newest", or why not).
+
 ## 0.1.199 (2026-11-23): one conversation across a model switch, Retry without a second question, Claude's login said once
 
 Design review 12 drove the real core as a new user would (a fresh home folder, a scripted model on LM Studio's port); the

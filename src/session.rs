@@ -17,6 +17,8 @@ pub enum Block {
     /// A model call the provider refused, tried again by the own loop: one block for all its tries. Each try was a
     /// notice line of its own, cut mid-sentence, under a status that still said "thinking" (design review, 2026-11-19).
     Retry(Retry),
+    /// The first session after an upgrade: the versions it brought (versions::update_news), drawn as a block of its own.
+    News(crate::versions::News),
 }
 
 pub struct Retry {
@@ -399,7 +401,7 @@ pub fn last_limits(dir: &std::path::Path) -> Option<(f64, f64, u64, Option<u64>)
 
 /// tazuna's own slash commands, beside claude's in a session's list. Most are the terminal's (panels, switches): the
 /// window lists only the ones a sent message runs (main.rs, "complete").
-pub const OWN_COMMANDS: [&str; 28] = ["agent", "good", "bad", "boss", "changelog", "chat", "create", "data", "diff", "effort", "explorer", "hook", "jira", "keys", "login", "loop", "mcp", "model", "new", "preset", "profile", "resume", "review", "route", "verify", "rewind", "usage", "vim"];
+pub const OWN_COMMANDS: [&str; 29] = ["agent", "good", "bad", "boss", "changelog", "chat", "create", "data", "diff", "effort", "explorer", "hook", "jira", "keys", "login", "loop", "mcp", "model", "new", "preset", "profile", "resume", "review", "route", "verify", "rewind", "usage", "update", "vim"];
 
 impl Session {
     pub fn new(prompt: &str, effort: &str) -> Self {
@@ -461,7 +463,7 @@ impl Session {
             profile: String::new(),
             lane: Value::Null,
             mode: "auto".into(),
-            commands: vec!["agent".into(), "bad".into(), "boss".into(), "changelog".into(), "chat".into(), "create".into(), "data".into(), "diff".into(), "effort".into(), "explorer".into(), "good".into(), "hook".into(), "jira".into(), "keys".into(), "login".into(), "loop".into(), "mcp".into(), "model".into(), "new".into(), "preset".into(), "profile".into(), "resume".into(), "review".into(), "route".into(), "rewind".into(), "usage".into(), "verify".into(), "vim".into()],
+            commands: vec!["agent".into(), "bad".into(), "boss".into(), "changelog".into(), "chat".into(), "create".into(), "data".into(), "diff".into(), "effort".into(), "explorer".into(), "good".into(), "hook".into(), "jira".into(), "keys".into(), "login".into(), "loop".into(), "mcp".into(), "model".into(), "new".into(), "preset".into(), "profile".into(), "resume".into(), "review".into(), "route".into(), "rewind".into(), "update".into(), "usage".into(), "verify".into(), "vim".into()],
             todos: Vec::new(),
             changes: Vec::new(),
             last_prompt: String::new(),
@@ -608,6 +610,7 @@ impl Session {
                 None => json!({"kind": "notice", "text": text, "error": error}),
             },
             // the app has no block of its own for it: a notice, an error once the run ended on it
+            Block::News(n) => json!({"kind": "notice", "error": false, "text": crate::versions::news_text(&n.from, &n.to, &n.items)}),
             Block::Retry(r) => json!({"kind": "notice", "error": r.gave_up, "text": format!("{}: {} {} failed{} ({})", r.why, r.tries,
                 if r.tries == 1 { "try" } else { "tries" }, if r.next_ms.is_some() { ", trying again" } else { "" }, r.raw)}),
             Block::Verify(v) => json!({"kind": "verify", "cmd": v.cmd, "ok": v.ok, "secs": v.secs, "round": v.round, "no_tests": v.no_tests,
@@ -1084,6 +1087,11 @@ impl Session {
                     Some(Block::Notice { text, .. }) if text.starts_with("mode: ") => *text = format!("mode: {}", self.mode),
                     _ => self.push(Block::Notice { text: format!("mode: {}", self.mode), error: false }),
                 }
+            }
+            // the first session after an upgrade: its versions as a block of their own (ui news_lines)
+            (Some("harness_news"), _) => {
+                let items = e["items"].as_array().map(|a| a.iter().filter_map(|i| Some((i[0].as_str()?.to_string(), i[1].as_str()?.to_string()))).collect()).unwrap_or_default();
+                self.push_aside(Block::News(crate::versions::News { from: s(&e["from"]), to: s(&e["to"]), items }));
             }
             // tazuna's own line (a hook that failed, a setting saved): beside the run, which goes on. `ended`: a message on
             // screen that could not start, so nothing runs for it

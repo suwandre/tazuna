@@ -1660,7 +1660,7 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
     // a live session before its first message opens on who and where it is, as Claude Code's does; the lane's notice
     // ("lane default: opus-5-5 medium · repo profile (…)") is in it (until 0.1.180 that debug line was the whole screen)
     // (once the lane is known, and only while nothing but notices has come)
-    let fresh = v.live && s.blocks.iter().all(|b| matches!(b, Block::Notice { .. }))
+    let fresh = v.live && s.blocks.iter().all(|b| matches!(b, Block::Notice { .. } | Block::News(_)))
         && s.blocks.iter().any(|b| matches!(b, Block::Notice { text, .. } if text.starts_with("lane ")));
     if fresh {
         for l in welcome(th, width) {
@@ -1876,6 +1876,42 @@ pub fn transcript_lines(s: &Session, v: &View, width: u16) -> Vec<Line<'static>>
     transcript(s, v, th, o, width as usize).0
 }
 
+/// The update's block: "↑ updated to 0.1.199  from 0.1.197", up to three versions with their titles, then /changelog.
+#[inline(never)]
+fn news_lines(n: &crate::versions::News, th: &Theme) -> Vec<Prefixed> {
+    const SHOWN: usize = 3;
+    let from = match n.items.len() {
+        0 | 1 => format!("  from {}", n.from),
+        k => format!("  from {} · {k} versions", n.from),
+    };
+    let mut out: Vec<Prefixed> = vec![(
+        Line::from(vec![
+            Span::styled("↑ ", st(th.accent)),
+            Span::styled(format!("updated to {}", n.to), st(th.accent).add_modifier(Modifier::BOLD)),
+            Span::styled(from, st(th.faint)),
+        ]),
+        vec![Span::raw("  ")],
+    )];
+    let pad = n.items.iter().take(SHOWN).map(|(v, _)| v.chars().count()).max().unwrap_or(0) + 2;
+    for (v, t) in n.items.iter().take(SHOWN) {
+        out.push((
+            Line::from(vec![Span::raw("  "), Span::styled(format!("{v:<pad$}"), st(th.faint)), Span::styled(t.clone(), st(th.text))]),
+            vec![Span::raw(" ".repeat(2 + pad))],
+        ));
+    }
+    let more = n.items.len().saturating_sub(SHOWN);
+    out.push((
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(if more > 0 { format!("and {more} more · ") } else { String::new() }, st(th.faint)),
+            Span::styled("/changelog", st(th.accent)),
+            Span::styled(if more > 0 { " has them all" } else { " has every note" }, st(th.faint)),
+        ]),
+        vec![Span::raw("  ")],
+    ));
+    out
+}
+
 fn block_lines(b: &Block, i: usize, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool, width: usize) -> Vec<Prefixed> {
     match b {
         Block::Prompt(p) => prompt_lines(p, first_prompt(s, b), th, o, open, width),
@@ -1897,6 +1933,10 @@ fn block_lines(b: &Block, i: usize, s: &Session, v: &View, th: &Theme, o: &Opts,
                 vec![Span::raw("  ")],
             )]
         }
+        // the first session after an upgrade (versions::update_news): a heading, then a line per version brought (its
+        // title under the version, wrapped beside it), then where every note is. One dim line of "   " gaps read as a run-on
+        // sentence (the user, 2026-11-23: "it should be new line with styling so its obvious")
+        Block::News(n) => news_lines(n, th),
         // a refused call being tried again: what failed, which try, what happens next and the key that stops it, in the
         // error colour while it lasts; the provider's own words when the block is opened
         Block::Retry(r) => {
@@ -3787,6 +3827,18 @@ mod tests {
         s.blocks.push(Block::Notice { text: "x".repeat(300), error: false });
         let lines = |open: bool| block_lines(&s.blocks[0], 0, &s, &View { design: Design::Cockpit, expand_all: open, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 }, Design::Cockpit.theme(), &cockpit::OPTS, open, 400).iter().map(|(l, _)| l.to_string()).collect::<String>();
         assert!(lines(false).contains("click to show") && !lines(true).contains("click to show"));
+    }
+
+    #[test]
+    fn an_update_says_each_version_on_its_own_line() {
+        let th = Design::Cockpit.theme();
+        let text = |n: &crate::versions::News| news_lines(n, th).iter().map(|(l, _)| l.spans.iter().map(|x| x.content.to_string()).collect::<String>()).collect::<Vec<_>>();
+        let items = |k: usize| (0..k).map(|i| (format!("0.1.{}", 199 - i), format!("change {i}"))).collect();
+        let five = text(&crate::versions::News { from: "0.1.194".into(), to: "0.1.199".into(), items: items(5) });
+        assert_eq!(five, ["↑ updated to 0.1.199  from 0.1.194 · 5 versions", "  0.1.199  change 0", "  0.1.198  change 1", "  0.1.197  change 2",
+            "  and 2 more · /changelog has them all"]);
+        let one = text(&crate::versions::News { from: "0.1.198".into(), to: "0.1.199".into(), items: items(1) });
+        assert_eq!(one, ["↑ updated to 0.1.199  from 0.1.198", "  0.1.199  change 0", "  /changelog has every note"]);
     }
 
     #[test]

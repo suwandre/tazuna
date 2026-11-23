@@ -2741,7 +2741,7 @@ fn keys_rows() -> Vec<(String, ui::Tone)> {
         rows.extend(keys.iter().map(|(k, what)| (format!("  {k:<16}{what}"), Plain)));
     }
     rows.extend([(String::new(), Plain), ("Commands".into(), Head), (String::new(), Rule)]);
-    for c in ["model", "effort", "usage", "resume", "rewind", "diff", "new", "mcp", "boss", "loop", "vim", "changelog", "keys"] {
+    for c in ["model", "effort", "usage", "resume", "rewind", "diff", "new", "mcp", "boss", "loop", "vim", "changelog", "update", "keys"] {
         rows.push((format!("  /{c:<15}{}", crate::editor::describe(c)), Plain));
     }
     rows
@@ -3328,8 +3328,8 @@ fn run_live(
         std::thread::spawn(move || {
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
             // the first session after an upgrade: what it brought (versions::update_news, once)
-            if let Some(text) = labels::dir().ok().and_then(|d| versions::update_news(&d)) {
-                let _ = tx.send(json!({"type": "tazuna_update", "text": text}));
+            if let Some(n) = labels::dir().ok().and_then(|d| versions::update_news(&d)) {
+                let _ = tx.send(json!({"type": "tazuna_news", "from": n.from, "to": n.to, "items": n.items}));
             }
             if let Some(text) = labels::dir().ok().and_then(|d| versions::update_notice(&d, now)) {
                 let _ = tx.send(json!({"type": "tazuna_update", "text": text}));
@@ -3567,6 +3567,7 @@ fn run_live(
                 Some("tazuna_chat_event") => chat_event(live, &mut s, &e, &mut chat_last, &mut last_reply),
                 Some("tazuna_balance") => s.balance = e["usd"].as_f64(),
                 Some("tazuna_update") => s.apply(&json!({"type": "harness_info", "text": e["text"]}), live.elapsed_ms()),
+                Some("tazuna_news") => s.apply(&json!({"type": "harness_news", "from": e["from"], "to": e["to"], "items": e["items"]}), live.elapsed_ms()),
                 Some("tazuna_changelog") => match e["entries"].as_array().filter(|a| !a.is_empty()) {
                     Some(list) => v.list = Some(changelog_panel(list)),
                     None => s.apply(&json!({"type": "harness_info", "text": "the changelog could not be read (offline?): https://github.com/suwandre/tazuna/blob/main/CHANGELOG.md"}), live.elapsed_ms()),
@@ -4317,6 +4318,10 @@ fn run_live(
                 if text == "/help" || text == "/?" {
                     text = "/keys".into();
                 }
+                // /upgrade is the CLI's word for it (`tazuna upgrade`)
+                if text == "/upgrade" {
+                    text = "/update".into();
+                }
                 // a word that is no command at all (a typo, "/nwe"): said here, with the nearest one, instead of going to the
                 // model as a message (claude took "/nwe" and the run had to be stopped, 2026-11-12)
                 if let Some(word) = text.strip_prefix('/').filter(|w| live::is_command(&text) && !w.contains(char::is_whitespace))
@@ -4636,6 +4641,13 @@ fn run_live(
                 }
                 // /changelog: every version's title, its notes unfolded by a click (the CHANGELOG at this version's tag, read
                 // off the screen's thread)
+                // /update: `tazuna upgrade` from inside, off the screen's thread; this session keeps the binary it started with
+                // ("unknown command /update" was the answer, 2026-11-23)
+                if text == "/update" {
+                    s.apply(&json!({"type": "harness_info", "text": "looking for a new tazuna…"}), live.elapsed_ms());
+                    upgrade_in_background(status_tx.clone());
+                    continue;
+                }
                 if text == "/changelog" {
                     s.apply(&json!({"type": "harness_info", "text": "reading the changelog…"}), live.elapsed_ms());
                     let tx = status_tx.clone();
@@ -5134,6 +5146,45 @@ fn open_picker(live: &live::Live, keys: &models::KeyModels) -> Result<Picker> {
     Ok(p)
 }
 
+/// `/update`: runs this binary's `upgrade` and says its last line (ANSI and spinner frames stripped), plus that the next
+/// start runs the new version when one was installed.
+#[inline(never)]
+fn upgrade_in_background(tx: std::sync::mpsc::Sender<serde_json::Value>) {
+    std::thread::spawn(move || {
+        let out = std::env::current_exe().ok().and_then(|exe| {
+            std::process::Command::new(exe).arg("upgrade").stdin(std::process::Stdio::null()).output().ok()
+        });
+        let text = match out {
+            Some(o) => {
+                let all = format!("{}\n{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+                let last = all.split(['\n', '\r']).map(strip_ansi).map(|l| l.trim().trim_start_matches(['✓', '→']).trim().to_string()).filter(|l| !l.is_empty()).last().unwrap_or_default();
+                match (o.status.success(), last.starts_with("Upgraded to")) {
+                    (true, true) => format!("{last}: restart tazuna to use it"),
+                    (true, false) => last,
+                    (false, _) => format!("the update failed: {}", last.trim_start_matches("Error: ")),
+                }
+            }
+            None => "could not run `tazuna upgrade`".to_string(),
+        };
+        let _ = tx.send(json!({"type": "tazuna_update", "text": text}));
+    });
+}
+
+/// A line without its colour codes (ESC [ … letter).
+fn strip_ansi(l: &str) -> String {
+    let mut out = String::new();
+    let mut esc = false;
+    for c in l.chars() {
+        match (esc, c) {
+            (false, '\x1b') => esc = true,
+            (true, c) if c.is_ascii_alphabetic() => esc = false,
+            (true, _) => {}
+            (false, c) => out.push(c),
+        }
+    }
+    out
+}
+
 /// `/login` on a sign-in's page (oauth.rs): enter signs in (that enter confirms its warning, where it has one), s signs
 /// out; both off the screen's thread, their progress and outcome as lines in the transcript, the pickers' rows after.
 /// Some(what started): the page closes.
@@ -5347,6 +5398,11 @@ fn short_command<'a>(word: &str, commands: &'a [String]) -> Option<&'a String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_update_line_loses_its_colours() {
+        assert_eq!(super::strip_ansi("\x1b[32m✓\x1b[0m Upgraded to tazuna 0.1.200 \x1b[2m(/x)\x1b[0m"), "✓ Upgraded to tazuna 0.1.200 (/x)");
+    }
+
     #[test]
     fn a_paste_keeps_its_line_breaks_whatever_the_terminal_sends() {
         assert_eq!(super::pasted("a\rb\r\nc\nd"), "a\nb\nc\nd");
