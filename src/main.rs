@@ -2609,9 +2609,11 @@ fn question_parts(req: &serde_json::Value) -> (String, String, String) {
         Some(w) => session::shown(w, 400),
         None => session::shown(&i.to_string(), 400),
     };
-    // a call the model wrote as text, or one in a turn a chat handed over, gets no "always": a or y both allow it once (live.rs)
+    // a call the model wrote as text, an edits-mode write outside the project, or one in a turn a chat handed over, gets no "always": a or y both allow it once (live.rs)
     let note = if r["from_text"] == true {
         "once only: the model wrote this call as text".to_string()
+    } else if r["outside"] == true {
+        "once only: outside the project".to_string()
     } else if r["handoff"] == true {
         live::HANDOFF_ONCE.to_string()
     } else {

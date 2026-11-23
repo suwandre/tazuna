@@ -60,6 +60,8 @@ fn bash_cap() -> usize {
 pub(crate) struct Server {
     /// Persists between bash calls (`cd` sticks); relative paths resolve against it.
     cwd: PathBuf,
+    /// Where the server started: the project. A `cd` moves `cwd`, never this.
+    root: PathBuf,
     max: usize,
     /// Shrink bash output above this many chars (0: never).
     cap: usize,
@@ -154,8 +156,13 @@ impl Server {
         &self.cwd
     }
 
+    /// The project the server started in.
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
+    }
+
     pub(crate) fn new(cwd: PathBuf) -> Self {
-        Server { cwd, max: max_output(), cap: bash_cap(), saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) }
+        Server { root: cwd.clone(), cwd, max: max_output(), cap: bash_cap(), saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) }
     }
 
     /// One JSON-RPC message in, at most one reply out (notifications get none).
@@ -832,7 +839,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("tazuna-mcp-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("f.txt"), "line1\nline2\nline3\n").unwrap();
-        let mut s = Server { cwd: dir.canonicalize().unwrap(), max: 30000, cap: DEFAULT_BASH_CAP, saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) };
+        let mut s = Server { root: dir.canonicalize().unwrap(), cwd: dir.canonicalize().unwrap(), max: 30000, cap: DEFAULT_BASH_CAP, saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) };
         let ask = |s: &mut Server, req: &str| s.handle(req);
         assert_eq!(
             ask(&mut s, r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#).unwrap(),
@@ -886,7 +893,7 @@ mod tests {
 
     #[test]
     fn shrinks_long_output_and_saves_it() {
-        let mut s = Server { cwd: std::env::temp_dir(), max: 30000, cap: 2000, saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) };
+        let mut s = Server { root: std::env::temp_dir(), cwd: std::env::temp_dir(), max: 30000, cap: 2000, saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) };
         let out = s.bash("for i in $(seq 1 400); do echo \"=== RUN   TestN$i\"; echo \"--- PASS: TestN$i\"; done; echo '--- FAIL: TestBroken'; echo '    x_test.go:3: boom'; seq 1 500; exit 1", Duration::from_secs(30));
         assert!(out.chars().count() < 2600, "shrunk to about the cap: {}", out.chars().count());
         assert!(out.contains("--- FAIL: TestBroken") || out.contains("800 lines of passing-test output removed"), "{out}");
@@ -901,14 +908,14 @@ mod tests {
             assert_eq!(std::fs::metadata(dir).unwrap().permissions().mode() & 0o777, 0o700, "owner-only directory");
         }
         assert!(saved.contains("=== RUN   TestN1\n") && saved.contains("TestBroken"), "the full output is kept");
-        let mut off = Server { cwd: std::env::temp_dir(), max: 30000, cap: 0, saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) };
+        let mut off = Server { root: std::env::temp_dir(), cwd: std::env::temp_dir(), max: 30000, cap: 0, saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) };
         assert_eq!(off.bash("seq 1 3000 | wc -l", Duration::from_secs(10)).trim(), "3000");
         assert!(off.bash("seq 1 3000", Duration::from_secs(10)).chars().count() > 13000, "cap 0 leaves output alone");
     }
 
     #[test]
     fn timeout_kills_the_whole_command() {
-        let mut s = Server { cwd: std::env::temp_dir(), max: 30000, cap: DEFAULT_BASH_CAP, saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) };
+        let mut s = Server { root: std::env::temp_dir(), cwd: std::env::temp_dir(), max: 30000, cap: DEFAULT_BASH_CAP, saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) };
         let t0 = Instant::now();
         // the background sleep would outlive a plain kill of bash
         // 2 s: a login shell under a full parallel test run took over 500 ms to print "started" (flaky until 0.1.20)

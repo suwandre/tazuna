@@ -1384,7 +1384,7 @@ impl Live {
     pub fn answer(&mut self, allow: bool, always: bool) -> Option<(f64, Value)> {
         let req = self.pending.pop_front()?;
         let tool = req["request"]["tool_name"].as_str().unwrap_or_default().to_string();
-        if allow && always && req["request"]["from_text"] != true && req["request"]["handoff"] != true {
+        if allow && always && req["request"]["from_text"] != true && req["request"]["outside"] != true && req["request"]["handoff"] != true {
             self.allowed.insert(always_key(&req));
         }
         // an approved plan leaves plan mode: edits go ahead, commands still ask
@@ -1718,13 +1718,16 @@ impl Live {
                         // a tool call the own loop recovered from the model's text is asked every time: no "always"
                         // covers it (a page could hold such text, security review 2026-11-12)
                         let from_text = e["request"]["from_text"] == true;
+                        // nor an edits-mode write outside the project (engine.rs `edits_freely`): each one could run
+                        // something later (a shell profile, a hook)
+                        let outside = e["request"]["outside"] == true;
                         // nor in a turn a chat handed over, where none is given either (`answer`): the session's "always"
                         // answers were given to its own work, not to what a fetched page may ask for
                         if self.handoff.is_some() {
                             e["request"]["handoff"] = json!(true);
                         }
                         let risky = self.risky(&e).0;
-                        if !from_text && self.handoff.is_none() && (self.allowed.contains(&always_key(&e)) || self.auto_allows(&e, risky.is_none())) {
+                        if !from_text && !outside && self.handoff.is_none() && (self.allowed.contains(&always_key(&e)) || self.auto_allows(&e, risky.is_none())) {
                             self.respond(&e, true, None);
                         } else if self.mode == "headless" {
                             // nobody is there to answer: a question (AskUserQuestion, or any tool in ask mode) would wait forever
@@ -1733,6 +1736,8 @@ impl Live {
                             let tool = e["request"]["tool_name"].as_str().unwrap_or_default().to_string();
                             let scope = if from_text {
                                 "once only: the model wrote this call as text"
+                            } else if outside {
+                                "once only: outside the project"
                             } else if self.handoff.is_some() {
                                 HANDOFF_ONCE
                             } else {
