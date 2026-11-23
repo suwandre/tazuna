@@ -510,10 +510,11 @@ fn catalog_rows(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels,
     // the providers OMP lists (2026-11-22): models.dev's catalog for most (the data folder's copy, else the built-in one),
     // their own /models for a few, then the servers found on this machine at start
     let dir = routes.parent();
-    out.extend(modelsdev_choices(&modelsdev_tsv(dir), &file, &trusted));
+    let md = modelsdev_tsv(dir);
+    out.extend(modelsdev_choices(&md, &file, &trusted));
     for l in LOGINS.iter().filter(|l| l.source == Source::List) {
         match dir.and_then(|d| std::fs::read_to_string(d.join(list_file(l))).ok()) {
-            Some(list) => out.extend(list_choices(l, &serde_json::from_str(&list).unwrap_or_default(), &file, &trusted)),
+            Some(list) => out.extend(list_choices(l, &serde_json::from_str(&list).unwrap_or_default(), &md, &file, &trusted)),
             // no key, so no list: one greyed row, so the provider is in /model with what it needs (as Mortera's)
             None if l.vars.iter().all(|v| self::key(v).is_none()) => out.push(Choice { model: list_file(l).trim_end_matches(".json").to_string(),
                 label: format!("{}'s models", l.name), note: format!("tazuna loads {}'s model list at start once {} is set", l.name, l.vars[0]),
@@ -1311,11 +1312,25 @@ fn modelsdev_choices(tsv: &str, file: &Value, trusted: &impl Fn(&str) -> bool) -
 }
 
 /// A `Source::List` provider's rows from its /models: each id, no price of its own (the engine reads the list's, if any).
-fn list_choices(l: &Login, list: &Value, file: &Value, trusted: &impl Fn(&str) -> bool) -> Vec<Choice> {
+fn list_choices(l: &Login, list: &Value, md: &str, file: &Value, trusted: &impl Fn(&str) -> bool) -> Vec<Choice> {
+    // the effort levels of its service's models.dev catalog (`levels`): Qwen Cloud's Token Plan had none to choose, and its
+    // models ran at the provider's default (the user, 2026-11-23)
+    let levels = |id: &str| -> Vec<String> {
+        if l.levels.is_empty() {
+            return vec![];
+        }
+        let head = format!("={}", l.levels);
+        let listed = md.lines().skip_while(|x| *x != head).skip(1).take_while(|x| !x.starts_with('='))
+            .find_map(|x| x.split('\t').collect::<Vec<_>>().get(..5).filter(|f| f[0] == id).map(|f| f[4].to_string()));
+        match listed.as_deref() {
+            None | Some("*") => LEVELS.iter().map(|e| e.to_string()).collect(),
+            Some(ls) => ls.split_whitespace().map(String::from).collect(),
+        }
+    };
     list["data"].as_array().into_iter().flatten().filter_map(|m| m["id"].as_str())
         // chat models only: a plan's list also holds image, video and voice models (Qwen Cloud's: wan3.0-video, qwen-audio-…)
         .filter(|id| { let id = id.to_lowercase(); !["claude", "embed", "image", "video", "audio", "tts", "asr", "realtime", "rerank", "t2v", "i2v", "r2v"].iter().any(|w| id.contains(w)) })
-        .map(|id| login_row(l, id, None, vec![], file, trusted)).collect()
+        .map(|id| login_row(l, id, None, levels(id), file, trusted)).collect()
 }
 
 /// The API a provider's models all take ("chat", "responses", "messages"), by its URL; None: by the model's name.
@@ -1644,6 +1659,10 @@ pub struct Login {
     pub note: &'static str,
     /// A subscription: its models show "plan" and cost the $1 cap nothing.
     pub plan: bool,
+    /// For a provider whose models come from its /models (no levels there): the models.dev catalog of the same service
+    /// whose effort levels its models take, by id; an id that catalog lacks gets every level (the engine steps a refused
+    /// one down). Empty: no effort to choose, as before.
+    pub levels: &'static str,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -1678,7 +1697,7 @@ impl Login {
     }
 }
 
-const P: Login = Login { name: "", vars: &[], url: "", page: "", place: "its dashboard (API keys)", example: "", source: Source::List, api: "chat", note: "", plan: false };
+const P: Login = Login { name: "", vars: &[], url: "", page: "", place: "its dashboard (API keys)", example: "", source: Source::List, api: "chat", note: "", plan: false, levels: "" };
 const OWN: Login = Login { source: Source::Own, api: "", ..P };
 use Source::ModelsDev as Md;
 
@@ -1769,7 +1788,7 @@ pub const LOGINS: &[Login] = &[
     // had been saved as Alibaba's Coding Plan, whose list is public, old, and not the plan's (the user, 2026-11-23)
     Login { name: "Qwen Cloud Token Plan", vars: &["QWENCLOUD_TOKEN_PLAN_API_KEY"], url: "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1",
             page: "https://home.qwencloud.com/api-keys?region=ap-southeast-1", place: "Qwen Cloud's API keys page (Token Plan, Singapore)",
-            example: "sk-sp-...", plan: true,
+            example: "sk-sp-...", plan: true, levels: "alibaba-token-plan",
             note: "Qwen Cloud allows the Token Plan only for interactive use in coding tools, not scripts or app backends: the key may be suspended", ..P },
     Login { name: "xAI", vars: &["XAI_API_KEY"], url: "https://api.x.ai/v1", page: "https://console.x.ai/team/default/api-keys",
             place: "the xAI console (API keys)", example: "xai-...", api: "responses", source: Md("xai"), ..P },
@@ -2469,6 +2488,22 @@ mod tests {
                     api_of("https://opencode.ai/inference/openai/v1"), api_of("http://127.0.0.1:11434/v1"), api_of("https://subrouter.ai/v1")],
                    [Some("responses"), Some("responses"), Some("messages"), Some("chat"), None, Some("chat"), None],
                    "OpenCode, Command Code and tazuna's own providers: by the model's name, as before");
+    }
+
+    #[test]
+    fn a_listed_plan_takes_its_services_effort_levels() {
+        let qwen = LOGINS.iter().find(|l| l.name == "Qwen Cloud Token Plan").unwrap();
+        let md = "=alibaba\nqwen3.8-max\t2\t6\t0.25\tlow\n=alibaba-token-plan\nqwen3.8-max\t0\t0\t0\tlow medium xhigh\ndeepseek-v4.1-flash\t0\t0\t0\tlow high max\nqwen3.7-max\t0\t0\t0\t*\n";
+        let list = serde_json::json!({"data": [{"id": "qwen3.8-max"}, {"id": "deepseek-v4.1-flash"}, {"id": "qwen3.7-max"}, {"id": "qwen4-max"}, {"id": "wan3.0-video"}]});
+        let rows = list_choices(qwen, &list, md, &serde_json::json!({}), &|_: &str| true);
+        let e = |id: &str| rows.iter().find(|c| c.model == id).map(|c| c.efforts.join(" "));
+        assert_eq!(e("qwen3.8-max").as_deref(), Some("low medium xhigh"), "its own catalog's, not another's");
+        assert_eq!(e("deepseek-v4.1-flash").as_deref(), Some("low high max"));
+        assert_eq!(e("qwen3.7-max").map(|x| x.split(' ').count()), Some(LEVELS.len()));
+        assert_eq!(e("qwen4-max").map(|x| x.split(' ').count()), Some(LEVELS.len()), "a model the catalog lacks: every level");
+        assert_eq!(e("wan3.0-video"), None, "no video model in the picker");
+        let other = LOGINS.iter().find(|l| l.source == Source::List && l.levels.is_empty()).unwrap();
+        assert!(list_choices(other, &list, md, &serde_json::json!({}), &|_: &str| true).iter().all(|c| c.efforts.is_empty()), "the others as before");
     }
 
     #[test]

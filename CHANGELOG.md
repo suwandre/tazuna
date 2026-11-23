@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.205 (2026-11-23): Qwen Cloud's models take an effort
+
+The user: "i cannot seem to choose the effort of any of the models on the qwen coding plan provider? is this intended?"
+
+- A provider whose models come from its own /models (no levels there) can name the models.dev catalog of the same service
+  to take each model's levels from: Qwen Cloud's Token Plan takes Alibaba's Token Plan's (the same service), so Qwen3.8
+  Max offers low, medium and xhigh, DeepSeek V4.1 Flash low, high and max, GLM-5.3 low, high and max. A model that
+  catalog lacks (Qwen4 Max, Auto) offers every level; the engine steps a refused level down, as for other providers.
+  Before, no effort was sent and each model ran at Qwen Cloud's default.
+
 ## 0.1.204 (2026-11-23): Qwen Cloud's Token Plan as its own provider, its own model list
 
 The user: "why alibaba? qwen token/coding plan should also come from https://home.qwencloud.com/api-keys ... alibaba also has
