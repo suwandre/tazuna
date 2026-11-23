@@ -5457,7 +5457,7 @@ mod tests {
         let name = |i: usize| if i == 0 { "Claude" } else { crate::models::LOGINS[i - 1].name };
         let names = |f: &str| super::login_shown(f).into_iter().map(name).collect::<Vec<_>>();
         assert_eq!(super::login_shown("").len(), crate::models::LOGINS.len() + 1, "nothing typed: every provider");
-        assert!(names("qwen").contains(&"Alibaba Coding Plan (Qwen)") && names("qwen").contains(&"Alibaba Coding Plan China (Qwen)"));
+        assert_eq!(names("qwen"), ["Qwen Cloud Token Plan"], "Qwen's own plan by its name");
         assert!(names("coding plan china").iter().all(|n| n.contains("China")) && !names("coding plan china").is_empty(), "words in any order: {:?}", names("plan china coding"));
         assert_eq!(names("CLAUDE"), ["Claude"]);
         assert!(names("zzzz nothing").is_empty());

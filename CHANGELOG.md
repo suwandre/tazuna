@@ -16,6 +16,20 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.204 (2026-11-23): Qwen Cloud's Token Plan as its own provider, its own model list
+
+The user: "why alibaba? qwen token/coding plan should also come from https://home.qwencloud.com/api-keys ... alibaba also has
+its own coding + token plan", and the plan's models (qwen4-max, qwen3.8-max, DeepSeek V4.1, GLM-5.3 ...) were missing.
+
+- "Qwen Cloud Token Plan": Qwen Cloud's own console (home.qwencloud.com, Singapore, sk-sp- keys) at
+  token-plan.maas.qwencloudapi.com, its models read from its /models with the key (15 chat models on 2026-11-23). Their
+  key had been saved as Alibaba's Coding Plan, whose endpoint lists six older models to any key at all (an invalid key
+  gets the same list), so the picker showed models.dev's ten from before.
+- Alibaba's Coding Plan keeps its own name again (0.1.203 had added "(Qwen)" to it): it is Alibaba's product, sold in
+  Model Studio's console; "qwen" in /login now finds Qwen Cloud's.
+- A provider's /models list shows chat models only: image, video, voice and rerank models (Qwen Cloud's wan3.0-video,
+  qwen-audio-...) are left out of /model.
+
 ## 0.1.203 (2026-11-23): /login finds a provider by typing; the Qwen Coding Plan says Qwen
 
 The user: "you should be able to search for which provider you want to login, right? right now i have to scroll", and
