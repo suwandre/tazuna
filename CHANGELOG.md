@@ -16,6 +16,29 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.206 (2026-11-23): "do you have access to …?" goes to the agent too
+
+The user asked a chat "do you have access to my PC stats?" and got "No — I don't have access to your PC stats" from
+DeepSeek V4.1 Flash 1017: the chat's hand-off line (0.1.194) covered questions that need the computer or live data, and
+the model read a question about its access as one about itself. The line now says a question whether it can see, check or
+reach such things ("do you have access to my files?", "can you browse the web?") counts too: the agent can.
+
+Measured with bench/handoff.py A2 (the wording before, 0.1.205) and A3 (this one); the suite gained 10 such questions
+(want the agent) and 6 look-alikes that must stay a chat ("can you write a haiku?", "do you know Rust?"):
+
+| | capability questions handed off | all live/computer questions | ordinary handed off wrongly |
+|---|---|---|---|
+| DeepSeek V4.1 Flash 1017 (SubRouter), before | 13/20 | 67/74 | 0/114 |
+| DeepSeek V4.1 Flash 1017 (SubRouter), now, run 1 | 10/10 | 37/37 | 0/57 |
+| Opus 5.5 medium, before | 8/10 | 62/64 | 0/108 |
+| Opus 5.5 medium, now | 10/10 | 37/37 | 0/52 |
+
+DeepSeek's second run is left out: twice, SubRouter's DeepSeek answered a whole batch as if it had no system prompt
+(no hand-off, "as of May 2026" for the date), which the same binary did not do minutes before or after (checked side by
+side); the look-alikes were answered as before (the haiku, the Rust answer). Ordinary answers were not judged again: the
+added sentence touches only questions about what the chat can reach. About $0.02 on SubRouter, about $1.20 at API prices
+on the Claude plan (usage guard on).
+
 ## 0.1.205 (2026-11-23): Qwen Cloud's models take an effort
 
 The user: "i cannot seem to choose the effort of any of the models on the qwen coding plan provider? is this intended?"

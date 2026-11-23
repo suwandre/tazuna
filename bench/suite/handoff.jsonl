@@ -40,3 +40,19 @@
 {"id": "sourdough", "text": "How do I make a sourdough starter?", "want": "chat", "kind": "tricky"}
 {"id": "gpu-throttle", "text": "Explain how GPU temperature throttling works.", "want": "chat", "kind": "tricky"}
 {"id": "flu", "text": "What are typical symptoms of the flu?", "want": "chat", "kind": "tricky"}
+{"id": "pc-access", "text": "Do you have access to my PC stats?", "want": "agent", "kind": "capability"}
+{"id": "files-access", "text": "Can you see the files on my computer?", "want": "agent", "kind": "capability"}
+{"id": "ram-able", "text": "Are you able to check how much RAM my laptop has?", "want": "agent", "kind": "capability"}
+{"id": "desktop-know", "text": "Do you know what's on my desktop right now?", "want": "agent", "kind": "capability"}
+{"id": "proc-can", "text": "Can you look at my running processes?", "want": "agent", "kind": "capability"}
+{"id": "speed-possible", "text": "Is it possible for you to check my internet speed?", "want": "agent", "kind": "capability"}
+{"id": "battery-can", "text": "Can you tell me my battery percentage?", "want": "agent", "kind": "capability"}
+{"id": "internet-access", "text": "Do you have internet access?", "want": "agent", "kind": "capability"}
+{"id": "news-can", "text": "Can you look up today's news for me?", "want": "agent", "kind": "capability"}
+{"id": "browse-can", "text": "Can you browse the web?", "want": "agent", "kind": "capability"}
+{"id": "haiku-can", "text": "Can you write a haiku about autumn?", "want": "chat", "kind": "tricky"}
+{"id": "rust-know", "text": "Do you know how to code in Rust?", "want": "chat", "kind": "tricky"}
+{"id": "dns-can", "text": "Can you explain how DNS works?", "want": "chat", "kind": "tricky"}
+{"id": "japanese-able", "text": "Are you able to translate Japanese?", "want": "chat", "kind": "tricky"}
+{"id": "paste-can", "text": "Can you summarize a text if I paste it here?", "want": "chat", "kind": "tricky"}
+{"id": "math-can", "text": "Can you help me understand compound interest?", "want": "chat", "kind": "tricky"}

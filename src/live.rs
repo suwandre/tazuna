@@ -131,7 +131,8 @@ const CHAT_PROMPT: &str = "You are a helpful assistant.";
 const CHAT_HANDOFF: &str = "One exception to how you answer: if a good answer needs something you cannot know from your training alone \
 (anything current or live: prices, weather, news, scores, schedules, recent releases or events; the content of a web page or URL; or \
 anything about the user's own computer, files or accounts), your whole reply is [[agent]], and an agent that can look it up takes \
-the question. The exception changes nothing else: answer every other question just as you would without it, with the same length \
+the question. A question whether you can see, check or reach such things (\"do you have access to my files?\", \"can you browse the \
+web?\") counts too: the agent can, so that reply is [[agent]] as well. The exception changes nothing else: answer every other question just as you would without it, with the same length \
 and detail.";
 
 /// A chat reply that is a hand-off starts with this (trimmed); one that only mentions it later is an answer.

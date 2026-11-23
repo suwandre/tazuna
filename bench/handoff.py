@@ -20,7 +20,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "handoff" / "results.jsonl"
-BIN = HERE.parent / "target" / "release" / "tazuna"
+BIN = Path(os.environ.get("HANDOFF_BIN") or HERE.parent / "target" / "release" / "tazuna")  # HANDOFF_BIN: another build (the wording before)
 GENERAL = HERE / "realwork" / "tasks-general"
 PART_B = ["info-canberra", "info-photosynthesis", "guide-running-plan", "guide-budget", "write-email-decline", "write-summary",
           "math-loan", "math-dice", "law-gdpr-cvs", "arch-shortener", "science-molarity", "formula-weighted"]
@@ -72,7 +72,7 @@ def one(model, arm, it, run):
     env = {k: v for k, v in os.environ.items() if k != "TAZUNA_CHAT_HANDOFF"}
     # since the line is on by default, the arm without it switches it off; "line" and "line2" were the two wordings
     # measured before the second became the only one (the switch's 1 and 2 now both mean on)
-    env["TAZUNA_CHAT_HANDOFF"] = "1" if arm in ("line", "line2") else "0"
+    env["TAZUNA_CHAT_HANDOFF"] = "1" if arm in ("line", "line2", "line3") else "0"
     if model in ("ds", "sol"):
         env["SUBROUTER_API_KEY"] = subrouter_key()
     with tempfile.TemporaryDirectory() as cwd:
@@ -98,7 +98,7 @@ def one(model, arm, it, run):
 
 def run(part, models, runs, workers, cap):
     OUT.parent.mkdir(exist_ok=True)
-    arm = {"A": "line", "A2": "line2"}.get(part, "none")
+    arm = {"A": "line", "A2": "line2", "A3": "line3"}.get(part, "none")
     have = done()
     for m in models:
         todo = [(it, i) for i in range(runs) for it in items(part) if (m, arm, it["id"], i) not in have]
@@ -128,7 +128,7 @@ def summary():
     rows = [json.loads(l) for l in OUT.read_text().splitlines()]
     by = collections.defaultdict(list)
     for r in rows:
-        if r["arm"] in ("line", "line2"):
+        if r["arm"] in ("line", "line2", "line3"):
             by[f'{r["model"]} {r["arm"]}'].append(r)
     for m, rs in by.items():
         ok = [r for r in rs if r["got"] != "error"]
@@ -149,7 +149,7 @@ def summary():
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("part", choices=["A", "A2", "B", "summary"])
+    ap.add_argument("part", choices=["A", "A2", "A3", "B", "summary"])
     ap.add_argument("--models", default="ds,ernie,sol,opus")
     ap.add_argument("--runs", type=int, default=2)
     ap.add_argument("--cap-usd", type=float, default=1.0)
