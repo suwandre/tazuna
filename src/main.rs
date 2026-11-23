@@ -135,7 +135,8 @@ use replay::Replay;
 use serde_json::json;
 use session::Session;
 use std::{
-    path::PathBuf,
+    collections::HashMap,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 use tachyonfx::EffectManager;
@@ -1591,7 +1592,9 @@ fn app_server(a: &Args) -> Result<()> {
                                 Some(ds) => ds.iter().filter_map(|d| d.as_str().map(PathBuf::from)).take(20).collect(),
                                 None => vec![cwd.clone()],
                             };
-                            let found: Vec<serde_json::Value> = dirs.iter().map(|d| json!({"dir": d, "list": sessions_of(&base, d).iter().take(30).map(|e| json!({
+                            let folders: Vec<_> = dirs.iter().map(|d| session_folder(d)).collect();
+                            let lists = sessions_by_folder(&base, &folders);
+                            let found: Vec<serde_json::Value> = dirs.iter().zip(&folders).map(|(d, folder)| json!({"dir": d, "list": lists[folder.as_path()].iter().take(30).map(|e| json!({
                                 "id": e.id, "first": e.first.chars().take(120).collect::<String>(), "last_at": e.last_at, "messages": e.messages,
                                 // its latest run's model: the desktop's sidebar marks each conversation with its provider
                                 "model": e.model,
@@ -2872,19 +2875,46 @@ impl Earlier {
     }
 }
 
-/// This repo's claude sessions, the latest used first. The own loop's are left out: its engine resumes no conversation.
-fn sessions_of(base: &std::path::Path, cwd: &std::path::Path) -> Vec<Earlier> {
-    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
-    let mut out: Vec<Earlier> = vec![];
-    // the run log is in order: a session's last line says when it was last used
-    let mut last_line: Vec<usize> = vec![];
-    let mut continues: std::collections::HashMap<String, String> = Default::default();
+fn session_folder(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn sessions_of(base: &Path, cwd: &Path) -> Vec<Earlier> {
+    let folders = [session_folder(cwd)];
+    sessions_by_folder(base, &folders).remove(folders[0].as_path()).unwrap_or_default()
+}
+
+/// Each requested canonical folder's sessions, latest used first, from one pass over the shared run log.
+fn sessions_by_folder<'a>(base: &Path, folders: &'a [PathBuf]) -> HashMap<&'a Path, Vec<Earlier>> {
+    let mut lists: HashMap<_, SessionList> = folders.iter().map(|d| (d.as_path(), SessionList::default())).collect();
+    if lists.is_empty() {
+        return HashMap::new();
+    }
+    let mut paths = HashMap::new();
     for (n, r) in std::fs::read_to_string(base.join("runs.jsonl")).unwrap_or_default().lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).enumerate() {
         let m = &r["meta"];
-        let Some(sid) = m["session_id"].as_str() else { continue };
-        if !m["cwd"].as_str().map(std::path::PathBuf::from).is_some_and(|c| c.canonicalize().unwrap_or(c) == cwd) {
-            continue;
+        let (Some(sid), Some(cwd)) = (m["session_id"].as_str(), m["cwd"].as_str()) else { continue };
+        let folder = paths.entry(cwd.to_string()).or_insert_with(|| session_folder(Path::new(cwd)));
+        if let Some(list) = lists.get_mut(folder.as_path()) {
+            list.push(n, sid, &r);
         }
+    }
+    let names = conversation_names(base);
+    lists.into_iter().map(|(d, list)| (d, list.finish(&names))).collect()
+}
+
+#[derive(Default)]
+struct SessionList {
+    out: Vec<Earlier>,
+    // the run log is in order: a session's last line says when it was last used
+    last_line: Vec<usize>,
+    continues: HashMap<String, String>,
+}
+
+impl SessionList {
+    fn push(&mut self, n: usize, sid: &str, r: &serde_json::Value) {
+        let Self { out, last_line, continues } = self;
+        let m = &r["meta"];
         let (ts, rec) = (r["ts"].as_u64().unwrap_or(0), m["recording"].as_str().map(std::path::PathBuf::from));
         if let Some(c) = m["continues"].as_str().filter(|c| *c != sid) {
             continues.insert(sid.to_string(), c.to_string());
@@ -2905,35 +2935,38 @@ fn sessions_of(base: &std::path::Path, cwd: &std::path::Path) -> Vec<Earlier> {
             e.recordings.push(p);
         }
     }
-    // a session that continues another takes it in: its title, its messages, its recordings first (in order of first use,
-    // so a chain's first session is taken in before its next); the earlier one leaves the list. A model switch split one
-    // conversation into two rows until review 12
-    let mut gone = vec![false; out.len()];
-    for i in 0..out.len() {
-        let Some(j) = continues.get(&out[i].id).and_then(|c| out.iter().position(|e| e.id == *c)).filter(|&j| j != i && !gone[j]) else { continue };
-        gone[j] = true;
-        let (first, ids, recordings, messages) = (out[j].first.clone(), out[j].ids.clone(), out[j].recordings.clone(), out[j].messages);
-        let e = &mut out[i];
-        (e.first, e.messages) = (first, e.messages + messages);
-        e.ids = ids.into_iter().chain(e.ids.drain(..)).collect();
-        for p in std::mem::replace(&mut e.recordings, recordings) {
-            if !e.recordings.contains(&p) {
-                e.recordings.push(p);
+
+    fn finish(self, names: &serde_json::Value) -> Vec<Earlier> {
+        let Self { mut out, last_line, continues } = self;
+        // a session that continues another takes it in: its title, its messages, its recordings first (in order of first use,
+        // so a chain's first session is taken in before its next); the earlier one leaves the list. A model switch split one
+        // conversation into two rows until review 12
+        let mut gone = vec![false; out.len()];
+        for i in 0..out.len() {
+            let Some(j) = continues.get(&out[i].id).and_then(|c| out.iter().position(|e| e.id == *c)).filter(|&j| j != i && !gone[j]) else { continue };
+            gone[j] = true;
+            let (first, ids, recordings, messages) = (out[j].first.clone(), out[j].ids.clone(), out[j].recordings.clone(), out[j].messages);
+            let e = &mut out[i];
+            (e.first, e.messages) = (first, e.messages + messages);
+            e.ids = ids.into_iter().chain(e.ids.drain(..)).collect();
+            for p in std::mem::replace(&mut e.recordings, recordings) {
+                if !e.recordings.contains(&p) {
+                    e.recordings.push(p);
+                }
             }
         }
+        let mut both: Vec<(usize, Earlier)> = last_line.into_iter().zip(out).zip(gone).filter(|(_, g)| !g).map(|(b, _)| b).collect();
+        both.sort_by_key(|(n, _)| std::cmp::Reverse(*n));
+        // names given and conversations taken off the list (the desktop app's rename and remove; the recordings stay); a name
+        // given to the session it continues holds
+        both.into_iter().map(|(_, e)| e).filter(|e| names[&e.id]["hidden"] != true).map(|mut e| {
+            if let Some(t) = e.ids.iter().rev().find_map(|id| names[id]["title"].as_str()) {
+                e.first = t.to_string();
+                e.named = true;
+            }
+            e
+        }).collect()
     }
-    let mut both: Vec<(usize, Earlier)> = last_line.into_iter().zip(out).zip(gone).filter(|(_, g)| !g).map(|(b, _)| b).collect();
-    both.sort_by_key(|(n, _)| std::cmp::Reverse(*n));
-    // names given and conversations taken off the list (the desktop app's rename and remove; the recordings stay); a name
-    // given to the session it continues holds
-    let names = conversation_names(base);
-    both.into_iter().map(|(_, e)| e).filter(|e| names[&e.id]["hidden"] != true).map(|mut e| {
-        if let Some(t) = e.ids.iter().rev().find_map(|id| names[id]["title"].as_str()) {
-            e.first = t.to_string();
-            e.named = true;
-        }
-        e
-    }).collect()
 }
 
 /// conversations.json in tazuna's data folder: {"<session id>": {"title": "...", "hidden": true}}.
@@ -5978,6 +6011,31 @@ not json"#;
         assert!(a.blocks.iter().any(|b| matches!(b, session::Block::Tool(t) if t.name == "Read" && t.result.is_some())), "its steps, finished");
         assert!(a.blocks.iter().any(|b| matches!(b, session::Block::Text { text, .. } if text == "a.rs has one function")), "its answer");
         assert!(!s.blocks.iter().any(|b| matches!(b, session::Block::Text { .. })), "none of it in the main transcript");
+    }
+
+    #[test]
+    fn batches_session_lists_without_merging_folders() {
+        let base = std::env::temp_dir().join(format!("tazuna-session-folders-{}", std::process::id()));
+        let a = base.join("a");
+        let b = base.join("b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let run = |folder: &Path, sid: &str, prompt: &str, continues: Option<&str>| json!({
+            "prompt": prompt, "meta": {"cwd": folder, "session_id": sid, "continues": continues}
+        }).to_string();
+        let alias = a.join(".");
+        std::fs::write(base.join("runs.jsonl"), [
+            run(&alias, "a1", "A", None), run(&b, "b1", "B", Some("a1")),
+            run(&a, "a2", "A follow-up", Some("a1")), run(&b, "b2", "Hidden", None),
+        ].join("\n")).unwrap();
+        name_conversation(&base, "a1", "title", json!("Named A")).unwrap();
+        name_conversation(&base, "b2", "hidden", json!(true)).unwrap();
+        let folders: Vec<_> = [b, a, alias, base.join("missing")].iter().map(|d| session_folder(d)).collect();
+        let lists = sessions_by_folder(&base, &folders);
+        let rows: Vec<Vec<(&str, &str, usize)>> = folders.iter().map(|d| lists[d.as_path()].iter()
+            .map(|e| (e.id.as_str(), e.first.as_str(), e.messages)).collect()).collect();
+        assert_eq!(rows, [vec![("b1", "B", 1)], vec![("a2", "Named A", 2)], vec![("a2", "Named A", 2)], vec![]]);
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]
