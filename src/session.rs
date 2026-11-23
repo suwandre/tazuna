@@ -286,6 +286,8 @@ pub struct Session {
     pub limits_reset: Option<u64>,
     /// SubRouter's balance in USD, where a SubRouter key is set.
     pub balance: Option<f64>,
+    /// Each keyed provider's reading (accounts::credits): its name and what is left, where its API tells.
+    pub credits: Vec<(String, Option<String>)>,
     /// Part of the cost is priced at list rates: a stopped turn reported $0.
     pub estimated: bool,
     /// Time the agent spent working (message to its last token, the tests), summed over finished runs; `run_since`: when
@@ -433,6 +435,7 @@ impl Session {
             limits_at: None,
             limits_reset: None,
             balance: None,
+            credits: Vec::new(),
             estimated: false,
             busy_ms: 0.0,
             run_since: None,
@@ -479,6 +482,7 @@ impl Session {
         let mut s = Session::new("", &self.effort);
         (s.model, s.cwd, s.profile, s.mode, s.commands) = (self.model.clone(), self.cwd.clone(), self.profile.clone(), self.mode.clone(), self.commands.clone());
         (s.limits, s.limits_at, s.balance, s.context_window) = (self.limits, self.limits_at, self.balance, self.context_window);
+        s.credits = self.credits.clone();
         s
     }
 

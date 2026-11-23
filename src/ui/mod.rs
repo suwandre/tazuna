@@ -358,6 +358,8 @@ pub struct Areas {
     pub links: Vec<(Rect, String)>,
     /// The files panel (cockpit): a click there opens the changed files and their diffs.
     pub files: Option<Rect>,
+    /// The cost panel (cockpit): a click there opens /usage, every account.
+    pub cost: Option<Rect>,
     /// The diff view's file rows and which file each is: a click opens that file in the editor.
     pub diff_files: Vec<(Rect, usize)>,
     /// The tools panel's rows and the tool on each (cockpit): a click lists that tool's calls.
@@ -1401,6 +1403,42 @@ fn limits_age(s: &Session) -> String {
         3600..86_400 => format!("  {}h ago", a / 3600),
         _ => format!("  {}d ago", a / 86_400),
     })
+}
+
+/// The cost box's two account rows: the account this session runs on (Claude's plan windows; a provider's balance where
+/// its API tells, "plan" for a subscription), then another only when it needs you (Claude's plan at 80% or more, a
+/// balance under $1 or past its credit). It named Claude and SubRouter always and no other provider (the user,
+/// 2026-11-23: "how will users know the current usage remaining of other providers"); every account is in /usage.
+pub fn account_rows(s: &Session, th: &Theme) -> (Line<'static>, Line<'static>) {
+    let name = |n: &str| Span::styled(format!("{n} "), st(th.ink2).add_modifier(Modifier::BOLD));
+    let on_claude = s.provider.is_none() && s.price_m.is_none();
+    let low = |left: &str| left.contains("over") || left.strip_prefix('$').and_then(|l| l.split(' ').next()?.parse::<f64>().ok()).is_some_and(|x| x < 1.0);
+    let first = if on_claude {
+        match plan_spans(s, th) {
+            Some(plan) => Line::from([vec![name("Claude")], plan].concat()),
+            None => Line::from(Span::styled(if s.exact_cost.is_some() && !s.estimated { "exact (reported)" } else { "estimate (list prices)" }, st(th.faint))),
+        }
+    } else if let Some(p) = &s.provider {
+        let reading = s.credits.iter().find(|(n, _)| n == p).and_then(|(_, l)| l.clone());
+        let plan = crate::models::LOGINS.iter().any(|l| l.name == p && l.plan);
+        match reading {
+            Some(left) => Line::from(vec![name(p), Span::styled(left.clone(), st(if low(&left) { th.warn } else { th.dim }))]),
+            None => Line::from(vec![name(p), Span::styled(if plan { "plan" } else { "no balance it reports" }, st(th.faint))]),
+        }
+    } else {
+        Line::from(Span::styled("on this machine: free", st(th.faint)))
+    };
+    // another account, only when it needs you
+    let claude_high = s.limits.filter(|(h5, d7)| !on_claude && (*h5 >= 80.0 || *d7 >= 80.0));
+    let second = if let Some(plan) = claude_high.and_then(|_| plan_spans(s, th)) {
+        Line::from([vec![name("Claude")], plan].concat())
+    } else if let Some((n, left)) = s.credits.iter().filter(|(n, _)| Some(n) != s.provider.as_ref())
+        .find_map(|(n, l)| l.as_ref().filter(|l| low(l)).map(|l| (n, l))) {
+        Line::from(vec![name(n), Span::styled(left.clone(), st(th.warn))])
+    } else {
+        Line::default()
+    };
+    (first, second)
 }
 
 /// "SubRouter $8.82 left", where a SubRouter key is set.
@@ -2748,19 +2786,7 @@ pub fn composer_rows(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
 // give composer_index the cap when someone edits long drafts in a 12-row window.
 pub fn composer_rows_in(v: &View, th: &Theme, glyph: &str, placeholder: &str, width: u16, max: usize) -> Vec<Line<'static>> {
     if let Some(q) = &v.asking {
-        // the answers are what to act on: the brightest text of the row, their keys in the accent (they were the
-        // dimmest on screen, design review 2026-11-19); no "always" where it is not given (main.rs question_parts)
-        let once = q.contains("  (once only");
-        let q: String = q.chars().take((width as usize).saturating_sub(40)).collect();
-        let key = |k: &'static str| Span::styled(k, st(th.accent).add_modifier(Modifier::BOLD));
-        let word = |w: &'static str| Span::styled(w, st(th.text).add_modifier(Modifier::BOLD));
-        let mut row = vec![Span::styled(" ? ", st(th.warn).add_modifier(Modifier::BOLD)), Span::styled(format!("allow {q}"), st(th.ink2)),
-            Span::raw("   "), key("y"), word(" yes   ")];
-        if !once {
-            row.extend([key("a"), word(" always   ")]);
-        }
-        row.extend([key("n"), word(" no")]);
-        return vec![Line::from(row)];
+        return asking_rows(q, th, width);
     }
     if !(v.live && !v.input.is_empty()) {
         return vec![composer_line(v, th, glyph, placeholder, width)];
@@ -2806,6 +2832,46 @@ pub fn composer_rows_in(v: &View, th: &Theme, glyph: &str, placeholder: &str, wi
         })
         .chain(hints)
         .collect()
+}
+
+/// A permission question as the box draws it: what asks (in the warn colour), the call itself whole up to ASK_ROWS rows,
+/// then the answers. One row with the call cut to fit ("sysctl vm.swapusa") was easy to miss and hid what was allowed
+/// (the user, 2026-11-23: "quite hidden, sometimes i dont realize until way later").
+fn asking_rows(q: &str, th: &Theme, width: u16) -> Vec<Line<'static>> {
+    let (tool, note, call) = asking_parts(q, width);
+    // the answers are what to act on: the brightest text, their keys in the accent (design review 2026-11-19); no
+    // "always" where it is not given (main.rs question_parts)
+    let key = |k: &'static str| Span::styled(k, st(th.accent).add_modifier(Modifier::BOLD));
+    let word = |w: &'static str| Span::styled(w, st(th.text).add_modifier(Modifier::BOLD));
+    let mut out = vec![Line::from(vec![Span::styled(" ? ", st(th.warn).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("allow {tool}?"), st(th.warn).add_modifier(Modifier::BOLD)),
+        Span::styled(if note.is_empty() { String::new() } else { format!("   {note}") }, st(th.faint))])];
+    out.extend(call.into_iter().map(|l| Line::from(vec![Span::raw("   "), Span::styled(l, st(th.text))])));
+    let mut keys = vec![Span::raw("   "), key("y"), word(" yes   ")];
+    if !q.contains("  (once only") {
+        keys.extend([key("a"), word(" always   ")]);
+    }
+    keys.extend([key("n"), word(" no")]);
+    out.push(Line::from(keys));
+    out
+}
+
+/// The rows of a call shown in a question at most.
+const ASK_ROWS: usize = 6;
+
+/// A question's tool, its note and its call wrapped to the box ("Bash: ls -la  (always = this command)", main.rs question):
+/// a call past ASK_ROWS rows ends in "…" (its step in the transcript shows it whole).
+fn asking_parts(q: &str, width: u16) -> (String, String, Vec<String>) {
+    let (head, note) = q.rsplit_once("  (").map_or((q, ""), |(h, n)| (h, n.strip_suffix(')').unwrap_or(n)));
+    let (tool, call) = head.split_once(": ").unwrap_or(("this", head));
+    let mut rows: Vec<String> = call.lines().flat_map(|l| wrap_words(l, (width as usize).saturating_sub(4).max(10))).collect();
+    if rows.len() > ASK_ROWS {
+        rows.truncate(ASK_ROWS);
+        if let Some(last) = rows.last_mut() {
+            last.push_str(" …");
+        }
+    }
+    (tool.to_string(), note.to_string(), rows)
 }
 
 /// The typed text as the composer draws it: wrapped rows of (char, its byte index in the input; None for the cursor),
@@ -2970,6 +3036,9 @@ fn with_cursor(v: &View) -> String {
 
 /// Height of a bordered composer box for this input at this outer width.
 pub fn composer_height(v: &View, outer_width: u16) -> u16 {
+    if let Some(q) = &v.asking {
+        return asking_parts(q, outer_width.saturating_sub(2)).2.len() as u16 + 2 + 2;
+    }
     if !(v.live && !v.input.is_empty()) {
         return 3;
     }
@@ -3306,9 +3375,18 @@ mod tests {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
             term.draw(|f| { draw(f, &s, &v); }).unwrap();
             let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
-            // the cockpit's sidebar cut "SubRouter $8.82 left" to "$8" when it shared the plan's line (2026-11-02)
-            assert!(text.contains("SubRouter $8.82 left") && text.contains("5h 12%"), "design {}", d as u8);
+            // the cockpit's sidebar cut "SubRouter $8.82 left" to "$8" when it shared the plan's line (2026-11-02); since
+            // 0.1.207 its cost box names the account in use (Claude here) and SubRouter only when it is in use or low
+            let want = if d == Design::Cockpit { text.contains("5h 12%") } else { text.contains("SubRouter $8.82 left") && text.contains("5h 12%") };
+            assert!(want, "design {}", d as u8);
         }
+        // on SubRouter, the cockpit says its balance whole
+        (s.provider, s.price_m, s.credits) = (Some("SubRouter".into()), Some((0.1, 0.01, 0.4)), vec![("SubRouter".into(), Some("$8.82 left".into()))]);
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
+        term.draw(|f| { draw(f, &s, &v); }).unwrap();
+        let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("SubRouter $8.82 left"), "{text}");
     }
 
     #[test]
@@ -3910,6 +3988,39 @@ mod tests {
         s.blocks.push(Block::Notice { text: "x".repeat(300), error: false });
         let lines = |open: bool| block_lines(&s.blocks[0], 0, &s, &View { design: Design::Cockpit, expand_all: open, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 }, Design::Cockpit.theme(), &cockpit::OPTS, open, 400).iter().map(|(l, _)| l.to_string()).collect::<String>();
         assert!(lines(false).contains("click to show") && !lines(true).contains("click to show"));
+    }
+
+    #[test]
+    fn the_cost_box_names_the_account_in_use_and_one_that_needs_you() {
+        let th = Design::Cockpit.theme();
+        let text = |l: &Line| l.spans.iter().map(|x| x.content.to_string()).collect::<String>();
+        let mut s = Session::new("", "medium");
+        s.limits = Some((47.0, 65.0));
+        s.credits = vec![("SubRouter".into(), Some("$5.00 left".into())), ("Mistral".into(), None)];
+        let (a, b) = account_rows(&s, th);
+        assert!(text(&a).starts_with("Claude 5h 47%") && text(&b).is_empty(), "on Claude: its plan, nothing else needs you");
+        (s.provider, s.price_m) = (Some("Qwen Cloud Token Plan".into()), Some((0.0, 0.0, 0.0)));
+        s.credits[0].1 = Some("$0.22 left".into());
+        let (a, b) = account_rows(&s, th);
+        assert_eq!((text(&a).as_str(), text(&b).as_str()), ("Qwen Cloud Token Plan plan", "SubRouter $0.22 left"), "a plan, and a low balance elsewhere");
+        s.provider = Some("SubRouter".into());
+        assert_eq!(text(&account_rows(&s, th).0), "SubRouter $0.22 left");
+        (s.provider, s.limits) = (Some("Mistral".into()), Some((92.0, 65.0)));
+        let (a, b) = account_rows(&s, th);
+        assert!(text(&a) == "Mistral no balance it reports" && text(&b).starts_with("Claude 5h 92%"), "Claude's plan nearly used shows on another model");
+    }
+
+    #[test]
+    fn a_question_shows_its_call_whole() {
+        let (tool, note, call) = asking_parts("Bash: echo one; vm_stat | head -12; sysctl vm.swapusage  (always = this command)", 40);
+        assert_eq!((tool.as_str(), note.as_str()), ("Bash", "always = this command"));
+        assert_eq!(call.join(" "), "echo one; vm_stat | head -12; sysctl vm.swapusage", "nothing cut at 40 columns: {call:?}");
+        let long = format!("bash: {}  (once only: the agent is answering a chat's question)", "word ".repeat(200));
+        let (_, note, call) = asking_parts(&long, 40);
+        assert!(call.len() == ASK_ROWS && call.last().unwrap().ends_with('…') && note.starts_with("once only"));
+        let rows = asking_rows(&long, Design::Cockpit.theme(), 40);
+        assert_eq!(rows.len(), ASK_ROWS + 2, "what asks, the call, the answers");
+        assert!(!rows.last().unwrap().spans.iter().any(|s| s.content.contains("always")), "once only: no always");
     }
 
     #[test]

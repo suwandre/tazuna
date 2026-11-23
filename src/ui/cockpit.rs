@@ -58,7 +58,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     f.render_widget(frame, main);
     let (last_block, trows, top_line) = render_transcript(f, inner, transcript(s, v, th, &OPTS, inner.width as usize), v.scroll, th);
     if narrow {
-        let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(th.border));
+        let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(if v.asking.is_some() { th.warn } else { th.border }));
         let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
         f.render_widget(Paragraph::new(hint).block(b), composer);
         return Areas { pulse: header, last_block, transcript: inner, rows: trows, top_line, composer: Some(composer.inner(Margin { horizontal: 1, vertical: 1 })), ..Default::default() };
@@ -214,24 +214,18 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     }
 
     // cost
-    let b = panel("cost", th);
+    let accounts = account_rows(s, th);
+    let b = hot_panel("cost · click: all accounts", th, under_mouse(v, p_cost));
     let a = b.inner(p_cost).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(b, p_cost);
     let per_turn = if s.turns > 0 { s.cost() / s.turns as f64 } else { 0.0 };
     f.render_widget(
         Paragraph::new(vec![
             Line::from(vec![Span::styled(cost_str(s), st(th.text).add_modifier(Modifier::BOLD)), Span::styled(format!("   {}/call", usd(per_turn)), st(th.dim))]),
-            // the plan's windows and SubRouter's balance on lines of their own: on one line the sidebar cut the balance
-            // to "$8" (2026-11-02)
-            // each account named in its own colour, its numbers beside it
-            match plan_spans(s, th) {
-                Some(plan) => Line::from([vec![Span::styled("Claude ", st(th.ink2).add_modifier(Modifier::BOLD))], plan].concat()),
-                None => Line::from(Span::styled(if s.exact_cost.is_some() && !s.estimated { "exact (reported)" } else { "estimate (list prices)" }, st(th.faint))),
-            },
-            match balance_str(s) {
-                Some(b) => Line::from(vec![Span::styled("SubRouter", st(th.ink2).add_modifier(Modifier::BOLD)), Span::styled(b.trim_start_matches("SubRouter").to_string(), st(th.dim))]),
-                None => Line::default(),
-            },
+            // the account in use, then another only when it needs you, each on a line of its own (on one line the sidebar
+            // cut a balance to "$8", 2026-11-02); every account a click away (/usage)
+            accounts.0,
+            accounts.1,
         ]),
         a,
     );
@@ -301,11 +295,11 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     };
     f.render_widget(Paragraph::new(rows), a);
 
-    let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(th.border));
+    let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(if v.asking.is_some() { th.warn } else { th.border }));
     let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
     f.render_widget(Paragraph::new(hint).block(b), composer);
 
-    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows, files: Some(p_files), tool_rows, tokens: Some(p_tokens), bars: bars_at, top_line, composer: Some(composer.inner(Margin { horizontal: 1, vertical: 1 })), ..Default::default() }
+    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows, files: Some(p_files), cost: Some(p_cost), tool_rows, tokens: Some(p_tokens), bars: bars_at, top_line, composer: Some(composer.inner(Margin { horizontal: 1, vertical: 1 })), ..Default::default() }
 }
 
 fn kv(k: &str, v: &str, th: &Theme) -> Span<'static> {

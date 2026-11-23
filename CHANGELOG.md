@@ -16,6 +16,20 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.207 (2026-11-23): a question you cannot miss; the cost box names the account you run on
+
+The user: a permission question in the terminal "is quite hidden, sometimes i dont realize until way later", and the cost
+box named Claude and SubRouter only: "how will users know the current usage remaining of other providers?"
+
+- A permission question is a block in the message box: "? allow bash?" in the warn colour, the call itself whole (up to
+  six rows; it was cut to the row's end, "sysctl vm.swapusa"), then y yes / a always / n no; the cockpit's box border turns
+  amber while it waits. A new question rings the terminal's bell, and with the terminal in the background (focus reports)
+  a desktop notification says it with the call.
+- The cockpit's cost box: the session's cost, the account it runs on (Claude's plan windows; a provider's balance where
+  its API tells one, "plan" for a subscription, else that it reports none), and another account only when it needs you
+  (Claude's plan at 80% or more, a balance under $1 or past its credit). A click on it opens /usage, every account.
+  The keyed providers' readings are fetched at start and after each paid turn, as SubRouter's balance alone was.
+
 ## 0.1.206 (2026-11-23): "do you have access to …?" goes to the agent too
 
 The user asked a chat "do you have access to my PC stats?" and got "No — I don't have access to your PC stats" from

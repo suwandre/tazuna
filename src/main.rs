@@ -121,7 +121,7 @@ use ratatui::{
     backend::TestBackend,
     crossterm::{
         event::{
-            self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event, KeyCode, KeyEventKind,
+            self, DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste, EnableFocusChange, EnableMouseCapture, Event, KeyCode, KeyEventKind,
             KeyModifiers, KeyboardEnhancementFlags, MouseButton, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
         },
         execute,
@@ -700,7 +700,8 @@ fn main() -> Result<()> {
                 None => None,
             };
             let mut term = ratatui::init();
-            execute!(std::io::stdout(), EnableMouseCapture)?;
+            // focus reports: a question asked while the terminal is in the background also says so as a notification
+            execute!(std::io::stdout(), EnableMouseCapture, EnableFocusChange)?;
             // terminals with the kitty keyboard protocol report Shift-Enter apart from Enter; Ctrl-J works everywhere
             let enhanced = supports_keyboard_enhancement().unwrap_or(false);
             if enhanced {
@@ -710,7 +711,7 @@ fn main() -> Result<()> {
             if enhanced {
                 let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
             }
-            let _ = execute!(std::io::stdout(), DisableBracketedPaste, DisableMouseCapture);
+            let _ = execute!(std::io::stdout(), DisableBracketedPaste, DisableMouseCapture, DisableFocusChange);
             // the pointer back to normal, in case the window closed over a link
             let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\x1b]22;default\x1b\\");
             ratatui::restore();
@@ -1721,6 +1722,7 @@ fn app_server(a: &Args) -> Result<()> {
                         }
                         // SubRouter's balance, read on a thread
                         Some("tazuna_balance") => s.balance = cmd["usd"].as_f64(),
+                        Some("tazuna_credits") => take_credits(&mut s, &cmd["v"]),
                         Some("tazuna_review") => review_done(&mut live, &mut s, &cmd),
                         // the project's hook ran (hooks.rs): only a failure shows
                         Some("tazuna_hook") => if cmd["ok"] != true {
@@ -3358,6 +3360,7 @@ fn run_live(
     let mut links: Vec<(ratatui::layout::Rect, String)> = vec![];
     // the files panel (cockpit): a click opens /diff
     let mut files_area: Option<ratatui::layout::Rect> = None;
+    let mut cost_area: Option<ratatui::layout::Rect> = None;
     let mut diff_files: Vec<(ratatui::layout::Rect, usize)> = vec![];
     let (mut tool_rows, mut tokens_area, mut bars): (Vec<(ratatui::layout::Rect, String)>, Option<ratatui::layout::Rect>, Option<(ratatui::layout::Rect, usize)>) = (vec![], None, None);
     // a list modal's place and its link rows: a click inside stays, on a link opens it, outside closes the list
@@ -3377,6 +3380,8 @@ fn run_live(
     let (mut copy_now, mut copied) = (false, None::<String>);
     // the composer's text area as last drawn, and whether a left-button drag started in it (it selects typed text)
     let (mut composer_area, mut composer_drag) = (None::<ratatui::layout::Rect>, false);
+    // the question last alerted, and whether the terminal has the focus (a terminal without focus reports: always)
+    let (mut asked, mut focused) = (None::<String>, true);
     // ctrl-b: the background-task view (which row is selected, when its output was last asked for)
     let (mut tasks_open, mut task_sel, mut outputs_read) = (false, 0usize, Instant::now());
     // ctrl-b, enter on an agent: its conversation in place of the main one, as in Claude Code (the task's id, how many of
@@ -3449,6 +3454,13 @@ fn run_live(
         (v.input, v.cursor, v.select) = (ed.text.clone(), ed.cursor, ed.anchor.map(|a| (a.min(ed.cursor), a.max(ed.cursor))));
         // the question on screen is the one an answer applies to: the front of live's queue
         v.asking = live.pending.front().map(|req| question(req));
+        // a new question: the terminal's bell, and a notification when the terminal is not in front (focus reports)
+        if v.asking != asked {
+            if let Some(q) = &v.asking {
+                alert_question(q, focused);
+            }
+            asked = v.asking.clone();
+        }
         v.mode = s.mode.clone();
         v.bg_running = live.bg.iter().filter(|t| t.ended.is_none()).count();
         v.cold = if s.cache_left(v.clock_ms) == Some(0.0) { s.rebuild().map_or(0, |r| r.0) } else { 0 };
@@ -3569,6 +3581,7 @@ fn run_live(
                 // a chat answer is the last reply too, for the router's next check, and a follow-up's context
                 Some("tazuna_chat_event") => chat_event(live, &mut s, &e, &mut chat_last, &mut last_reply),
                 Some("tazuna_balance") => s.balance = e["usd"].as_f64(),
+                Some("tazuna_credits") => take_credits(&mut s, &e["v"]),
                 Some("tazuna_update") => s.apply(&json!({"type": "harness_info", "text": e["text"]}), live.elapsed_ms()),
                 Some("tazuna_news") => s.apply(&json!({"type": "harness_news", "from": e["from"], "to": e["to"], "items": e["items"]}), live.elapsed_ms()),
                 Some("tazuna_changelog") => match e["entries"].as_array().filter(|a| !a.is_empty()) {
@@ -3598,10 +3611,7 @@ fn run_live(
                         let (t, ev) = live.note(ev);
                         s.apply(&ev, t);
                     }
-                    if let Some(b) = e["v"]["credits"].as_array().into_iter().flatten().find(|c| c["provider"] == "SubRouter").and_then(|c| c["left"].as_str())
-                        .and_then(|l| l.trim_start_matches('$').split(' ').next()?.parse::<f64>().ok()) {
-                        s.balance = Some(b);
-                    }
+                    take_credits(&mut s, &e["v"]["credits"]);
                     // into the panel /usage opened, unless it was closed meanwhile
                     if v.list.as_ref().is_some_and(|l| l.title == ACCOUNTS && l.pending) {
                         v.list = Some(accounts_panel(Some(&e["v"])));
@@ -3654,6 +3664,7 @@ fn run_live(
         term.draw(|f| {
             let areas = fx.frame(f, drawn, &v, dt);
             (transcript, rows, links, files_area, diff_files) = (areas.transcript, areas.rows, areas.links, areas.files, areas.diff_files);
+            cost_area = areas.cost;
             (tool_rows, tokens_area, bars, top_line) = (areas.tool_rows, areas.tokens, areas.bars, areas.top_line);
             (list_area, list_links, list_rows, task_rows) = (areas.list, areas.list_links, areas.list_rows, areas.task_rows);
             composer_area = areas.composer;
@@ -3695,6 +3706,14 @@ fn run_live(
             continue;
         }
         let key = match event::read()? {
+            Event::FocusLost => {
+                focused = false;
+                continue;
+            }
+            Event::FocusGained => {
+                focused = true;
+                continue;
+            }
             Event::Paste(text) => {
                 match login.as_mut().and_then(|l| l.form.as_mut()) {
                     Some(typed) => typed.push_str(text.trim()),
@@ -3786,6 +3805,9 @@ fn run_live(
                                 v.diff = Some(ui::DiffPanel { selected: i, diff: d, scroll: 0 });
                             } else if files_area.is_some_and(|r| r.contains(pos)) && !v.changed.is_empty() {
                                 v.diff = Some(ui::DiffPanel { selected: 0, diff: diff_of(&v.changed[0]), scroll: 0 });
+                            } else if cost_area.is_some_and(|r| r.contains(pos)) && v.list.is_none() && v.diff.is_none() {
+                                // the cost box: every account, as /usage
+                                open_usage(&mut v, &status_tx);
                             } else if let Some((_, url)) = links.iter().find(|(r, _)| r.contains(pos)) {
                                 let msg = match platform::open_url(url) {
                                     Ok(()) => format!("opened {url}"),
@@ -3820,7 +3842,7 @@ fn run_live(
                         let over = links.iter().any(|(r, _)| r.contains(at)) || list_links.iter().any(|(r, _)| v.list.is_some() && r.contains(at))
                             || diff_files.iter().any(|(r, _)| v.diff.is_some() && r.contains(at)) || (v.list.is_none() && v.diff.is_none()
                             && (tool_rows.iter().any(|(r, _)| r.contains(at)) || (tokens_area.is_some_and(|r| r.contains(at)) && !s.turn_usage.is_empty())
-                                || (files_area.is_some_and(|r| r.contains(at)) && !v.changed.is_empty())));
+                                || (files_area.is_some_and(|r| r.contains(at)) && !v.changed.is_empty()) || cost_area.is_some_and(|r| r.contains(at))));
                         if over != over_link {
                             over_link = over;
                             use std::io::Write;
@@ -4277,11 +4299,11 @@ fn run_live(
             // ctrl-g: the message so far in $VISUAL / $EDITOR (vi without either); what is saved comes back here
             KeyCode::Char('g') if ctrl => {
                 let editor = std::env::var("VISUAL").or_else(|_| std::env::var("EDITOR")).unwrap_or_else(|_| "vi".into());
-                let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags, DisableBracketedPaste, DisableMouseCapture);
+                let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags, DisableBracketedPaste, DisableMouseCapture, DisableFocusChange);
                 ratatui::restore();
                 let edited = edit_in(&editor, &ed.text);
                 *term = ratatui::init();
-                let _ = execute!(std::io::stdout(), EnableBracketedPaste);
+                let _ = execute!(std::io::stdout(), EnableBracketedPaste, EnableFocusChange);
                 if mouse {
                     let _ = execute!(std::io::stdout(), EnableMouseCapture);
                 }
@@ -4420,11 +4442,7 @@ fn run_live(
                 // /usage: every account in one panel: Claude's plan (claude's own /usage page, no model call), the
                 // providers' credits, OmniRoute's accounts and their quotas (accounts.rs)
                 if text == "/usage" {
-                    v.list = Some(accounts_panel(None));
-                    let tx = status_tx.clone();
-                    std::thread::spawn(move || {
-                        let _ = tx.send(json!({"type": "tazuna_accounts", "v": accounts::all()}));
-                    });
+                    open_usage(&mut v, &status_tx);
                     continue;
                 }
                 // /new: a fresh conversation; /resume: a picker of this repo's sessions (/resume ID opens one directly)
@@ -4921,14 +4939,34 @@ fn run_live(
 }
 
 /// The /model picker's state, opened on the session's model.
-/// SubRouter's balance, read on a thread of its own; it arrives through `tx`.
+/// /usage (and a click on the cost box): every account's panel at once, its readings filled in off the screen's thread.
+#[inline(never)]
+fn open_usage(v: &mut ui::View, tx: &std::sync::mpsc::Sender<serde_json::Value>) {
+    v.list = Some(accounts_panel(None));
+    let tx = tx.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(json!({"type": "tazuna_accounts", "v": accounts::all()}));
+    });
+}
+
+/// The keyed providers' readings (SubRouter's balance among them), read on a thread of its own; they arrive through `tx`
+/// for the cost box, which names the account in use and any other that needs you.
 fn fetch_balance(tx: &std::sync::mpsc::Sender<serde_json::Value>) {
     let tx = tx.clone();
     std::thread::spawn(move || {
-        if let Some(b) = models::subrouter_balance() {
-            let _ = tx.send(json!({"type": "tazuna_balance", "usd": b}));
-        }
+        let _ = tx.send(json!({"type": "tazuna_credits", "v": accounts::credits()}));
     });
+}
+
+/// `tazuna_credits` (and /usage's readings): every provider's line into the session, SubRouter's balance as a number too.
+#[inline(never)]
+fn take_credits(s: &mut Session, credits: &serde_json::Value) {
+    let Some(list) = credits.as_array() else { return };
+    s.credits = list.iter().filter_map(|c| Some((c["provider"].as_str()?.to_string(), c["left"].as_str().map(String::from)))).collect();
+    if let Some(b) = list.iter().find(|c| c["provider"] == "SubRouter").and_then(|c| c["left"].as_str())
+        .and_then(|l| l.trim_start_matches('$').split(' ').next()?.parse::<f64>().ok()) {
+        s.balance = Some(b);
+    }
 }
 
 
@@ -5167,6 +5205,19 @@ fn open_picker(live: &live::Live, keys: &models::KeyModels) -> Result<Picker> {
     let mut p = Picker { cs, sel: 0, eff, prov, filter: String::new(), psel, in_models: false, effort_at: None, effort_only: false, confirm: false };
     p.sel = shown(&p.cs, "", p.group().as_deref()).iter().position(|&i| p.cs[i].model == live.model).unwrap_or(0);
     Ok(p)
+}
+
+/// A permission question just asked: the terminal's bell (a tab or dock shows it), and with the terminal in the background
+/// a desktop notification with the call, off the screen's thread. A question in the box's one row went unseen for minutes
+/// (the user, 2026-11-23).
+#[inline(never)]
+fn alert_question(q: &str, focused: bool) {
+    let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\x07");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    if !focused {
+        let text: String = q.chars().take(180).collect();
+        std::thread::spawn(move || platform::notify("tazuna needs you", &format!("allow {text}")));
+    }
 }
 
 /// Up and down in the composer: a row of the draft as drawn; from its first or last row, the message history.
