@@ -355,7 +355,12 @@ const log = [];
     await ctx.close(); }
   // a fresh install: no key yet, nothing running here
   { const none = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { if (p?.msg?.type === "settings") p.msg.providers = p.msg.providers.filter((x) => !x.local).map((x) => ({ ...x, key: "" })); return emit(e, p); }; })();`;
-    const [ctx, p] = await ctxOf({ extra: none });
+    const [ctx, p] = await ctxOf({ extra: `${none} window.__NO_CLAUDE__ = true;` });
+    await step(p, "d-send-no-provider", async () => {
+      await p.getByRole("textbox", { name: "Message" }).fill("Hello");
+      await p.getByTitle("Send (Enter)").click();
+      await p.getByRole("alert").filter({ hasText: "starting claude (is it installed and on PATH?)" }).waitFor({ state: "visible", timeout: 4000 });
+    });
     await step(p, "d-providers-none", async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(600); await p.getByRole("button", { name: "Providers", exact: true }).click(); });
     await ctx.close(); }
   // the model picker's search takes the typing as it opens (0.1.74 to 0.1.76 it did not)

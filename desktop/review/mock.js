@@ -413,6 +413,11 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
     const msg = args?.msg ?? {}, tid = args?.tid, m = (x) => setTimeout(() => T.emit("tazuna-view", { tid, msg: x }), 20);
     // `window.__NO_CLAUDE__`: Claude Code is not installed
     if (cmd === "op" && msg.op === "setup") { m(window.__NO_CLAUDE__ ? { type: "setup", claude: null, claude_login: null } : { type: "setup", claude: "2.1.330 (Claude Code)", claude_login: !out() }); return null; }
+    if (cmd === "send" && window.__NO_CLAUDE__ && last[tid]) {
+      const v = last[tid];
+      m({ ...v, from: 0, blocks: [...v.blocks, { kind: "notice", text: "starting claude (is it installed and on PATH?): No such file or directory (os error 2)", error: true }] });
+      return null;
+    }
     if (cmd === "op" && msg.op === "resume" && views[msg.id]) { setTimeout(() => T.view(tid, views[msg.id]), 10); return null; }
     // Retry: the failed turn's error makes way for the new reply; no second message of yours
     if (cmd === "op" && msg.op === "retry") {
