@@ -1373,6 +1373,42 @@ fn inside(cwd: &std::path::Path, path: &str) -> Option<std::path::PathBuf> {
     p.starts_with(&root).then_some(p)
 }
 
+/// Whether "edits" mode may write or edit `path` (as the lean server resolves it from `cwd`) without a question: inside
+/// the project `root`, symlinks and `..` resolved, and away from what runs commands later: a repository's .git (its hooks
+/// and config) and the hidden files of the user's home (shell profiles, ~/.config/tazuna/hooks.json). A write there would
+/// be a command nobody approved, and a page or file the agent read can ask for one (security review, 2026-11-23).
+fn edits_freely(root: &std::path::Path, cwd: &std::path::Path, path: &str) -> bool {
+    let (Ok(root), Some(p)) = (root.canonicalize(), (!path.is_empty()).then(|| canonical_target(&cwd.join(path))).flatten()) else { return false };
+    let Ok(rel) = p.strip_prefix(&root) else { return false };
+    // Windows drops trailing dots and spaces from a name: `.git.` is .git there
+    let named = |c: std::path::Component, n: &str| c.as_os_str().to_string_lossy().trim_end_matches(['.', ' ']).eq_ignore_ascii_case(n);
+    if rel.components().any(|c| named(c, ".git")) {
+        return false;
+    }
+    let home = crate::platform::home().and_then(|h| h.canonicalize().ok());
+    !home.is_some_and(|h| p.strip_prefix(&h).ok().and_then(|r| r.components().next()).is_some_and(|c| c.as_os_str().to_string_lossy().starts_with('.')))
+}
+
+/// `p` with symlinks and `..` resolved, also for a file not made yet: its deepest existing folder canonical, then the
+/// plain names below it. None for a `..` below that folder or a dangling symlink: where a write would land is unknown.
+fn canonical_target(p: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut rest = vec![];
+    let mut at = p;
+    loop {
+        if let Ok(c) = at.canonicalize() {
+            return Some(rest.iter().rev().fold(c, |c, n| c.join(n)));
+        }
+        if at.symlink_metadata().is_ok() {
+            return None;
+        }
+        match at.components().next_back()? {
+            std::path::Component::Normal(n) => rest.push(n.to_os_string()),
+            _ => return None,
+        }
+        at = at.parent()?;
+    }
+}
+
 /// Runs `search` or `list` with fixed arguments (no shell): (text, is_error).
 fn explore_tool(name: &str, input: &Value, cwd: &std::path::Path) -> (String, bool) {
     let Some(path) = inside(cwd, input["path"].as_str().unwrap_or(".")) else {
@@ -1566,7 +1602,10 @@ impl Loop {
         }
         // auto asks before the destructive commands alone (risky.rs), read from where bash is now (a `cd` sticks), and
         // runs everything else as full does
-        let ask = from_text || asks(&self.mode, tool)
+        // edits mode writes without a question inside the project only (`edits_freely`); elsewhere it asks, once
+        let outside = self.mode == "acceptEdits" && matches!(tool, "write" | "edit")
+            && !edits_freely(self.server.root(), self.server.cwd(), input["path"].as_str().unwrap_or_default());
+        let ask = from_text || outside || asks(&self.mode, tool)
             || (self.mode == "auto" && tool == "bash" && crate::risky::scan(input["command"].as_str().unwrap_or_default(),
                 &std::env::current_dir().unwrap_or_default(), Some(self.server.cwd())).0.is_some())
             || (matches!(self.mode.as_str(), "default" | "acceptEdits" | "plan") && tool == "mcp" && self.hub.as_ref().is_some_and(|h| !h.reads_only(input)));
@@ -1580,7 +1619,8 @@ impl Loop {
         // an MCP call is asked about as claude names it (mcp__server__tool), so "always" covers that one tool
         let shown = if tool == "mcp" { self.hub.as_ref().map_or("mcp".into(), |h| h.label(input)) } else { tool.to_string() };
         let shown = if from_text { format!("{shown} (written as text by the model)") } else { shown };
-        (self.out)(&json!({"type": "control_request", "request_id": id, "request": {"subtype": "can_use_tool", "tool_name": shown, "input": input, "from_text": from_text}}));
+        let shown = if outside { format!("{shown} (outside the project)") } else { shown };
+        (self.out)(&json!({"type": "control_request", "request_id": id, "request": {"subtype": "can_use_tool", "tool_name": shown, "input": input, "from_text": from_text, "outside": outside}}));
         loop {
             let Ok(m) = rx.recv() else { return Permit::Stop }; // tazuna is gone: nobody can answer
             if m["type"] == "control_response" && m["response"]["request_id"] == id.as_str() {
@@ -4194,6 +4234,43 @@ session: "s".into(),
         let result = ev.borrow().iter().find(|e| e["type"] == "user").cloned().unwrap();
         assert!(result["message"]["content"][0]["content"].as_str().unwrap().starts_with("Plan mode"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn edits_mode_asks_before_a_write_outside_the_project() {
+        let base = std::env::temp_dir().join(format!("tazuna-edits-outside-{}", std::process::id()));
+        let (dir, away) = (base.join("proj"), base.join("away"));
+        std::fs::create_dir_all(dir.join(".git/hooks")).unwrap();
+        std::fs::create_dir_all(&away).unwrap();
+        std::os::unix::fs::symlink(&away, dir.join("link")).unwrap();
+        std::os::unix::fs::symlink(away.join("not-yet"), dir.join("dangling")).unwrap();
+        let home = crate::platform::home().unwrap();
+        let hooks = format!("/tmp/..{}/.config/tazuna/hooks.json", home.display());
+        let no = json!({"type": "control_response", "response": {"subtype": "success", "request_id": "perm-1", "response": {"behavior": "deny", "message": "no"}}});
+        let cases = [("src/new.rs", false), ("a/b/../c.txt", true), (hooks.as_str(), true), ("../away/x", true), ("link/x", true),
+            ("dangling", true), (".git/hooks/pre-commit", true), (".GIT/config", true), ("/etc/passwd", true)];
+        for (path, asked) in cases {
+            let ev = Rc::new(RefCell::new(vec![]));
+            let (tx, rx) = std::sync::mpsc::channel();
+            for tool in ["write", "edit"] {
+                let mut l = asking_loop("acceptEdits", &dir, ev.clone(), Some((tx.clone(), no.clone())));
+                let input = json!({"path": path, "content": "x", "old": "a", "new": "b"});
+                assert_eq!(matches!(l.permit(tool, &input, &rx, false), Permit::Deny(_)), asked, "{tool} {path}");
+            }
+            let ev = ev.borrow();
+            let questions: Vec<_> = ev.iter().filter(|e| e["type"] == "control_request").collect();
+            assert_eq!(questions.len(), if asked { 2 } else { 0 }, "{path}");
+            assert!(questions.iter().all(|q| q["request"]["outside"] == true && q["request"]["tool_name"].as_str().unwrap().ends_with("(outside the project)")));
+        }
+        // a `cd` moves where relative paths land, not the project
+        let mut l = asking_loop("acceptEdits", &dir, Rc::new(RefCell::new(vec![])), None);
+        l.server.call(&json!({"name": "bash", "arguments": {"command": "cd .."}})).unwrap();
+        assert!(!super::edits_freely(l.server.root(), l.server.cwd(), "away/x"));
+        assert!(super::edits_freely(l.server.root(), l.server.cwd(), "proj/ok.txt"));
+        // the other modes: unchanged
+        assert!(super::asks("default", "write") && !super::asks("bypassPermissions", "write"));
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
