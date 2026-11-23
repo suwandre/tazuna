@@ -241,6 +241,8 @@ export const core = {
   /** the plan alone, a second or so before the rest of an accounts reading (the credits and OmniRoute ask other servers) */
   onAccountsPlan: (cb: (a: Pick<Accounts, "plan" | "plan_notes">) => void) => on<Pick<Accounts, "plan" | "plan_notes">>("accounts_plan", cb),
   send: (text: string, agent = false) => to("send", { text, agent }),
+  sendDraft: (tid: string, text: string, draft: string, agent = false) => invoke("send", { tid, text, draft, agent }),
+  onSendRejected: (cb: (m: { text: string }, tid: string) => void) => on<{ text: string }>("send_rejected", cb),
   trust: () => to("trust"),
   pickFolder: () => invoke<string | null>("pick_folder"),
   /** the quick-chat shortcut from anywhere ("Alt+Space"; empty: none); fails when another app holds it */

@@ -28,7 +28,7 @@ export type ComposerBag = {
 type Props = {
   /** An editable preview draft, never submitted or cleared by Send/Enter. */
   readOnly?: boolean;
-  session: Session; threadCost: number; busy?: boolean; onSend?: (text: string) => void; onStop?: () => void;
+  session: Session; threadCost: number; busy?: boolean; onSend?: (text: string, draft: string) => void; onStop?: () => void;
   /** a new conversation: where it runs (a chat or a project), changed from the box */
   where?: Where;
   /** a plain chat (no project) */
@@ -173,7 +173,12 @@ export function Composer({ session, where, chat, busy, onSend, onStop, models, o
   const bag: ComposerBag = { readOnly, where, chat, session, busy, models, onModels, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, attach: (p) => { attach(p); }, picker };
   // a message sent during a reply waits behind it (the core queues it, as the terminal does)
   // attachments go in the message as paths after its text (quoted when they hold a space): the core sends images as images
-  const send = () => { if (readOnly) return; if (!files.length && run(text.trim())) return; const t = [text.trim(), ...files.map(quotePath)].filter(Boolean).join(" "); if (!t) return; onSend?.(t); setText(""); setFiles([]); };
+  const send = () => {
+    if (readOnly || (!files.length && run(text.trim()))) return;
+    const paths = files.map(quotePath).join(" "), t = [text.trim(), paths].filter(Boolean).join(" ");
+    if (!t) return;
+    onSend?.(t, [text, paths].filter(Boolean).join(" ")); setText(""); setFiles([]);
+  };
   const ready = !readOnly && (!!text.trim() || files.length > 0);
   return (
     <footer className="px-7 pb-[22px] pt-2.5">

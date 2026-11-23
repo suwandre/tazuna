@@ -76,7 +76,7 @@ const KEEP_OPEN = 4;
 
 /** The open conversations (each its own core, so one can keep working while another is on screen) and the one on
  * screen. Outside the Tauri window there is no core (the demo data shows instead). */
-function useCore() {
+function useCore(onDraftRejected: (text: string) => void) {
   const [threads, setThreads] = useState<Record<string, Thread>>({});
   const [active, setActiveTid] = useState("");
   const [projects, setProjects] = useState<string[]>(recent);
@@ -92,11 +92,21 @@ function useCore() {
   // one selected, the one a click on that row shows (not a second copy)
   const earlier = useRef<Record<string, string[]>>({});
   const idsOf = (t: Thread) => sessionIds(t.view, earlier.current[t.tid]);
+  const draftKeyOf = (t: Thread) => idsOf(t)[0] ?? t.resume ?? `new:${t.folder ?? "chat"}`;
   // the window's queue: when its last message went (and how many of yours the view had then), and the wait set for the next
   const sent = useRef<Record<string, { prompts: number; at: number }>>({});
   const waits = useRef<Record<string, number>>({});
   const activeRef = useRef("");
   activeRef.current = active;
+  const restoreDraft = (tid: string, text: string) => {
+    const t = live.current[tid];
+    if (!t) return;
+    if (tid === activeRef.current) onDraftRejected(text);
+    else {
+      const key = DRAFT + draftKeyOf(t);
+      localStorage.setItem(key, [localStorage.getItem(key), text].filter(Boolean).join("\n\n"));
+    }
+  };
   const patch = (tid: string, p: Partial<Thread>) => setThreads((t) => (t[tid] ? { ...t, [tid]: { ...t[tid], ...p } } : t));
   const show = (tid: string) => { core.use(tid); setActiveTid(tid); setModels(null); patch(tid, { used: Date.now() }); };
   // a conversation out of sight that finishes or asks for an answer says so with a system notification
@@ -206,6 +216,7 @@ function useCore() {
     if (!inTauri) return;
     const offs = [
       core.onExit((tid) => patch(tid, { error: "tazuna stopped. The app needs tazuna 0.1.128 or later (it carries its own; TAZUNA_BIN overrides)." })),
+      core.onSendRejected(({ text }, tid) => restoreDraft(tid, text)),
       core.onView((v, tid) => {
         const was = live.current[tid]?.view?.session_id;
         // (a switch's view has no session until its first turn: the id before it is kept too)
@@ -261,7 +272,7 @@ function useCore() {
   };
   // where the box's draft is kept: the conversation's id once known (a resumed one's from the start), else its folder's
   // (after a change of model, before its first turn, the session before it: not a new chat's key)
-  const draftKey = cur ? idsOf(cur)[0] ?? cur.resume ?? `new:${folder ?? "chat"}` : undefined;
+  const draftKey = cur ? draftKeyOf(cur) : undefined;
   // a saved conversation being opened: its core is up and its messages are still on their way (the core's first view is
   // empty, the resumed one follows)
   const resuming = !!cur?.resume && !error && !!view && view.session_id !== cur.resume && !view.blocks.some((b) => b.kind === "prompt");
@@ -283,7 +294,7 @@ function useCore() {
   /** The id the saved lists know a conversation by: its session's, else an earlier one's they still hold. */
   const listed = new Set(Object.values(sessions).flatMap((rows) => rows.map((r) => r.id)));
   const listedId = (t?: Thread) => (t ? idsOf(t).find((id) => listed.has(id)) ?? t.view?.session_id ?? undefined : undefined);
-  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, side, openSide, closeSide, forget, resuming, held: (held[active] ?? []).map((w) => w.text), hold, unhold, listedId };
+  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, restoreDraft, side, openSide, closeSide, forget, resuming, held: (held[active] ?? []).map((w) => w.text), hold, unhold, listedId };
 }
 
 /** Light or dark: the choice in Settings (lib/chrome.ts keeps it; until desktop 0.1.87 a flip lasted until the window
@@ -349,7 +360,7 @@ export default function App() {
     });
     return () => { off.then((f) => f()); };
   }, []);
-  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, resuming, side, openSide, closeSide, forget, held, hold, unhold, listedId } = useCore();
+  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, restoreDraft, resuming, side, openSide, closeSide, forget, held, hold, unhold, listedId } = useCore((text) => setDraft({ text, n: Date.now(), append: true }));
   useEffect(() => setEditing(null), [active]);
   useEffect(watchUpdates, []);
   // creator mode: the user's panels, read again whenever a conversation finishes a turn (a creator one may have made one)
@@ -481,7 +492,7 @@ export default function App() {
   // the conversation runs on Claude (its CLI: no url) and setup says it is signed out
   const claudeOut = claude?.claude_login === false && !!view && (choice ? !choice.url : /^(claude-)?(opus|sonnet|haiku|fable)/.test(view.model));
   // the first message to a paid model asks once (per model; the cap in Settings holds after that)
-  const [paidAsk, setPaidAsk] = useState<string | null>(null);
+  const [paidAsk, setPaidAsk] = useState<{ text: string; draft: string } | null>(null);
   const paidKey = choice ? `tazuna.paid-ok.${choice.model}|${choice.url}` : "";
   // the pull request of the conversation's branch (gh, through the core): asked when a folder's conversation shows and
   // after each finished reply; the header chip and the PR panel read it
@@ -675,16 +686,18 @@ export default function App() {
   const createBehaviour = (ask: string) => open(folder, undefined, { then: (tid) => { core.createIn(tid, ask).catch(() => {}); } });
   const creation = creations[active];
   /** A message on its way: /create, a creator conversation's first, an edit from an earlier message, or a plain one. */
-  const sendNow = (text: string) => {
+  const sendNow = (text: string, draft: string) => {
     // /create: part of the window (a panel or plugin) or something tazuna does (a command, skill or tool): asked first
     if (text.startsWith("/create ")) { setCreateAsk(text.slice(8).trim()); return; }
     // during a reply it waits in the window, shown queued, and goes when the reply ends
     if (busy) { hold(active, text); return; }
-    if (creator === "edit" && !view?.blocks.some((b) => b.kind === "prompt")) { core.send(creatorMessage(text, true), true).catch(() => {}); return; }
-    if (!editing) { core.send(text).catch((e) => console.error(e)); return; }
+    const send = (message: string, agent = false) => core.sendDraft(active, message, draft, agent);
+    const refused = (e: unknown) => { restoreDraft(active, draft); console.error(e); };
+    if (creator === "edit" && !view?.blocks.some((b) => b.kind === "prompt")) { send(creatorMessage(text, true), true).catch(refused); return; }
+    if (!editing) { send(text).catch(refused); return; }
     const { cp, keep } = editing;
     setEditing(null);
-    core.rewind(cp, keep).then(() => core.send(text)).catch((e) => console.error(e));
+    core.rewind(cp, keep).then(() => send(text)).catch(refused);
   };
   const messages: Message[] = [...(view ? viewMessages(view) : inTauri ? [] : demo.messages), ...held.map((text) => ({ role: "user" as const, text, queued: true }))];
   /** Stop: the reply ends, and what waited behind it goes back into the box (it went to the agent at once). */
@@ -835,9 +848,9 @@ export default function App() {
   } : {};
   const composer = (
         <Composer key={active} readOnly={!inTauri} commands={windowCommands} where={fresh ? where : undefined} chat={inTauri && !folder} draftKey={draftKey} session={session} threadCost={usage.threadCost} busy={busy}
-            onSend={inTauri ? (text) => {
-              if (line?.paid && paidKey && !localStorage.getItem(paidKey)) { setPaidAsk(text); return; }
-              sendNow(text);
+            onSend={inTauri ? (text, draft) => {
+              if (line?.paid && paidKey && !localStorage.getItem(paidKey)) { setPaidAsk({ text, draft }); return; }
+              sendNow(text, draft);
             } : undefined}
             below={claudeOut ? (
               // a conversation on Claude while it is signed out: every message would fail (design review 12)
@@ -853,8 +866,8 @@ export default function App() {
             above={paidAsk != null ? (
               <div className="mx-auto mb-2 flex max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
                 <span className="flex-1">This goes to <span className="text-ink">{choice?.label}</span> on {choice?.provider}, a paid API{line?.est != null ? `: about ${usd(line.est)} a message` : ""}. Paid spend stops at your cap per 24 hours (Settings).</span>
-                <button onClick={() => { localStorage.setItem(paidKey, "1"); const t = paidAsk; setPaidAsk(null); sendNow(t); }} className={accentButton}>Send</button>
-                <button onClick={() => { setDraft({ text: paidAsk, n: Date.now() }); setPaidAsk(null); }} className={quietButton}>Cancel</button>
+                <button onClick={() => { localStorage.setItem(paidKey, "1"); setPaidAsk(null); sendNow(paidAsk.text, paidAsk.draft); }} className={accentButton}>Send</button>
+                <button onClick={() => { setDraft({ text: paidAsk.draft, n: Date.now() }); setPaidAsk(null); }} className={quietButton}>Cancel</button>
               </div>
             ) : editing ? (
               <div className="mx-auto mb-2 flex max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
