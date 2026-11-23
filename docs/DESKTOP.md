@@ -612,6 +612,10 @@ question. The mode menu lists full last, and its pill turns the warning colour w
 0.1.110 (with tazuna 0.1.211): on Windows the app starts its core without a console window; every launch opened an
 empty `tazuna.exe app-server` console over the app (found and fixed by Devin's QA run on Windows, PR #5).
 
+0.1.111: one "tazuna desktop X is out" message at a time: two releases an hour apart stacked "0.1.109 is out" over
+"0.1.110 is out". Either button installed the newest (the install looks for it again), but the older message read as
+installing an older version.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

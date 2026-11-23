@@ -4,7 +4,9 @@
 import { useSyncExternalStore } from "react";
 
 export type Toast = { id: number; text: string; kind?: "ok" | "info" | "error"; action?: { label: string; run: () => void }; sticky?: boolean;
-  modal?: boolean; detail?: string };
+  modal?: boolean; detail?: string;
+  /** one at a time per key: a new one replaces the last ("0.1.110 is out" replaces "0.1.109 is out") */
+  key?: string };
 let toasts: Toast[] = [];
 let next = 1;
 const listeners = new Set<() => void>();
@@ -20,7 +22,7 @@ export function dismiss(id: number) {
  * newest three stay. */
 export function toast(text: string, opts: Omit<Toast, "id" | "text"> = {}) {
   const id = next++;
-  set([...toasts.slice(-2), { id, text, ...opts }]);
+  set([...toasts.filter((t) => !opts.key || t.key !== opts.key).slice(-2), { id, text, ...opts }]);
   if (!opts.sticky && !opts.modal) setTimeout(() => dismiss(id), opts.kind === "error" ? 9000 : opts.action ? 8000 : 4000);
   return id;
 }
