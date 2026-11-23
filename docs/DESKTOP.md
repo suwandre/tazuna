@@ -599,6 +599,9 @@ plan from this session" for two artifacts their account could open.
 - Seen: the sweep (392 steps in Chromium and in WebKit, no page errors), the real window at 1440 and 960 and at every
   text size (out/review-12/a2b3/real2).
 
+0.1.107 (with tazuna 0.1.205): Qwen Cloud's Token Plan models take an effort in the model picker (their levels from the
+same service's models.dev catalog); they had none to choose.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

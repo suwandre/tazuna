@@ -4266,7 +4266,7 @@ dependencies = [
 
 [[package]]
 name = "tazuna-desktop"
-version = "0.1.106"
+version = "0.1.107"
 dependencies = [
  "serde",
  "serde_json",
