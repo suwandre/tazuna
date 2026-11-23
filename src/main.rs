@@ -3704,7 +3704,7 @@ fn run_live(
                     // in the composer: the cursor goes under the click, and a drag from there selects typed text
                     MouseEventKind::Down(MouseButton::Left) if let Some(i) = composer_area
                         .filter(|r| r.contains(ratatui::layout::Position::new(m.column, m.row)))
-                        .and_then(|r| ui::composer_index(&v, r.width, m.column - r.x, m.row - r.y)) =>
+                        .and_then(|r| ui::composer_index(&v, r.width, m.column - r.x, i32::from(m.row - r.y))) =>
                     {
                         (ed.cursor, ed.anchor, composer_drag, sel) = (i, Some(i), true, None);
                     }
@@ -3714,7 +3714,10 @@ fn run_live(
                     }
                     MouseEventKind::Drag(MouseButton::Left) if composer_drag => {
                         if let Some(r) = composer_area.filter(|r| r.width > 0 && r.height > 0) {
-                            let (col, row) = (m.column.clamp(r.x, r.right() - 1) - r.x, m.row.clamp(r.y, r.bottom() - 1) - r.y);
+                            // the row may lie past the box's edge: composer_index takes it as a row scrolled away. A box on
+                            // the screen's last row (zen) has nothing under it to drag onto: its last row scrolls
+                            let edge = r.bottom() >= ratatui::crossterm::terminal::size().map_or(u16::MAX, |(_, h)| h) && m.row + 1 >= r.bottom();
+                            let (col, row) = (m.column.clamp(r.x, r.right() - 1) - r.x, i32::from(m.row) - i32::from(r.y) + i32::from(edge));
                             if let Some(i) = ui::composer_index(&v, r.width, col, row) {
                                 // dragged forward onto a character: it is in, as cells are in a transcript selection
                                 let on_char = ed.text[i..].chars().next().filter(|&c| c != '\n');
@@ -4880,8 +4883,8 @@ fn run_live(
             // end of line while typing; with an empty composer, back to the newest output
             KeyCode::End if ed.text.is_empty() => v.scroll = 0,
             KeyCode::End => ed.end(),
-            KeyCode::Up => ed.up(),
-            KeyCode::Down => ed.down(),
+            KeyCode::Up => composer_row(&mut ed, &mut v, composer_area, false),
+            KeyCode::Down => composer_row(&mut ed, &mut v, composer_area, true),
             // esc: clear what is typed; with nothing typed, stop the run like ctrl-c
             KeyCode::Esc if ed.text.is_empty() => {
                 if let Some((t, e)) = busy(&s).then(|| live.interrupt()).flatten() {
@@ -5144,6 +5147,17 @@ fn open_picker(live: &live::Live, keys: &models::KeyModels) -> Result<Picker> {
     let mut p = Picker { cs, sel: 0, eff, prov, filter: String::new(), psel, in_models: false, effort_at: None, effort_only: false, confirm: false };
     p.sel = shown(&p.cs, "", p.group().as_deref()).iter().position(|&i| p.cs[i].model == live.model).unwrap_or(0);
     Ok(p)
+}
+
+/// Up and down in the composer: a row of the draft as drawn; from its first or last row, the message history.
+#[inline(never)]
+fn composer_row(ed: &mut editor::Editor, v: &mut ui::View, area: Option<ratatui::layout::Rect>, down: bool) {
+    (v.input, v.cursor, v.select) = (ed.text.clone(), ed.cursor, None);
+    match area.and_then(|r| ui::composer_step(v, r.width, down)) {
+        Some(i) => (ed.cursor, ed.anchor) = (i, None),
+        None if down => ed.down(),
+        None => ed.up(),
+    }
 }
 
 /// `/update`: runs this binary's `upgrade` and says its last line (ANSI and spinner frames stripped), plus that the next

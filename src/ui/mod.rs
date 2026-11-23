@@ -2758,6 +2758,7 @@ pub fn composer_rows_in(v: &View, th: &Theme, glyph: &str, placeholder: &str, wi
     let room = (width as usize).saturating_sub(4).max(1);
     let rows = composer_layout(v, room);
     let skip = composer_skip(&rows, cursor_at(v), max);
+    COMPOSER_TOP.set((skip, max));
     let hints = hint_row(v, th, width);
     let sel = v.select;
     rows.into_iter()
@@ -2801,16 +2802,19 @@ pub fn composer_rows_in(v: &View, th: &Theme, glyph: &str, placeholder: &str, wi
 /// each with the index a click past its end lands on. Drawing and clicking share it, so a click lands where it looks.
 /// While text is selected the cursor is not drawn: its cell would shift the text under a drag.
 fn composer_layout(v: &View, room: usize) -> Vec<(Vec<(char, Option<usize>)>, usize)> {
-    let at = cursor_at(v);
-    let cursor = v.select.is_none();
-    let mut cells: Vec<(char, Option<usize>)> = Vec::with_capacity(v.input.len() + 1);
-    for (i, c) in v.input.char_indices() {
+    text_rows(&v.input, cursor_at(v), v.select.is_none(), room)
+}
+
+/// The wrapping itself: `cursor` draws the cursor's cell at `at` (it takes a column, so the rows after it shift by one).
+fn text_rows(input: &str, at: usize, cursor: bool, room: usize) -> Vec<(Vec<(char, Option<usize>)>, usize)> {
+    let mut cells: Vec<(char, Option<usize>)> = Vec::with_capacity(input.len() + 1);
+    for (i, c) in input.char_indices() {
         if cursor && i == at {
             cells.push((CURSOR, None));
         }
         cells.push((c, Some(i)));
     }
-    if cursor && at == v.input.len() {
+    if cursor && at == input.len() {
         cells.push((CURSOR, None));
     }
     let (mut rows, mut row, mut w) = (vec![], vec![], 0);
@@ -2828,7 +2832,7 @@ fn composer_layout(v: &View, room: usize) -> Vec<(Vec<(char, Option<usize>)>, us
         row.push((c, i));
         w += cw;
     }
-    rows.push((row, v.input.len()));
+    rows.push((row, input.len()));
     rows
 }
 
@@ -2837,30 +2841,71 @@ fn cursor_at(v: &View) -> usize {
     if v.input.is_char_boundary(at) { at } else { v.input.len() }
 }
 
-/// Rows scrolled off the top: the cursor's row stays in view when the input is taller than the box.
+thread_local! {
+    /// The draft's first row shown and the rows the box held when it was last drawn: the box scrolls only as far as the
+    /// cursor needs, as a text field does, and a click maps onto the rows on screen. Worked out afresh each frame, the
+    /// cursor's row was always the bottom one, so the row under it could not be reached (the user, 2026-11-23: "there is
+    /// another line after … but i cannot use arrow down to reach it").
+    static COMPOSER_TOP: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, COMPOSER_MAX_ROWS)) };
+}
+
+/// The row the cursor is on: the one holding the cursor's cell, else the character at it, else the row it ends (the end of
+/// the text, a row before a newline). A full row's end is also the next row's start: the next row is the cursor's.
+fn cursor_row(rows: &[(Vec<(char, Option<usize>)>, usize)], at: usize) -> usize {
+    rows.iter().position(|(r, _)| r.iter().any(|(_, i)| i.is_none_or(|i| i == at)))
+        .or_else(|| rows.iter().position(|(_, end)| *end == at))
+        .unwrap_or(rows.len().saturating_sub(1))
+}
+
+/// Rows scrolled off the top: the last frame's, moved only as far as keeps the cursor's row in view.
 fn composer_skip(rows: &[(Vec<(char, Option<usize>)>, usize)], at: usize, max: usize) -> usize {
-    let row = rows.iter().position(|(r, end)| *end == at || r.iter().any(|(_, i)| i.is_none_or(|i| i == at))).unwrap_or(rows.len().saturating_sub(1));
-    (row + 1).saturating_sub(max.max(1))
+    let (max, row) = (max.max(1), cursor_row(rows, at));
+    let top = COMPOSER_TOP.get().0.min(rows.len().saturating_sub(max));
+    if row < top { row } else if row >= top + max { row + 1 - max } else { top }
 }
 
 /// The input's byte index under the mouse at (`col`, `row`) of the composer's text area, `width` wide: the same
 /// wrapping and scrolling as drawn. A row below the text counts as the last one, so a drag past it keeps selecting.
 /// None while there is nothing typed or a question owns the box.
-pub fn composer_index(v: &View, width: u16, col: u16, row: u16) -> Option<usize> {
+pub fn composer_index(v: &View, width: u16, col: u16, row: i32) -> Option<usize> {
     if !v.live || v.input.is_empty() || v.asking.is_some() {
         return None;
     }
     let rows = composer_layout(v, (width as usize).saturating_sub(4).max(1));
     let at = cursor_at(v);
-    let skip = composer_skip(&rows, at, COMPOSER_MAX_ROWS);
-    let last = (rows.len() - skip).min(COMPOSER_MAX_ROWS) - 1;
-    let (cells, end) = &rows[skip + (row as usize).min(last)];
+    let skip = composer_skip(&rows, at, COMPOSER_TOP.get().1);
+    // a row above or below the box (a drag past its edge) is a row scrolled away: the cursor goes there, and the box
+    // follows it on the next frame (the box did not scroll under a drag, the transcript did)
+    let (cells, end) = &rows[(skip as i64 + i64::from(row)).clamp(0, rows.len() as i64 - 1) as usize];
     // the text starts after the 3-column lead (" › ")
     let mut x = 3;
     for (c, i) in cells {
         x += c.width().unwrap_or(0);
         if (col as usize) < x {
             return Some(i.unwrap_or(at));
+        }
+    }
+    Some(*end)
+}
+
+/// Up or down a row of the draft as drawn (a long line wraps into several): the byte index under the cursor's column on
+/// the row above or below. None on the first or last row, where up and down go through the history.
+pub fn composer_step(v: &View, width: u16, down: bool) -> Option<usize> {
+    if !v.live || v.input.is_empty() || v.asking.is_some() {
+        return None;
+    }
+    // the rows without the cursor's cell: it shifts the wrapping by a column, and the column drifted row by row
+    let at = cursor_at(v);
+    let rows = text_rows(&v.input, at, false, (width as usize).saturating_sub(4).max(1));
+    let r = cursor_row(&rows, at);
+    let (cells, end) = rows.get(if down { r + 1 } else { r.checked_sub(1)? })?;
+    let col: usize = rows[r].0.iter().take_while(|(_, i)| i.is_some_and(|i| i < at)).map(|(c, _)| c.width().unwrap_or(0)).sum();
+    let mut x = 0;
+    for (c, i) in cells {
+        let Some(i) = i else { continue };
+        x += c.width().unwrap_or(0);
+        if x > col {
+            return Some(*i);
         }
     }
     Some(*end)
@@ -3546,6 +3591,34 @@ mod tests {
         v.cursor = 0;
         let rows = composer_rows(&v, th, "›", "", 38);
         assert!(rows[0].spans.iter().any(|s| s.content == "1"), "the cursor's row stays visible");
+    }
+
+    #[test]
+    fn up_and_down_walk_the_rows_a_long_line_wraps_into() {
+        // the user's case: a long last line wrapping past the box's rows, the cursor at a row's end
+        let th = Design::Cockpit.theme();
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let line = "abcdefghij".repeat(20); // 200 chars: 6 rows of 34 at width 38 (room 34)
+        v.input = format!("one\ntwo\n{line}");
+        v.cursor = 8 + 34; // the end of the long line's first row
+        let _ = composer_rows(&v, th, "›", "", 38);
+        let down = composer_step(&v, 38, true).expect("a row below");
+        assert!(down > v.cursor && down <= 8 + 68, "down lands on the next wrapped row, not the history: {down}");
+        v.cursor = down;
+        let rows = composer_rows(&v, th, "›", "", 38);
+        assert!(rows.iter().any(|r| r.spans.iter().any(|s| s.content.contains(CURSOR))), "the cursor's row is drawn");
+        let up = composer_step(&v, 38, false).expect("a row above");
+        assert!((8..=8 + 34).contains(&up), "up comes back to the long line's first row: {up}");
+        v.cursor = v.input.len();
+        assert_eq!(composer_step(&v, 38, true), None, "the last row: down goes to the history");
+        v.cursor = 0;
+        assert_eq!(composer_step(&v, 38, false), None, "the first row: up goes to the history");
+        // a drag below the box reaches a row scrolled away, and the box then shows it
+        let _ = composer_rows(&v, th, "›", "", 38);
+        let below = composer_index(&v, 38, 5, COMPOSER_MAX_ROWS as i32 + 1).unwrap();
+        v.cursor = below;
+        let rows = composer_rows(&v, th, "›", "", 38);
+        assert!(below > 0 && rows.iter().any(|r| r.spans.iter().any(|s| s.content.contains(CURSOR))), "scrolled to the row under the drag");
     }
 
     #[test]

@@ -16,6 +16,20 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.201 (2026-11-23): the message box walks its wrapped rows, and a drag scrolls it
+
+The user: "there is another line after the line ending with "alr", but i cannot use arrow down to reach it", and a drag
+to select the box's text from top to bottom did not scroll it (the transcript's did).
+
+- Up and down move a row of the draft as drawn: a long line wrapped into several rows is walked row by row at the same
+  column; from the first or last row they go through the message history as before. They moved by typed lines only, so
+  the rows of a long last line could be reached only by typing.
+- The box scrolls only as far as the cursor needs and keeps its place otherwise; worked out afresh each frame, the
+  cursor's row was always the bottom one, and a cursor at a row's end counted as the row above, out of sight.
+- A drag past the box's edge (onto the border, or the screen's last row under a box that ends there) carries the
+  selection into the rows scrolled away, and the box follows it. A click lands on the rows as drawn in a box capped
+  shorter than six rows too.
+
 ## 0.1.200 (2026-11-23): what an update brought, a line per version; /update
 
 The user, on the first start after 0.1.199: "the updates are also not nicely styled in the terminal. it should be new line
