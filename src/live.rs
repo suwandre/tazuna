@@ -661,6 +661,11 @@ pub struct Live {
     pub user_settings: bool,
     /// `--connectors`: the user's MCP servers and claude.ai connectors without the rest of ~/.claude (repo profile).
     pub connectors: bool,
+    /// Claude Code's Artifact tool (claude.ai artifacts: read, open), switched on by the CLI's own CLAUDE_CODE_ARTIFACT once
+    /// the conversation holds an artifact link: its tools cost ~13.5k tokens a request, and print mode leaves them out, so
+    /// a linked doc was out of reach and the docs connector refused it ("this kind of conversation cannot reach it",
+    /// the user, 2026-11-23; their interactive Claude Code read the same link).
+    artifacts: bool,
     /// (bytes included, source files) for the run log.
     instructions_used: (usize, Vec<String>),
     verifying: bool,
@@ -776,6 +781,7 @@ impl Live {
             data_any: false,
             user_settings: false,
             connectors: false,
+            artifacts: std::env::var_os("CLAUDE_CODE_ARTIFACT").is_some(),
             instructions_used: (0, Vec::new()),
             verifying: false,
             held: VecDeque::new(),
@@ -1032,6 +1038,15 @@ impl Live {
 
     /// `sent`: what the model gets instead of `text` (a handed-over turn's message with the chat's exchanges before it).
     fn start_run(&mut self, text: &str, attach: bool, sent: Option<&str>) -> Result<()> {
+        // the first artifact link on the claude path: claude again with its Artifact tool, resuming the session (one cache
+        // rebuild, as a model switch)
+        if self.provider.is_none() && !self.artifacts && (artifact_link(text) || self.conv.iter().any(|(q, _)| artifact_link(q))) {
+            self.artifacts = true;
+            if self.child.is_some() {
+                let (m, e) = (self.model.clone(), self.effort.clone());
+                self.respawn(m, e);
+            }
+        }
         let mut run = Run::new(text, self.elapsed_ms(), &self.cwd);
         // ponytail: taken while claude starts reading; an edit that lands first is counted as known, never as new. The
         // tree of the last run's start again (a question, not an edit): its baseline holds. One per message cost a
@@ -1126,6 +1141,15 @@ impl Live {
 
     /// Switches model and effort for the rest of the session: ends the idle process; the next message resumes the session
     /// on the new model (one cache rebuild, since the prompt cache is per model).
+    /// A `--tools` list with the Artifact tool in it once the conversation has an artifact link (`artifacts`).
+    fn with_artifact(&self, tools: &str) -> String {
+        match (self.artifacts, tools.is_empty()) {
+            (false, _) => tools.to_string(),
+            (true, true) => "Artifact".to_string(),
+            (true, false) => format!("{tools},Artifact"),
+        }
+    }
+
     fn respawn(&mut self, model: String, effort: String) {
         if let Some(mut c) = self.child.take() {
             let _ = c.kill();
@@ -2313,6 +2337,9 @@ impl Live {
                 cmd.env_remove(k);
             }
         }
+        if self.artifacts {
+            cmd.env("CLAUDE_CODE_ARTIFACT", "1");
+        }
         // the user's own setting wins; otherwise the mode decides
         if std::env::var_os("CLAUDE_CODE_PROMPT_CACHE_TTL").is_none() {
             let ttl = self.ttl();
@@ -2353,7 +2380,7 @@ impl Live {
                 // hooks and skills itself. Per-machine prompt sections move to the first message for cross-session caching.
                 cmd.arg("--exclude-dynamic-system-prompt-sections");
                 if self.repo_tools_core {
-                    cmd.args(["--tools", REPO_CORE_TOOLS]);
+                    cmd.args(["--tools", &self.with_artifact(REPO_CORE_TOOLS)]);
                 }
                 let boss = self.boss.is_some();
                 if let Some((url, key_env, model)) = self.explorer_provider.as_ref().filter(|_| !boss) {
@@ -2418,11 +2445,11 @@ impl Live {
                     self.instructions_used = (bytes, sources);
                 }
                 let tools = if self.connectors { "Bash,Read,Edit,Write,Grep,Glob,Skill,ToolSearch" } else { "Bash,Read,Edit,Write,Grep,Glob,Skill" };
-                cmd.arg("--system-prompt-file").arg(prompt_file(&prompt)?).args(["--tools", tools]);
+                cmd.arg("--system-prompt-file").arg(prompt_file(&prompt)?).args(["--tools", &self.with_artifact(tools)]);
             }
             Profile::Chat => {
                 // the general set's "Opus alone": a one-line prompt, no tools, no settings, MCP or skills
-                cmd.args(["--strict-mcp-config", "--disable-slash-commands", "--tools", ""])
+                cmd.args(["--strict-mcp-config", "--disable-slash-commands", "--tools", &self.with_artifact("")])
                     .arg("--system-prompt")
                     .arg(chat_prompt(&self.today()));
             }
@@ -2453,13 +2480,13 @@ impl Live {
                 cmd.arg("--disable-slash-commands")
                     .arg("--system-prompt-file")
                     .arg(prompt_file(&prompt)?)
-                    .args(["--tools", match (self.handoff.is_some(), self.connectors) {
+                    .args(["--tools", &self.with_artifact(match (self.handoff.is_some(), self.connectors) {
                         // a handed-over turn: claude's web search, and no Grep or Glob, which read the folder without a question
                         (true, false) => "WebSearch",
                         (true, true) => "WebSearch,ToolSearch",
                         (false, false) => "Grep,Glob",
                         (false, true) => "Grep,Glob,ToolSearch",
-                    }, "--mcp-config", &mcp]);
+                    }), "--mcp-config", &mcp]);
             }
         }
         // `/mcp on`: the user's own servers too (tazuna's list, for every model); remote ones through `tazuna mcp-proxy`.
@@ -3517,6 +3544,32 @@ mod tests {
     }
 }
 
+/// A claude.ai artifact's link ("https://claude.ai/artifact/…", "…/code/artifact/…").
+fn artifact_link(text: &str) -> bool {
+    text.contains("claude.ai/artifact/") || text.contains("claude.ai/code/artifact/")
+}
+
+#[cfg(all(test, unix))]
+#[test]
+fn an_artifact_link_brings_claudes_artifact_tool() {
+    for (name, text, tools, env) in [("artifact-none", "hello", "Grep,Glob", ""), ("artifact-link", "read https://claude.ai/artifact/TBgFC9m3 please", "Grep,Glob,Artifact", "1")] {
+        let (mut live, dir) = stub::live(name);
+        live.profile = Profile::Lean;
+        live.artifacts = false; // whatever the test's own environment says
+        live.send(text).unwrap();
+        let a = stub::started(&dir);
+        assert_eq!(stub::flag(&a, "--tools").as_deref(), Some(tools), "{name}");
+        assert_eq!(std::fs::read_to_string(dir.join("artifact_env")).unwrap_or_default(), env, "{name}");
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+    let (mut live, dir) = stub::live("artifact-chat");
+    (live.profile, live.artifacts) = (Profile::Chat, true);
+    assert_eq!(live.with_artifact(""), "Artifact", "a chat's empty tool list gets it alone");
+    drop(live);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Test support: a stand-in for claude (the real one is a paid call) and a session that runs it in a folder of its own.
 #[cfg(all(test, unix))]
 pub(crate) mod stub {
@@ -3531,7 +3584,7 @@ pub(crate) mod stub {
             use std::os::unix::fs::PermissionsExt;
             let bin = std::env::temp_dir().join(format!("tazuna-stub-claude-{}", std::process::id()));
             std::fs::create_dir_all(&bin).unwrap();
-            std::fs::write(bin.join("claude"), "#!/bin/sh\n[ -e stub ] || exec cat > /dev/null\nprintf '%s\\n' \"$@\" > args.tmp && mv args.tmp args\nexec cat >> stdin\n").unwrap();
+            std::fs::write(bin.join("claude"), "#!/bin/sh\n[ -e stub ] || exec cat > /dev/null\nprintf '%s' \"$CLAUDE_CODE_ARTIFACT\" > artifact_env\nprintf '%s\\n' \"$@\" > args.tmp && mv args.tmp args\nexec cat >> stdin\n").unwrap();
             std::fs::set_permissions(bin.join("claude"), std::fs::Permissions::from_mode(0o755)).unwrap();
             // SAFETY: set once, and only prepended: everything else is found as before
             unsafe { std::env::set_var("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default())) };

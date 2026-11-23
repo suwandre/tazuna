@@ -16,6 +16,18 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.202 (2026-11-23): a claude.ai artifact link is read, on the claude path
+
+The user linked two claude.ai artifacts in a desktop conversation; Claude answered "I couldn't open either plan from this
+session" and worked from an older copy, while their interactive Claude Code read the same links.
+
+- Claude Code's Artifact tool (read and open claude.ai artifacts, including ones others own, through its isolated reader)
+  exists in print mode only with the CLI's own `CLAUDE_CODE_ARTIFACT=1`. Without it claude fell back to the docs
+  connector, which refuses docs owned by others from such a conversation. tazuna now starts claude with it, and the tool in
+  every profile's tool list, once the conversation holds an artifact link (claude restarts on its session: one cache
+  rebuild). Not always on: its three tools add about 13,500 tokens to every request (measured: 19.8k to 33.3k prompt
+  tokens on a one-line message). Checked on the real CLI: the link read, title and version right, $0.009 on Haiku.
+
 ## 0.1.201 (2026-11-23): the message box walks its wrapped rows, and a drag scrolls it
 
 The user: "there is another line after the line ending with "alr", but i cannot use arrow down to reach it", and a drag
