@@ -372,7 +372,8 @@ page flashing before the chat):
   Desktop folder again. Signed, it is "dev.tazuna.desktop and this certificate" in every build (two test binaries signed
   so had the same requirement; the app built here with it verifies and starts). One more question on the first signed
   update, then none: that last part is seen only after two signed updates. Not Apple's signing (still no $99): a
-  download's first open warns as before. The certificate is beside the updater's key (~/.tauri/tazuna-macos-signing.*)
+  download's first open warns as before. (Since then macOS calls the downloaded .dmg "damaged" and offers only the
+  Trash: `xattr -d com.apple.quarantine ~/Downloads/tazuna_*_aarch64.dmg` before opening it, as the README says.) The certificate is beside the updater's key (~/.tauri/tazuna-macos-signing.*)
   and in the repository's secrets; without it macOS asks once more after the next update, no more than that.
 - Opening a saved conversation no longer shows the start screen for a moment first: its core comes up empty and its
   messages follow, and the window drew "What are we working on?" in between (0.8 s with a slow one, in the test; long

@@ -28,6 +28,15 @@ The binary goes to `~/.local/bin` (on Windows also onto your PATH; `TAZUNA_INSTA
 You also need git, and for Claude the [`claude` CLI](https://docs.claude.com/en/docs/claude-code), logged in. On Windows,
 Git for Windows too: like Claude Code there, tazuna runs commands in Git Bash. From source: `cargo install --path .`.
 
+The desktop app is on the [releases page](https://github.com/suwandre/tazuna/releases) (tags `desktop-v…`): a .dmg for
+macOS (Apple silicon), an .msi or setup .exe for Windows, an AppImage, .deb or .rpm for Linux. The macOS build is not
+notarized by Apple, so macOS calls the downloaded .dmg "damaged". Clear its quarantine flag first, then open it and drag
+tazuna to Applications:
+
+```sh
+xattr -d com.apple.quarantine ~/Downloads/tazuna_*_aarch64.dmg
+```
+
 ## Start
 
 ```sh
