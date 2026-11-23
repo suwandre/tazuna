@@ -30,8 +30,9 @@ fn under_mouse(v: &View, r: Rect) -> bool {
 }
 
 pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
-    let ch = composer_height(v, f.area().width);
-    let [header, body, composer] = Layout::vertical([Constraint::Length(1), Constraint::Min(3), Constraint::Length(ch)]).areas(f.area());
+    let ch = if v.live { composer_height(v, f.area().width) } else { 2 };
+    let [header, metadata, body, composer] = Layout::vertical([Constraint::Length(1), Constraint::Length(u16::from(!v.live)), Constraint::Min(3), Constraint::Length(ch)]).areas(f.area());
+    if !v.live { draw_replay_metadata(f, metadata, v, th); }
     let (glyph, label, color) = activity(s, v, th);
 
     let left = Line::from(vec![
@@ -46,7 +47,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         Span::styled(if v.live && v.mode == "full" { "full   " } else { "" }, st(th.warn)),
         Span::styled(format!("{glyph} {label}"), st(color)),
         Span::styled("   ", st(th.faint)),
-        Span::styled(model_short(&s.model), st(th.text)),
+        Span::styled(if !v.live && s.model.is_empty() { "recorded session".into() } else { model_short(&s.model) }, st(th.text)),
         Span::styled(format!("  {} ", s.effort), st(th.dim)),
     ];
     if narrow {
@@ -60,6 +61,10 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     f.render_widget(frame, main);
     let (last_block, trows, top_line) = render_transcript(f, inner, transcript(s, v, th, &OPTS, inner.width as usize), v.scroll, th);
     if narrow {
+        if !v.live {
+            draw_replay_footer(f, composer, v, th);
+            return Areas { pulse: header, last_block, transcript: inner, rows: trows, top_line, ..Default::default() };
+        }
         let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(if v.asking.is_some() { th.warn } else { th.border }));
         let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
         f.render_widget(Paragraph::new(hint).block(b), composer);
@@ -297,11 +302,15 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     };
     f.render_widget(Paragraph::new(rows), a);
 
-    let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(if v.asking.is_some() { th.warn } else { th.border }));
-    let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
-    f.render_widget(Paragraph::new(hint).block(b), composer);
+    if v.live {
+        let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(if v.asking.is_some() { th.warn } else { th.border }));
+        let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
+        f.render_widget(Paragraph::new(hint).block(b), composer);
+    } else {
+        draw_replay_footer(f, composer, v, th);
+    }
 
-    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows, files: Some(p_files), cost: Some(p_cost), tool_rows, tokens: Some(p_tokens), bars: bars_at, top_line, composer: Some(composer.inner(Margin { horizontal: 1, vertical: 1 })), ..Default::default() }
+    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows, files: Some(p_files), cost: Some(p_cost), tool_rows, tokens: Some(p_tokens), bars: bars_at, top_line, composer: v.live.then_some(composer.inner(Margin { horizontal: 1, vertical: 1 })), ..Default::default() }
 }
 
 fn kv(k: &str, v: &str, th: &Theme) -> Span<'static> {
