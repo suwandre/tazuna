@@ -53,7 +53,7 @@ function ChangeCard({ change, busy, onDiff, onUndo, onReview }: { change: Change
             {f.added > 0 && <span className="text-[12px] font-medium tabular-nums text-ok">+{f.added}</span>}
             {(f.removed ?? 0) > 0 && <span className="text-[12px] font-medium tabular-nums text-bad">−{f.removed}</span>}
           </>}
-          <button onClick={() => onDiff?.(change.turn, f.path)} className={quietButton}>Diff</button>
+          <button disabled={!onDiff} title={!onDiff ? "Diff — available in the desktop app" : undefined} onClick={() => onDiff?.(change.turn, f.path)} className={quietButton}>Diff</button>
         </div>
       ))}
       <div className="flex items-center gap-2 px-3 py-[7px] text-[12px] text-muted">
@@ -62,7 +62,7 @@ function ChangeCard({ change, busy, onDiff, onUndo, onReview }: { change: Change
         {!change.undone && onReview && <button onClick={() => onReview(change.turn)} title="Go through this turn's changes piece by piece"
           className={quietButton}>Review</button>}
         {change.undone ? <span className="text-faint">undone</span>
-          : change.canUndo && <button disabled={busy} onClick={() => onUndo?.(change.turn)} title="Put these files back as they were before this turn"
+          : change.canUndo && <button disabled={busy || !onUndo} onClick={() => onUndo?.(change.turn)} title={!onUndo ? "Undo — available in the desktop app" : "Put these files back as they were before this turn"}
               className={quietButton}>Undo</button>}
       </div>
     </div>
@@ -136,7 +136,7 @@ export function Transcript({ messages, activity, jumps = true, ...props }: Props
               {m.routedChat && (
                 <div className="mb-1.5">
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-2 py-px text-[11.5px] text-muted">
-                    <MessageCircle size={13} strokeWidth={1.5} /> answered as a chat<Sep /><button disabled={busy} onClick={() => m.ask && rest.onSendToAgent?.(m.ask)} className="font-medium text-accent-ink disabled:opacity-50">send to agent</button>
+                    <MessageCircle size={13} strokeWidth={1.5} /> answered as a chat<Sep /><button disabled={busy || !rest.onSendToAgent} title={!rest.onSendToAgent ? "Available in the desktop app" : undefined} onClick={() => m.ask && rest.onSendToAgent?.(m.ask)} className="font-medium text-accent-ink disabled:opacity-50">send to agent</button>
                   </span>
                 </div>
               )}

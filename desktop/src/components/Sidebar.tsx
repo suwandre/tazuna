@@ -22,7 +22,7 @@ function Kbd({ children, always }: { children: string; always?: boolean }) {
  * button that only showed while its row had the focus, and a row clicked with the mouse kept them; design review 11). */
 const reach = "absolute opacity-0 pointer-events-none group-hover:static group-hover:opacity-100 group-hover:pointer-events-auto group-focus-visible:static group-focus-visible:opacity-100 group-focus-visible:pointer-events-auto";
 const press = (go?: () => void) => ({
-  role: "button", tabIndex: 0,
+  role: "button", tabIndex: go ? 0 : -1, "aria-disabled": !go || undefined,
   onKeyDown: (e: React.KeyboardEvent) => { if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) { e.preventDefault(); go?.(); } },
 });
 
@@ -101,7 +101,7 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide, opened, onClose,
   const twoLines = !sub && !!place;
   const dot = opened && <span title="Open" className="size-1.5 flex-none rounded-full bg-accent" />;
   return (
-    <a ref={row} data-flip={sub ? undefined : t.id} data-tip-clip={(t.full ?? t.title).toLowerCase() === t.title.toLowerCase() ? "" : undefined} onClick={onClick} {...press(onClick)} title={t.full ?? t.title} className={`group flex items-center gap-2 truncate rounded-md px-[9px] ${twoLines ? "py-[5px]" : "py-1.5"} text-ink-2 transition-colors duration-150 hover:bg-hover ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
+    <a ref={row} data-flip={sub ? undefined : t.id} data-tip-clip={(t.full ?? t.title).toLowerCase() === t.title.toLowerCase() ? "" : undefined} onClick={onClick} {...press(onClick)} title={onClick ? t.full ?? t.title : "Example conversation · available in the desktop app"} className={`group flex items-center gap-2 truncate rounded-md px-[9px] ${twoLines ? "py-[5px]" : "py-1.5"} text-ink-2 transition-colors duration-150 ${onClick ? "hover:bg-hover" : "cursor-default"} ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
       {sub && <span className={`size-1.5 flex-none rounded-full ${t.running ? "bg-accent shadow-[0_0_0_3px_var(--accent-soft)]" : "bg-faint"}`} />}
       {twoLines ? (
         <span className="min-w-0 flex-1">
@@ -239,7 +239,7 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
           {list.map(({ t, p }) => {
             const o = idleOpen.get(t.id);
             return <ThreadRow key={t.id} t={t} active={o ? o.tid === activeTid : t.id === active} noPlace={samePlace} opened={!!o && open.length > 1}
-              onClick={() => (o ? onSwitch?.(o.tid) : onOpenThread?.(t, p))} onClose={o && (() => onClose?.(o.tid))}
+              onClick={o ? () => onSwitch?.(o.tid) : onOpenThread && (() => onOpenThread(t, p))} onClose={o && (() => onClose?.(o.tid))}
               onRename={onRename && ((title) => onRename(t, title))} onHide={onHide && (() => onHide(t))} />;
           })}
         </div>;
@@ -257,13 +257,13 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
                 <ChevronRight size={14} strokeWidth={1.5} className={`transition-transform duration-150 ${shown ? "rotate-90" : ""}`} />
               </button>
             ) : <span className="ml-1 w-[22px]" />}
-            <button onClick={() => onOpenProject?.(p)} title={p.path}
-              className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-1 pr-[9px] text-left hover:bg-hover">
+            <button disabled={!onOpenProject} onClick={() => onOpenProject?.(p)} title={onOpenProject ? p.path : "Available in the desktop app"}
+              className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-1 pr-[9px] text-left enabled:hover:bg-hover disabled:cursor-default disabled:text-muted">
               <span className="flex-1 truncate">{p.name}</span>
               {p.pending ? <span className="rounded-full bg-accent px-1.5 text-[10.5px] font-semibold leading-[17px] text-on-accent">{p.pending}</span> : null}
             </button>
           </div>
-          {shown && p.threads.slice(0, 15).map((t) => <ThreadRow key={t.id} t={t} active={t.id === active} sub onClick={() => onOpenThread?.(t, p)}
+          {shown && p.threads.slice(0, 15).map((t) => <ThreadRow key={t.id} t={t} active={t.id === active} sub onClick={onOpenThread && (() => onOpenThread(t, p))}
             onRename={onRename && ((title) => onRename(t, title))} onHide={onHide && (() => onHide(t))} />)}
         </div>
         );
@@ -280,13 +280,13 @@ export const SidebarCtx = createContext<{ onNewChat?: () => void; onOpenFolder?:
 
 export function NewChatButton() {
   const { onNewChat } = useContext(SidebarCtx);
-  return <button onClick={onNewChat} className="group flex w-full items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-ink transition-colors hover:bg-hover">
+  return <button disabled={!onNewChat} title={!onNewChat ? "Available in the desktop app" : undefined} onClick={onNewChat} className="group flex w-full items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-ink transition-colors enabled:hover:bg-hover disabled:cursor-default disabled:text-muted">
     <Plus {...icon} /><span>New chat</span><Kbd>⌘N</Kbd></button>;
 }
 
 export function OpenFolderButton() {
   const { onOpenFolder } = useContext(SidebarCtx);
-  return <button onClick={onOpenFolder} className="group flex w-full items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-ink transition-colors hover:bg-hover">
+  return <button disabled={!onOpenFolder} title={!onOpenFolder ? "Available in the desktop app" : undefined} onClick={onOpenFolder} className="group flex w-full items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-ink transition-colors enabled:hover:bg-hover disabled:cursor-default disabled:text-muted">
     <FolderOpen {...icon} /><span>Open folder</span><Kbd>⌘O</Kbd></button>;
 }
 
@@ -295,7 +295,7 @@ export function SettingsRow() {
   const { onSettings } = useContext(SidebarCtx);
   return (
     <div className="border-t border-line pt-1.5">
-      <button onClick={onSettings} className="group flex w-full items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-muted transition-colors hover:bg-hover hover:text-ink">
+      <button disabled={!onSettings} title={!onSettings ? "Available in the desktop app" : undefined} onClick={onSettings} className="group flex w-full items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-muted transition-colors enabled:hover:bg-hover enabled:hover:text-ink disabled:cursor-default">
         {/* a gear: the "S" in a circle read as someone's avatar (design review 10) */}
         <Settings {...icon} />
         <span>Settings</span>

@@ -13,6 +13,7 @@ export type Where = { label: string; folder: boolean; choices: { label: string; 
   pick: (path: string | null) => void; pickFolder: () => void };
 
 export type ComposerBag = {
+  readOnly?: boolean;
   where?: Where;
   /** a plain chat (no project): the model alone, so no permission pill (design review 10) */
   chat?: boolean;
@@ -25,6 +26,8 @@ export type ComposerBag = {
 };
 
 type Props = {
+  /** An editable preview draft, never submitted or cleared by Send/Enter. */
+  readOnly?: boolean;
   session: Session; threadCost: number; busy?: boolean; onSend?: (text: string) => void; onStop?: () => void;
   /** a new conversation: where it runs (a chat or a project), changed from the box */
   where?: Where;
@@ -95,7 +98,7 @@ export const MODES: [string, string][] = [
 // one line always (a narrow window wrapped "Opus 5.5" onto two), and readable while a reply runs (faded, they read as broken)
 const pill = "inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink disabled:cursor-default disabled:text-muted";
 
-export function Composer({ session, where, chat, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {} }: Props) {
+export function Composer({ session, where, chat, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {}, readOnly = false }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   // attachments are chips over the text, with a thumbnail for an image (until desktop 0.1.87 their paths were typed into
   // the message, and a screenshot was a line of path)
@@ -107,7 +110,7 @@ export function Composer({ session, where, chat, busy, onSend, onStop, models, o
   const ask = () => setPicker((n) => n + 1);
   const mine: Record<string, [string, () => void]> = onPickModel ? { model: ["Pick the model and its effort", ask], effort: ["The model's effort level", ask], ...commands } : commands;
   const extra = useMemo(() => Object.entries(mine).map(([n, [about]]) => [`/${n}`, about] as [string, string]), [commands, !!onPickModel]);
-  const found = useMemo(() => (shut ? null : completions(text, caret, complete, extra)), [text, caret, complete, shut, extra]);
+  const found = useMemo(() => (shut || readOnly ? null : completions(text, caret, complete, extra)), [text, caret, complete, shut, extra, readOnly]);
   const menu = found?.items.length ? found : null;
   useEffect(() => { setSel(0); }, [menu?.items.length, menu?.from]);
   const asked = useRef(false);
@@ -167,11 +170,11 @@ export function Composer({ session, where, chat, busy, onSend, onStop, models, o
     return () => { off.then((f) => f()); };
   }, [onDrop]);
   const nextMode = () => { const i = MODES.findIndex(([m]) => m === session.mode); onMode?.(MODES[(i + 1) % MODES.length][0]); };
-  const bag: ComposerBag = { where, chat, session, busy, models, onModels, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, attach: (p) => { attach(p); }, picker };
+  const bag: ComposerBag = { readOnly, where, chat, session, busy, models, onModels, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, attach: (p) => { attach(p); }, picker };
   // a message sent during a reply waits behind it (the core queues it, as the terminal does)
   // attachments go in the message as paths after its text (quoted when they hold a space): the core sends images as images
-  const send = () => { if (!files.length && run(text.trim())) return; const t = [text.trim(), ...files.map(quotePath)].filter(Boolean).join(" "); if (!t) return; onSend?.(t); setText(""); setFiles([]); };
-  const ready = !!text.trim() || files.length > 0;
+  const send = () => { if (readOnly) return; if (!files.length && run(text.trim())) return; const t = [text.trim(), ...files.map(quotePath)].filter(Boolean).join(" "); if (!t) return; onSend?.(t); setText(""); setFiles([]); };
+  const ready = !readOnly && (!!text.trim() || files.length > 0);
   return (
     <footer className="px-7 pb-[22px] pt-2.5">
       <div className="mx-auto max-w-[700px]"><Slot name="composer.dock" props={{}} /></div>
@@ -183,9 +186,10 @@ export function Composer({ session, where, chat, busy, onSend, onStop, models, o
             {files.map((f) => <Chip key={f} path={f} onImage={onImage} onRemove={() => setFiles((all) => all.filter((x) => x !== f))} />)}
           </div>
         )}
-        <textarea ref={box} rows={1} autoFocus aria-label="Message" value={text} onChange={(e) => { setText(e.target.value); setCaret(e.target.selectionStart); setShut(false); }}
+        <textarea ref={box} rows={1} autoFocus aria-label={readOnly ? "Demo draft" : "Message"} aria-describedby={readOnly ? "demo-draft-help" : undefined} value={text} onChange={(e) => { setText(e.target.value); setCaret(e.target.selectionStart); setShut(false); }}
           onSelect={(e) => setCaret(e.currentTarget.selectionStart)} aria-expanded={!!menu} aria-controls={menu ? "tz-complete" : undefined}
           onKeyDown={(e) => {
+            if (readOnly) return;
             if (menu && !e.nativeEvent.isComposing) {
               const n = menu.items.length;
               if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); setSel((i) => (i + (e.key === "ArrowDown" ? 1 : n - 1)) % n); return; }
@@ -193,17 +197,18 @@ export function Composer({ session, where, chat, busy, onSend, onStop, models, o
               if (e.key === "Escape") { e.preventDefault(); setShut(true); return; }
             }
             if (e.key === "Tab" && e.shiftKey && onMode) { e.preventDefault(); nextMode(); } if (e.key === "Escape" && busy) onStop?.(); if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
-          placeholder={busy ? "Type your next message: it goes after this reply" : "Ask anything, or describe a change…  / for commands, @ for files"} className="max-h-[40vh] w-full resize-none overflow-y-auto bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
+          placeholder={readOnly ? "Try writing here. Nothing will be sent." : busy ? "Type your next message: it goes after this reply" : "Ask anything, or describe a change…  / for commands, @ for files"} className="max-h-[40vh] w-full resize-none overflow-y-auto bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
         <div className="flex items-center gap-1.5">
           <Slot name="composer.pills" props={{ composer: bag }} />
           <span className="flex-1" />
           {busy && !ready
             ? <button onClick={onStop} title="Stop (Esc)" className="grid size-[30px] flex-none place-items-center rounded-full bg-ink text-canvas"><Square size={12} strokeWidth={2} fill="currentColor" /></button>
             // solid only when there is something to send (a faded accent read as broken)
-            : <button onClick={send} title={busy ? "Send after this reply (Enter)" : "Send (Enter)"} disabled={!ready}
+            : <button onClick={send} aria-label="Send" title={readOnly ? "Read-only demo — no agent connected" : busy ? "Send after this reply (Enter)" : "Send (Enter)"} disabled={!ready}
                 className={`grid size-[30px] flex-none place-items-center rounded-full ${ready ? "bg-accent text-on-accent" : "border border-line bg-field text-faint"}`}><ArrowUp size={16} strokeWidth={1.75} /></button>}
         </div>
       </div>
+      {readOnly && <p id="demo-draft-help" className="mx-auto mt-1.5 max-w-[700px] px-1 text-[11.5px] text-muted">Draft only · copy it before leaving this page.</p>}
       {below && <div className="mx-auto mt-1.5 max-w-[700px] px-1">{below}</div>}
     </footer>
   );
@@ -297,7 +302,7 @@ export function ModePill({ composer: c }: { composer: ComposerBag }) {
   if (c.chat) return null;
   return (
     <span className="relative">
-      <button disabled={!c.onMode} onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open} title="Permission mode (shift-tab)" className={pill}>
+      <button disabled={!c.onMode} onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open} title={c.readOnly ? "Permission mode — available in the desktop app" : "Permission mode (shift-tab)"} className={pill}>
         {/* full never asks: in the warning colour, so it is never on unnoticed */}
         <Shield size={14} strokeWidth={1.5} className={c.session.mode === "full" ? "text-warn" : undefined} />
         <span className={c.session.mode === "full" ? "text-warn" : undefined}>{c.session.mode}</span><ChevronDown size={13} strokeWidth={1.5} className="text-faint" />
@@ -324,7 +329,7 @@ export function ModelPill({ composer: c }: { composer: ComposerBag }) {
   useEffect(() => { if (c.picker && !c.busy && c.onPickModel) { c.onModels?.(); setOpen(true); } }, [c.picker]);
   return (
     <span className="relative">
-      <button disabled={c.busy || !c.onPickModel} onClick={toggle} aria-haspopup="dialog" aria-expanded={open} title="Model and effort" className={pill}>
+      <button disabled={c.busy || !c.onPickModel} onClick={toggle} aria-haspopup="dialog" aria-expanded={open} title={c.readOnly ? "Model and effort — available in the desktop app" : "Model and effort"} className={pill}>
         <Zap size={14} strokeWidth={1.5} />{modelLabel(current?.model ?? c.session.model)}
         {c.session.effort && <span className="flex items-center text-faint"><Sep />{c.session.effort}</span>}
         <ChevronDown size={13} strokeWidth={1.5} className="text-faint" />
@@ -352,7 +357,7 @@ export function EffortPill({ composer: c }: { composer: ComposerBag }) {
 
 export function AttachButton({ composer: c }: { composer: ComposerBag }) {
   return (
-    <button disabled={!c.onPickFiles} onClick={() => c.onPickFiles?.().then(c.attach)} title="Attach files or images (or drop them on the window)"
+    <button disabled={!c.onPickFiles} onClick={() => c.onPickFiles?.().then(c.attach)} title={c.readOnly ? "Attachments — available in the desktop app" : "Attach files or images (or drop them on the window)"}
       className="rounded-full px-2 py-[3px] text-muted hover:bg-hover disabled:opacity-40"><Paperclip size={14} strokeWidth={1.5} /></button>
   );
 }

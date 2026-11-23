@@ -225,6 +225,7 @@ function useCore() {
   const pick = () => core.pickFolder().then((p) => p && open(p)).catch(() => {});
   // Cmd-N a new chat, Cmd-O a folder
   useEffect(() => {
+    if (!inTauri) return;
     const key = (e: KeyboardEvent) => {
       if (menuKeys || !(e.metaKey || e.ctrlKey) || e.shiftKey) return;
       if (e.key === "n") { e.preventDefault(); open(null); }
@@ -305,13 +306,13 @@ function useOverlay() {
   const [overlay, setOverlay] = useState<"palette" | "shortcuts" | "settings" | "usage" | "setup" | null>(() => (inTauri && !localStorage.getItem(SETUP) ? "setup" : null));
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (!menuKeys && (e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "u") { e.preventDefault(); setOverlay((o) => (o === "usage" ? null : "usage")); }
+      if (!menuKeys && (e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "u") { e.preventDefault(); if (inTauri) setOverlay((o) => (o === "usage" ? null : "usage")); }
       if (menuKeys || !(e.metaKey || e.ctrlKey) || e.shiftKey) return;
       if (e.key === "k") { e.preventDefault(); setOverlay((o) => (o === "palette" ? null : "palette")); }
       if (e.key === "/") { e.preventDefault(); setOverlay((o) => (o === "shortcuts" ? null : "shortcuts")); }
-      if (e.key === ",") { e.preventDefault(); setOverlay((o) => (o === "settings" ? null : "settings")); }
+      if (e.key === ",") { e.preventDefault(); if (inTauri) setOverlay((o) => (o === "settings" ? null : "settings")); }
     };
-    const usage = () => setOverlay("usage");
+    const usage = () => { if (inTauri) setOverlay("usage"); };
     window.addEventListener("keydown", key);
     window.addEventListener("tazuna-usage", usage);
     return () => { window.removeEventListener("keydown", key); window.removeEventListener("tazuna-usage", usage); };
@@ -464,6 +465,7 @@ export default function App() {
   const claudeRef = useRef(claude);
   claudeRef.current = claude;
   useEffect(() => {
+    if (!inTauri) return;
     const off = core.onSetup((s) => {
       // signed in or out since: the catalog's Claude rows change with it
       if (claudeRef.current && claudeRef.current.claude_login !== s.claude_login) core.models().catch(() => {});
@@ -699,6 +701,7 @@ export default function App() {
   // when the reading came, and whether one is on its way (it gives up waiting after 45 s: the core may not answer)
   const [acct, setAcct] = useState<{ at?: number; busy: boolean }>({ busy: false });
   useEffect(() => {
+    if (!inTauri) return;
     const off = core.onAccounts((a) => { setAccounts(a); setAcct({ at: Date.now(), busy: false }); });
     // the plan comes first, about a second in: the bar has it then, the other accounts as they were until theirs come
     const offPlan = core.onAccountsPlan((p) => { setAccounts((a) => ({ credits: [], omniroute: [], ...a, ...p })); setAcct({ at: Date.now(), busy: false }); });
@@ -789,7 +792,7 @@ export default function App() {
       { id: "keys", group: "Window", label: "Keyboard shortcuts", keys: "⌘/", run: () => setTimeout(() => setOverlay("shortcuts")) },
       { id: "settings", group: "Window", label: "Settings: provider keys, data policy, router", keys: "⌘,", run: () => setTimeout(() => setOverlay("settings")) },
       { id: "setup", group: "Window", label: "Set up tazuna", hint: "what is set, what is left", keywords: "welcome first run onboarding", run: () => setTimeout(() => setOverlay("setup")) });
-    return a;
+    return inTauri ? a : a.map((action) => ["theme", "keys"].includes(action.id) ? action : { ...action, unavailable: "Available in the desktop app" });
   };
   // a new conversation before its first message: the start screen, with the composer in its middle (design review 2,
   // prototype mockups/v3.html)
@@ -827,11 +830,11 @@ export default function App() {
     } satisfies Record<string, [string, () => void]> : {}),
   } : {};
   const composer = (
-        <Composer key={active} commands={windowCommands} where={fresh ? where : undefined} chat={inTauri && !folder} draftKey={draftKey} session={session} threadCost={usage.threadCost} busy={busy}
-            onSend={(text) => {
+        <Composer key={active} readOnly={!inTauri} commands={windowCommands} where={fresh ? where : undefined} chat={inTauri && !folder} draftKey={draftKey} session={session} threadCost={usage.threadCost} busy={busy}
+            onSend={inTauri ? (text) => {
               if (line?.paid && paidKey && !localStorage.getItem(paidKey)) { setPaidAsk(text); return; }
               sendNow(text);
-            }}
+            } : undefined}
             below={claudeOut ? (
               // a conversation on Claude while it is signed out: every message would fail (design review 12)
               <div className="flex items-center text-[11.5px] text-faint">Claude isn't signed in<Sep />
@@ -887,8 +890,8 @@ export default function App() {
       <Sidebar active={inTauri ? listedId(threads.find((t) => t.tid === active)) ?? folder ?? "" : "t1"}
         chats={inTauri ? rowsOf(home ? sessions[home] : undefined) : demo.chats}
         projects={inTauri ? projects.map((p) => ({ name: isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} / ${base(p)}` : base(p), path: p, open: p === folder, threads: rowsOf(sessions[p], isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), p) })) : demo.projects}
-        onNewChat={() => open(null)} onOpenFolder={pick} onOpenProject={(p) => p.path && open(p.path)}
-        onOpenThread={(t, p) => open(p?.path ?? null, t.id)} onSearch={() => setOverlay("palette")} onSettings={() => setOverlay("settings")}
+        onNewChat={inTauri ? () => open(null) : undefined} onOpenFolder={inTauri ? pick : undefined} onOpenProject={inTauri ? (p) => p.path && open(p.path) : undefined}
+        onOpenThread={inTauri ? (t, p) => open(p?.path ?? null, t.id) : undefined} onSearch={() => setOverlay("palette")} onSettings={inTauri ? () => setOverlay("settings") : undefined}
         open={inTauri ? threads.filter((t) => t.tid === active || t.view?.blocks.some((b) => b.kind === "prompt")).map((t) => ({ tid: t.tid, id: listedId(t), model: t.view?.model, title: titleOf(t), place: t.folder ? base(t.folder) : "chat",
           state: t.error ? "stopped" : t.view?.asking ? "asking" : busyView(t.view) ? "working" : "idle" })) : []}
         activeTid={active} onSwitch={show} onClose={close}
@@ -919,6 +922,10 @@ export default function App() {
             </HeaderCtx.Provider>
           </div>
         </header>
+        {!inTauri && <div role="note" aria-label="Read-only demo" className="flex flex-none items-center gap-4 border-b border-line-soft bg-field/40 px-7 py-2 text-[12px] text-muted">
+          <div className="min-w-0 flex-1"><span className="font-medium text-ink-2">Read-only demo</span><span className="block">Example conversation · no agent connected. Nothing is sent.</span></div>
+          <button onClick={flipTheme} title="Switch light and dark theme" className="flex-none rounded-md border border-line px-2 py-1 text-ink-2 hover:bg-hover">Light / dark</button>
+        </div>}
         <div key={`view:${active}`} className="tz-enter flex min-h-0 flex-1 flex-col">
         {failed ? <CoreFailed error={error!} folder={folder} onRetry={restart} onChat={() => open(null)} />
         : fresh ? <Start place={folder ? base(folder) : null} composer={composer} recent={startRecent} onResume={(r) => open(r.dir, r.id)} onFolder={pick} today={todayOf(rows)} onUsage={() => setOverlay("usage")}
@@ -929,9 +936,9 @@ export default function App() {
           onEdit={inTauri ? (e, text) => {
             const files = new Set((view?.changes ?? []).filter((c) => c.at_block > e.block && !c.undone).flatMap((c) => c.files.map((f) => f.path))).size;
             setEditing({ ...e, files, keep: files > 0 }); setDraft({ text, n: Date.now() });
-          } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} asking={!!view?.asking} since={busy ? replyStart.current[startKey] : undefined} onSendToAgent={(text) => say(text)} onRetry={() => { core.retry().catch(() => {}); }}
+          } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} asking={!!view?.asking} since={busy ? replyStart.current[startKey] : undefined} onSendToAgent={inTauri ? (text) => say(text) : undefined} onRetry={inTauri ? () => { core.retry().catch(() => {}); } : undefined}
           onImage={inTauri ? (p) => core.imageData(p, folder ?? undefined) : undefined}
-          onDiff={(turn, path) => (inTauri ? setReviewing({ scope: "turn", turn, path }) : core.diff(turn, path))} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={(turn) => core.undo(turn)} />}
+          onDiff={inTauri ? (turn, path) => setReviewing({ scope: "turn", turn, path }) : undefined} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={inTauri ? (turn) => core.undo(turn) : undefined} />}
         </div>
         {inTauri && col.tab && !side && !agentHere && !reviewing && !fresh && !failed && (
           <button data-panel onClick={togglePanel} aria-expanded={panelOpen} aria-label={`The work panel: ${changes} file${changes === 1 ? "" : "s"} changed`} title={`The work panel: changes, checks, the pull request (${keysOf("⌘\\")})`}
@@ -1032,7 +1039,7 @@ export default function App() {
         <WorkCtx.Provider value={work}><Rail usage={usage} data={data} messages={messages} over /></WorkCtx.Provider></div>}
       <Slot name="overlay" props={{ data }} />
       {overlay === "palette" && <Palette actions={actions()} query={paletteQ} onClose={() => setOverlay(null)} />}
-      {overlay === "shortcuts" && <Shortcuts onClose={() => setOverlay(null)} />}
+      {overlay === "shortcuts" && <Shortcuts readOnly={!inTauri} onClose={() => setOverlay(null)} />}
       {bestOf && <BestOfStart choices={models?.choices ?? []} onStart={(task, ms) => { setBestOf(false); startLanes(task, ms); }} onClose={() => setBestOf(false)} />}
       {showLanes && lanes && <LanesView lanes={lanes} views={Object.fromEntries(threads.map((t) => [t.tid, t.view]))}
         onOpen={(tid) => { setShowLanes(false); show(tid); }} onKeep={keepLane} onClose={() => setShowLanes(false)} />}
@@ -1046,8 +1053,9 @@ export default function App() {
         onEnable={(w, on) => widgets.enable(w.id, w.print!, on).then(reloadWidgets).catch((e) => console.error(e))}
         onRemove={(id) => widgets.remove(id).then(reloadWidgets).catch(() => {})} onChanged={reloadWidgets} />}
     </div>
-    <StatusBar usage={usage} version={appVersion} idle={fresh || failed} accounts={accts} here={hereAccts} turns={turnsOf(messages)} busy={busy}
-      onRefresh={inTauri && haveView ? () => readAccounts() : undefined} refreshing={acct.busy} readAt={readAt} />
+    {inTauri ? <StatusBar usage={usage} version={appVersion} idle={fresh || failed} accounts={accts} here={hereAccts} turns={turnsOf(messages)} busy={busy}
+      onRefresh={haveView ? () => readAccounts() : undefined} refreshing={acct.busy} readAt={readAt} />
+      : <footer aria-label="Demo status" className="flex h-7 flex-none items-center bg-desk px-3.5 text-[12px] text-muted">Example data · not live usage</footer>}
     </div>
   );
 }
