@@ -149,6 +149,11 @@ pub(crate) fn reap_left() {
 const READ_WINDOW: u64 = 2000;
 
 impl Server {
+    /// Where bash is now: a `cd` sticks from one call to the next.
+    pub(crate) fn cwd(&self) -> &Path {
+        &self.cwd
+    }
+
     pub(crate) fn new(cwd: PathBuf) -> Self {
         Server { cwd, max: max_output(), cap: bash_cap(), saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) }
     }

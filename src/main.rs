@@ -21,8 +21,10 @@
 //!          [--tester <model>]   # a subagent on <model> runs tests and type checks and reports only the failures
 //!          [--repo-map]   # a map of the files that match the task, in front of the first message
 //!          [--cache-ttl 5m|1h]   # prompt cache lifetime (default: 5m for --run without boss mode, else 1h)
-//!          [--mode auto|ask|edits|plan]   # permissions: never ask (default), ask before edits and commands, ask before
-//!                                         # commands only, or plan read-only first; shift-tab cycles them live
+//!          [--mode auto|full|ask|edits|plan]   # permissions: ask only before destructive commands (default: rm or
+//!                                         # chmod outside the project, force push, reset --hard, sudo, disk tools),
+//!                                         # never ask, ask before edits and commands, ask before commands only, or plan
+//!                                         # read-only first; shift-tab cycles them live
 //!          [--review-model M [--review-effort E]]  # an independent reviewer on model M checks the diff once
 //!          [--review-key-env VAR]  # with M as MODEL@URL: the reviewer on that provider's API, its key in VAR
 //!          [--review-only]   # with --run TASK-FILE and --review-model: review the uncommitted change here, verdict as JSON
@@ -99,6 +101,7 @@ mod platform;
 mod replay;
 mod repomap;
 mod review;
+mod risky;
 mod route;
 mod runlog;
 mod sandbox;
@@ -310,7 +313,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         provider: None,
         resume: None,
         then: vec![],
-        mode: "bypassPermissions".into(),
+        mode: "auto".into(),
         cache_ttl: None,
         repo_map: false,
         explorer: Some("haiku".into()),
@@ -436,14 +439,9 @@ fn parse(argv: Vec<String>) -> Result<Args> {
                 })
             }
             "--mode" => {
-                a.mode = match val()?.as_str() {
-                    "auto" => "bypassPermissions",
-                    "ask" => "default",
-                    "edits" => "acceptEdits",
-                    "plan" => "plan",
-                    m => bail!("--mode auto|ask|edits|plan, not {m}"),
-                }
-                .into()
+                let m = val()?;
+                // review needs its reviewer set up: /mode review or shift-tab in the session
+                a.mode = session::mode_from(&m).filter(|m| *m != "review").with_context(|| format!("--mode auto|full|ask|edits|plan, not {m}"))?.into()
             }
             "--review-effort" => a.review_effort = val()?,
             "--no-project-instructions" => a.project_instructions = false,
@@ -687,7 +685,7 @@ fn main() -> Result<()> {
                 live.set_escalate(m, e);
             }
             live.permission_mode = a.mode.clone();
-            if no_git && live.permission_mode == "bypassPermissions" {
+            if no_git && matches!(live.permission_mode.as_str(), "auto" | "bypassPermissions") {
                 live.permission_mode = "default".into();
             }
             let earlier = match &a.resume {
@@ -1390,7 +1388,7 @@ fn app_server(a: &Args) -> Result<()> {
     s.cwd = std::env::current_dir()?.to_string_lossy().into_owned();
     s.apply(&route.1, route.0);
     // the permission mode as in the terminal: --mode (auto by default), and ask outside git, where nothing can be undone
-    let mode = if a.mode == "bypassPermissions" && !live::in_git_repo() { "default" } else { a.mode.as_str() };
+    let mode = if matches!(a.mode.as_str(), "auto" | "bypassPermissions") && !live::in_git_repo() { "default" } else { a.mode.as_str() };
     let (t, e) = live.set_mode(mode);
     s.apply(&e, t);
     // the plan's windows as last read, and SubRouter's balance (on a thread), as the terminal starts
@@ -1546,22 +1544,15 @@ fn app_server(a: &Args) -> Result<()> {
                                 agent_send(&mut live, &mut s, text, &cwd, &mut turn, &mut undo_note, true);
                             }
                         }
-                        // the permission mode: auto, ask, edits or plan (on the own loop: reads only, edits refused)
+                        // the permission mode: auto, full, ask, edits, review or plan (plan on the own loop: reads only,
+                        // edits refused)
                         Some("mode") => {
-                            let mode = match cmd["mode"].as_str() {
-                                Some("auto") => Some("bypassPermissions"),
-                                Some("ask") => Some("default"),
-                                Some("edits") => Some("acceptEdits"),
-                                Some("plan") => Some("plan"),
-                                Some("review") => Some("review"),
-                                _ => None,
-                            };
-                            match mode {
+                            match cmd["mode"].as_str().and_then(session::mode_from) {
                                 Some(m) => {
                                     let (t, e) = live.set_mode(m);
                                     s.apply(&e, t);
                                 }
-                                None => info(&mut s, "mode: auto, ask, edits, review or plan".into()),
+                                None => info(&mut s, "mode: auto, full, ask, edits, review or plan".into()),
                             }
                         }
                         // the user's answer to the oldest permission question; "always" only where the question offers it
@@ -2279,7 +2270,7 @@ fn app_server(a: &Args) -> Result<()> {
 fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     let prompt = std::fs::read_to_string(prompt_file).with_context(|| format!("reading {}", prompt_file.display()))?;
     let thens = a.then.iter().map(|f| std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display()))).collect::<Result<Vec<_>>>()?;
-    if a.mode != "bypassPermissions" {
+    if a.mode != "auto" {
         eprintln!("--mode does not apply to --run: nobody is there to answer questions, so headless runs never ask");
     }
     let mut live = live::Live::new("", "")?;
@@ -2616,7 +2607,12 @@ fn question_parts(req: &serde_json::Value) -> (String, String, String) {
     } else if r["handoff"] == true {
         live::HANDOFF_ONCE.to_string()
     } else {
-        format!("always = {}", if matches!(tool.as_str(), "Bash" | "bash" | "PowerShell") { "this command" } else { "this tool" })
+        let always = format!("always = {}", if matches!(tool.as_str(), "Bash" | "bash" | "PowerShell") { "this command" } else { "this tool" });
+        // auto asks only about a destructive command: say which rule it met
+        match r["risky"].as_str() {
+            Some(why) => format!("auto asks: {} · {always}", session::shown(why, 120)),
+            None => always,
+        }
     };
     (tool, what, note)
 }
@@ -3081,7 +3077,7 @@ fn creation_step(live: &mut live::Live, s: &mut Session, creating: &mut Option<(
         return None;
     }
     let say = |s: &mut Session, text: String, t: f64| s.apply(&json!({"type": "harness_info", "text": text}), t);
-    match create::check(&dir, live.permission_mode == "bypassPermissions") {
+    match create::check(&dir, matches!(live.permission_mode.as_str(), "auto" | "bypassPermissions")) {
         Ok(m) => {
             *creating = None;
             let tools = if m.tools.is_empty() { String::new() } else { format!(" (its tools: {})", m.tools.join(", ")) };
@@ -4246,12 +4242,14 @@ fn run_live(
         }
         match key.code {
             KeyCode::BackTab => {
+                // full last: it never asks, so it is a choice made on purpose, not a stop on the way from auto to ask
                 let next = match (live.permission_mode.as_str(), live.reviewer) {
-                    ("bypassPermissions", _) => "default",
+                    ("auto", _) => "default",
                     ("default", _) => "acceptEdits",
                     ("acceptEdits", false) => "review",
                     ("acceptEdits", true) => "plan",
-                    _ => "bypassPermissions",
+                    ("plan", _) => "bypassPermissions",
+                    _ => "auto",
                 };
                 let (t, e) = live.set_mode(next);
                 s.apply(&e, t);
@@ -4386,6 +4384,21 @@ fn run_live(
                     }
                     let msg = if vim { "vim mode on: esc for normal mode, i/a/o to type (/vim again turns it off)" } else { "vim mode off" };
                     s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
+                    continue;
+                }
+                // /mode: the permission mode by name, as shift-tab steps through them
+                if text == "/mode" || text.starts_with("/mode ") {
+                    let want = text["/mode".len()..].trim();
+                    match session::mode_from(want) {
+                        Some(m) => {
+                            let (t, e) = live.set_mode(m);
+                            s.apply(&e, t);
+                        }
+                        None => {
+                            let msg = format!("mode: {} · /mode auto (asks only before destructive commands), full (never asks), ask, edits, review or plan", s.mode);
+                            s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
+                        }
+                    }
                     continue;
                 }
                 // /effort: the effort for the model in use (its levels to choose from); /effort LEVEL sets it at once
@@ -6114,8 +6127,17 @@ not json"#;
     fn a_lean_tools_question_names_it_plainly() {
         let mut req = json!({"request_id": "p", "request": {"subtype": "can_use_tool", "tool_name": "mcp__lean__bash", "input": {"command": "df -h"}}});
         assert_eq!(question(&req), "bash: df -h  (always = this command)");
+        req["request"]["risky"] = json!("rm outside the project: ~/x");
+        assert_eq!(question(&req), "bash: df -h  (auto asks: rm outside the project: ~/x · always = this command)", "why auto asks");
         req["request"]["handoff"] = json!(true);
         assert_eq!(question(&req), format!("bash: df -h  ({})", live::HANDOFF_ONCE));
+        // auto runs claude as acceptEdits: claude's report of that leaves the mode's name as it is
+        let mut s = Session::new("", "high");
+        s.apply(&json!({"type": "harness_mode", "mode": "auto"}), 0.0);
+        s.apply(&json!({"type": "system", "subtype": "status", "permissionMode": "acceptEdits"}), 0.0);
+        assert_eq!(s.mode, "auto");
+        s.apply(&json!({"type": "harness_mode", "mode": "bypassPermissions"}), 0.0);
+        assert_eq!(s.mode, "full");
         let mut s = Session::new("", "high");
         s.apply(&json!({"type": "harness_permission_done", "tool": "mcp__lean__bash", "allow": true, "always": false, "mode": "default"}), 1.0);
         assert!(matches!(s.blocks.last(), Some(session::Block::Notice { text, .. }) if text == "allowed bash"));

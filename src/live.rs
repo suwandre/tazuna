@@ -581,8 +581,10 @@ pub struct Live {
     pub history: bool,
     /// `--rtk`: claude's Bash commands go through rtk (`rtk hook claude`), which shortens their output. Under measurement.
     pub rtk: bool,
-    /// Permission mode as claude names it: bypassPermissions (tazuna's "auto"), default ("ask"), acceptEdits ("edits"),
-    /// plan. Every mode but auto routes claude's permission questions to tazuna (`--permission-prompt-tool stdio`).
+    /// Permission mode as claude names it: bypassPermissions (tazuna's "full"), default ("ask"), acceptEdits ("edits"),
+    /// plan; and tazuna's own "auto": claude runs as acceptEdits and tazuna answers its questions itself, except for the
+    /// destructive commands (risky.rs), which ask (`auto_allows`). Every mode but full routes claude's permission
+    /// questions to tazuna (`--permission-prompt-tool stdio`); the own loop takes "auto" by name (engine.rs `permit`).
     pub permission_mode: String,
     /// Review mode (tazuna's "review"): acceptEdits underneath, and a reviewer model answers the agent's command requests
     /// in the user's place (main.rs review_pending); a command it allows runs in the sandbox (sandbox.rs).
@@ -590,6 +592,9 @@ pub struct Live {
     /// Questions waiting for the user's answer: claude's `can_use_tool` control requests. The UI shows the front one
     /// from here, so what is shown and what an answer applies to cannot drift apart.
     pub pending: VecDeque<Value>,
+    /// Where claude's lean bash is: it keeps its folder between calls (mcp.rs), so a `cd ..` in one call and an rm in the
+    /// next is read from there (risky.rs `scan`). None: somewhere tazuna cannot tell. A new process starts in `cwd`.
+    shell_dir: Option<PathBuf>,
     /// Events produced outside `poll` (an interrupt answering questions, a dead process dropping them), handed out by
     /// the next `poll` so the screen hears about them.
     outbox: Vec<(f64, Value)>,
@@ -762,6 +767,7 @@ impl Live {
             fork_next: false,
             permission_mode: "bypassPermissions".into(),
             pending: VecDeque::new(),
+            shell_dir: None,
             reviewer: false,
             outbox: Vec::new(),
             allowed: Default::default(),
@@ -960,12 +966,16 @@ impl Live {
     /// asks there too: with reads and fetches both allowed, a fetched page could have the agent read ~/.ssh or .env and send
     /// it out in a URL (review, 2026-11-21).
     fn turn_mode(&self) -> (&str, &'static str) {
-        let lean = "mcp__lean__bash,mcp__lean__read,mcp__lean__write,mcp__lean__edit";
+        let lean = "mcp__lean__read,mcp__lean__write,mcp__lean__edit";
         match (self.handoff.is_some(), self.provider.is_some(), self.profile) {
             (true, true, _) => ("handoff", ""),
             (true, false, _) => ("default", "mcp__lean__fetch,WebSearch"),
-            // pre-allowed only in auto: the other modes ask about the lean tools too
+            // reads and edits pre-allowed only in full and auto: the other modes ask about them too. bash is never
+            // pre-allowed: it comes to tazuna, which lets it run in full and in auto unless it is a destructive command
+            // (`auto_allows`); pre-allowed in full, it stayed so after a switch to auto (review, 2026-11-23)
             (false, false, Profile::Lean) if self.permission_mode == "bypassPermissions" => (&self.permission_mode, lean),
+            (false, false, Profile::Lean) if self.permission_mode == "auto" => ("acceptEdits", lean),
+            (false, false, _) if self.permission_mode == "auto" => ("acceptEdits", ""),
             (false, ..) => (&self.permission_mode, ""),
         }
     }
@@ -1387,6 +1397,10 @@ impl Live {
     }
 
     fn respond(&mut self, req: &Value, allow: bool, permissions: Option<Value>) {
+        // an allowed lean bash command may move its shell (`cd`): the next question is read from where it went
+        if allow && self.provider.is_none() && req["request"]["tool_name"] == "mcp__lean__bash" {
+            self.shell_dir = self.risky(req).1;
+        }
         let mut answer = if allow {
             json!({"behavior": "allow", "updatedInput": req["request"]["input"]})
         } else if self.mode == "headless" {
@@ -1403,12 +1417,36 @@ impl Live {
         }
     }
 
+    /// Why a command question is one of the destructive commands auto asks about (risky.rs), and where it leaves claude's
+    /// lean bash; (None, _) for other tools. claude's own Bash goes back to the project when a `cd` leaves it (its CLI),
+    /// so it is read from there: within the project that only errs towards asking.
+    fn risky(&self, req: &Value) -> (Option<String>, Option<PathBuf>) {
+        let r = &req["request"];
+        let tool = r["tool_name"].as_str().unwrap_or_default();
+        if always_scope(tool) != "this command" {
+            return (None, self.shell_dir.clone());
+        }
+        let start = if tool == "mcp__lean__bash" { self.shell_dir.clone() } else { Some(self.cwd.clone()) };
+        crate::risky::scan(r["input"]["command"].as_str().unwrap_or_default(), &self.cwd, start.as_deref())
+    }
+
+    /// tazuna answers claude's question itself: in full anything, in auto anything but a destructive command (`safe`: not
+    /// one); never the user's own questions (AskUserQuestion) or a plan to approve. The own loop asks only what it
+    /// decided to (engine.rs `permit`, which knows where its shell is). The caller leaves out calls written as text and
+    /// handed-over turns.
+    fn auto_allows(&self, req: &Value, safe: bool) -> bool {
+        let mine = matches!(self.permission_mode.as_str(), "bypassPermissions") || (self.permission_mode == "auto" && safe);
+        mine && self.provider.is_none() && !matches!(req["request"]["tool_name"].as_str(), Some("AskUserQuestion" | "ExitPlanMode"))
+    }
+
     /// Switches the permission mode (also mid-run). Before the process starts it only sets the starting mode.
     pub fn set_mode(&mut self, mode: &str) -> (f64, Value) {
         self.reviewer = mode == "review";
         let shown = mode;
         let mode = if self.reviewer { "acceptEdits" } else { mode };
         self.permission_mode = mode.to_string();
+        // auto is tazuna's: claude runs as acceptEdits under it (`turn_mode`), the own loop knows it by name
+        let mode = if mode == "auto" && self.provider.is_none() { "acceptEdits" } else { mode };
         // a handed-over turn keeps its own (`turn_mode`): the session's applies to the process `hand_back` starts anew
         if self.handoff.is_none() && let Some(stdin) = self.stdin.as_mut() {
             self.requests_sent += 1;
@@ -1685,7 +1723,8 @@ impl Live {
                         if self.handoff.is_some() {
                             e["request"]["handoff"] = json!(true);
                         }
-                        if !from_text && self.handoff.is_none() && self.allowed.contains(&always_key(&e)) {
+                        let risky = self.risky(&e).0;
+                        if !from_text && self.handoff.is_none() && (self.allowed.contains(&always_key(&e)) || self.auto_allows(&e, risky.is_none())) {
                             self.respond(&e, true, None);
                         } else if self.mode == "headless" {
                             // nobody is there to answer: a question (AskUserQuestion, or any tool in ask mode) would wait forever
@@ -1699,6 +1738,10 @@ impl Live {
                             } else {
                                 always_scope(&tool)
                             };
+                            // why auto asks this one, for the question's note ("auto asks: rm outside the project")
+                            if self.permission_mode == "auto" && let Some(why) = risky {
+                                e["request"]["risky"] = json!(why);
+                            }
                             out.push(self.record(json!({"type": "harness_permission", "tool": tool, "input": e["request"]["input"], "scope": scope})));
                             self.pending.push_back(e);
                         }
@@ -2348,7 +2391,7 @@ impl Live {
         }
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])
             .args(["--model", &self.model, "--effort", &self.effort])
-            // claude asks tazuna (stdio) instead of a terminal it does not have; "auto" never asks
+            // claude asks tazuna (stdio) instead of a terminal it does not have; "full" never asks
             .args(["--permission-prompt-tool", "stdio", "--allow-dangerously-skip-permissions", "--permission-mode", self.turn_mode().0])
             .args(["--setting-sources", self.setting_sources()]);
         let allowed = self.turn_mode().1;
@@ -2518,6 +2561,13 @@ impl Live {
         if let Some(m) = &self.advisor {
             settings["advisorModel"] = json!(m);
         }
+        // in auto (and full, which a switch can turn into auto) every command comes to tazuna: an allow rule in the
+        // project's claude settings ("Bash(git push:*)") would let a force push run unasked (review, 2026-11-23). Ask
+        // rules win over allow rules; the other modes keep the user's rules as claude reads them.
+        // ponytail: a process started in ask, edits or plan and switched to auto keeps those rules; restart it if that matters
+        if matches!(self.permission_mode.as_str(), "auto" | "bypassPermissions") && self.mode != "headless" && self.handoff.is_none() {
+            settings["permissions"]["ask"] = json!(["Bash", "mcp__lean__bash"]);
+        }
         if settings != json!({}) {
             cmd.args(["--settings", &settings.to_string()]);
         }
@@ -2579,6 +2629,7 @@ impl Live {
         });
         self.stdin = child.stdin.take();
         self.child = Some(child);
+        self.shell_dir = Some(self.cwd.clone());
         Ok(())
     }
 }
@@ -2898,7 +2949,8 @@ mod tests {
     #[test]
     fn a_tool_call_written_as_text_is_asked_every_time() {
         let mut live = Live::new("", "").unwrap();
-        live.mode = "live".into();
+        // ask mode: in full and auto tazuna answers a real call itself (`auto_allows`)
+        (live.mode, live.permission_mode) = ("live", "default".into());
         let ask = |id: &str, from_text: bool| (0, Msg::Line(json!({"type": "control_request", "request_id": id,
             "request": {"subtype": "can_use_tool", "tool_name": "bash", "input": {"command": "uptime"}, "from_text": from_text}}).to_string()));
         live.tx.send(ask("p1", true)).unwrap();
@@ -3041,7 +3093,10 @@ mod tests {
         let mut live = Live::new("", "").unwrap();
         live.profile = Profile::Lean;
         live.permission_mode = "bypassPermissions".into();
-        assert_eq!(live.turn_mode(), ("bypassPermissions", "mcp__lean__bash,mcp__lean__read,mcp__lean__write,mcp__lean__edit"));
+        assert_eq!(live.turn_mode(), ("bypassPermissions", "mcp__lean__read,mcp__lean__write,mcp__lean__edit"), "bash comes to tazuna");
+        live.permission_mode = "auto".into();
+        assert_eq!(live.turn_mode(), ("acceptEdits", "mcp__lean__read,mcp__lean__write,mcp__lean__edit"), "the same tools as full: a switch changes none");
+        live.permission_mode = "bypassPermissions".into();
         live.handoff = Some((Profile::Chat, None, None));
         // claude, whatever the session's mode: ask mode, the lean fetch and claude's web search allowed (a read asks)
         assert_eq!(live.turn_mode(), ("default", "mcp__lean__fetch,WebSearch"));
@@ -3266,6 +3321,45 @@ mod tests {
         live.poll();
         live.send_typed("thanks").unwrap();
         assert_eq!(stub::flag(&stub::started(&dir), "--permission-mode").as_deref(), Some("bypassPermissions"), "the session's own process: the new mode");
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Auto runs claude as acceptEdits and answers its questions itself, except a destructive command (with the rule it
+    /// met) and the user's own questions; full is claude's bypassPermissions, and a switch reaches the running process.
+    #[cfg(unix)]
+    #[test]
+    fn auto_answers_all_but_the_destructive_commands() {
+        let (mut live, dir) = stub::live("auto-guard");
+        live.set_mode("auto");
+        live.send_typed("tidy up").unwrap();
+        let args = stub::started(&dir);
+        assert_eq!(stub::flag(&args, "--permission-mode").as_deref(), Some("acceptEdits"));
+        // every command comes to tazuna: an allow rule in the project's claude settings cannot let one past
+        assert!(stub::flag(&args, "--settings").is_some_and(|x| x.contains(r#""ask":["Bash","mcp__lean__bash"]"#)), "{args:?}");
+        let ask = |live: &Live, id: &str, tool: &str, cmd: &str| stub::feed(live, json!({"type": "control_request", "request_id": id,
+            "request": {"subtype": "can_use_tool", "tool_name": tool, "input": {"command": cmd}}}));
+        ask(&live, "r-1", "Bash", "ls -la && rm -rf target");
+        assert!(live.poll().iter().all(|(_, e)| e["type"] != "harness_permission") && live.pending.is_empty(), "runs without a question");
+        assert!(stub::sent(&dir, "r-1") && std::fs::read_to_string(dir.join("stdin")).unwrap().contains(r#""behavior":"allow""#));
+        ask(&live, "r-2", "Bash", "git push --force");
+        assert!(live.poll().iter().any(|(_, e)| e["type"] == "harness_permission"));
+        assert_eq!(live.pending.front().unwrap()["request"]["risky"], "git push --force: rewrites the remote's history");
+        ask(&live, "r-3", "AskUserQuestion", "");
+        live.poll();
+        assert_eq!(live.pending.len(), 2, "the user's own question waits for the user");
+        // the lean bash keeps its folder: after an allowed `cd` out of the project (this one is in the temporary folder),
+        // a relative removal is outside it
+        live.pending.clear();
+        ask(&live, "r-4", "mcp__lean__bash", "cd /usr");
+        live.poll();
+        ask(&live, "r-5", "mcp__lean__bash", "rm -rf other-project");
+        live.poll();
+        assert_eq!(live.pending.front().map(|r| r["request_id"].clone()), Some(json!("r-5")), "{:?}", live.pending);
+        live.set_mode("bypassPermissions");
+        assert!(std::fs::read_to_string(dir.join("stdin")).unwrap().contains(r#""mode":"bypassPermissions""#), "full: claude's own");
+        live.set_mode("auto");
+        assert!(std::fs::read_to_string(dir.join("stdin")).unwrap().contains(r#""mode":"acceptEdits""#), "auto reaches claude as acceptEdits");
         drop(live);
         std::fs::remove_dir_all(&dir).ok();
     }

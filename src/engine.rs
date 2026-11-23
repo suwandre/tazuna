@@ -1564,7 +1564,11 @@ impl Loop {
         if self.mode == "plan" && matches!(tool, "write" | "edit") {
             return Permit::Deny("Plan mode: nothing is changed here. Describe the change instead.".into());
         }
+        // auto asks before the destructive commands alone (risky.rs), read from where bash is now (a `cd` sticks), and
+        // runs everything else as full does
         let ask = from_text || asks(&self.mode, tool)
+            || (self.mode == "auto" && tool == "bash" && crate::risky::scan(input["command"].as_str().unwrap_or_default(),
+                &std::env::current_dir().unwrap_or_default(), Some(self.server.cwd())).0.is_some())
             || (matches!(self.mode.as_str(), "default" | "acceptEdits" | "plan") && tool == "mcp" && self.hub.as_ref().is_some_and(|h| !h.reads_only(input)));
         // an MCP tool can write (a comment, a ticket moved) where the service allows it: it asks where commands ask,
         // except for reading a tool's description
@@ -4136,6 +4140,24 @@ session: "s".into(),
         l.run(&json!("again"), false, &rx);
         assert_eq!(*seen.borrow(), vec![None, Some(json!(64_000)), Some(json!(64_000))], "refused, then with the cap, and the next call with it at once");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Auto on the own loop: everything runs unasked but a destructive command, read from where bash is now (a `cd`
+    /// sticks between calls): from the project's parent, "rm -rf sibling" is outside it.
+    #[test]
+    fn auto_asks_only_before_a_destructive_command_from_where_bash_is() {
+        let project = std::env::current_dir().unwrap();
+        let deny = json!({"type": "control_response", "response": {"subtype": "success", "request_id": "perm-1", "response": {"behavior": "deny", "message": "no"}}});
+        let ev = Rc::new(RefCell::new(vec![]));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut l = asking_loop("auto", &project, ev.clone(), Some((tx, deny.clone())));
+        for (cmd, allowed) in [("rm -rf target/tmp-x && ls", true), ("cargo test", true), ("git push --force", false)] {
+            assert_eq!(matches!(l.permit("bash", &json!({"command": cmd}), &rx, false), Permit::Allow(_)), allowed, "{cmd}");
+        }
+        assert_eq!(ev.borrow().iter().filter(|e| e["type"] == "control_request").count(), 1, "asked once: the force push");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut up = asking_loop("auto", project.parent().unwrap(), Rc::new(RefCell::new(vec![])), Some((tx, deny)));
+        assert!(matches!(up.permit("bash", &json!({"command": "rm -rf sibling"}), &rx, false), Permit::Deny(_)), "bash sits outside the project");
     }
 
     #[test]

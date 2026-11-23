@@ -2748,8 +2748,9 @@ pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
             spans.push(Span::styled("▍", st(th.accent)));
         }
         spans.push(Span::styled(placeholder.to_string(), st(th.faint)));
+        // full never asks: its label in the warning colour, so it is never on unnoticed
         if v.live && v.mode != "auto" {
-            spans.push(Span::styled(format!("  [{}]", v.mode), st(th.dim)));
+            spans.push(Span::styled(format!("  [{}]", v.mode), st(if v.mode == "full" { th.warn } else { th.dim })));
         }
         if !v.vim.is_empty() {
             spans.push(Span::styled(format!("  [{}]", v.vim), st(th.accent)));

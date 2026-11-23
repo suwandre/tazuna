@@ -48,8 +48,8 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let alone = v.asking.is_some() && col.width < 60;
     let status = Line::from(if alone { vec![] } else { [vec![
         Span::styled(note, st(th.ok)),
-        // the permission mode when it is not auto, as cockpit's box says it
-        Span::styled(if v.live && v.mode != "auto" && v.asking.is_none() { format!("[{}]  ", v.mode) } else { String::new() }, st(th.dim)),
+        // the permission mode when it is not auto, as cockpit's box says it; full even beside a question
+        Span::styled(if v.live && v.mode != "auto" && (v.asking.is_none() || v.mode == "full") { format!("[{}]  ", v.mode) } else { String::new() }, st(if v.mode == "full" { th.warn } else { th.dim })),
     ], said, vec![
         Span::styled(if v.live { String::new() } else { format!("   {}", play_str(v, "paused")) }, st(th.faint)),
         Span::styled(if v.live { "" } else { "   tab · e · q" }, st(th.faint)),

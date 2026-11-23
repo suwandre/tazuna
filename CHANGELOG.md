@@ -16,6 +16,33 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.209 (2026-11-23): auto asks before a destructive command; full never asks
+
+The user: should there be "a full access mode … more powerful than auto"? Auto already was one: it never asked, and only a
+line of the prompt kept the model from `rm -rf` outside the project or a force push.
+
+- **auto** (still the default) runs everything without asking but a short list, which asks first with the rule it met
+  ("auto asks: rm outside the project: ~/x"): rm, rmdir, unlink, chmod, chown and chgrp outside the project (the
+  temporary folders count as inside), `find -delete`, `find -exec rm` and `find | xargs rm` outside it, `git push
+  --force` (`-f`, `--force-with-lease`, `+refspec`, `--mirror`), `git reset --hard`, `git clean -f`, sudo, doas, su and
+  pkexec, and disk and system tools (dd, diskutil, mkfs, newfs, fdisk, parted, wipefs, shutdown, reboot).
+- How it reads a command (risky.rs, a lexical reading, not a sandbox): it follows `cd`, also from one call to the next
+  (the lean bash keeps its folder), skips here-documents, checks what `$(...)` and backticks run, reads the line's own
+  variables (`d=$(mktemp -d)`, `$PWD`, `$TMPDIR`, `for f in ...`), and looks through `sh -c`, `eval`, `env`, `xargs`,
+  `if`, `while` and `{ ...; }`. A path it cannot work out counts as outside.
+- On Claude, auto runs as acceptEdits underneath and tazuna answers every other question itself. Bash is no longer
+  pre-allowed in full or auto (pre-allowed in full, it stayed so after a switch to auto), and an ask rule for Bash keeps
+  an allow rule in the project's claude settings (`Bash(git push:*)`) from letting a force push past. The own loop asks
+  only for those commands.
+- **full** is the old auto: never asks. `--mode full`, the new `/mode full` (`/mode` alone names them all), shift-tab
+  (last in the cycle, after plan) or the app's mode menu. It shows in the warning colour in the terminal's header, its
+  message box and the app's mode pill.
+- An independent review of the first version found the gaps fixed above (a cd before `sh -c`, the shell's folder kept
+  between calls, the full-to-auto switch, claude's allow rules, here-documents, find and xargs).
+- Checked in the terminal: on a scripted model and on Haiku 5.5 (lean and repo profiles), `ls -la && rm -rf build` ran
+  without a question; `git push --force origin main` and `chmod -R 755 ~/dir` asked, the latter also with
+  `Bash(chmod:*)` allowed in the project's claude settings; in full both ran unasked.
+
 ## 0.1.208 (2026-11-23): desktop notifications take their text as data
 
 An automated security review of 0.1.207: the macOS notification was AppleScript source with the text spliced in (straight

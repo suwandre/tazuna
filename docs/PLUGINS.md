@@ -100,7 +100,7 @@ window.addEventListener("message", (e) => {
   api: 1,
   theme: "light" | "dark",
   session: {
-    model: "claude-opus-5-5", effort: "high", mode: "auto",      // permission mode: auto, ask, edits, plan
+    model: "claude-opus-5-5", effort: "high", mode: "auto",      // permission mode: auto, full, ask, edits, review, plan
     activity: "Thinking",                                         // Ready, Starting, Waiting, Thinking, Writing, Tool, Verifying, Done
     cwd: "/path/to/project", profile: "repo",
     cost: 0.042,                                                  // dollars, this conversation

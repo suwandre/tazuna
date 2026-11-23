@@ -346,7 +346,7 @@ pub struct Session {
     pub results: usize,
     /// The profile the router chose (live mode).
     pub profile: String,
-    /// Permission mode in tazuna's words: auto, ask, edits, plan.
+    /// Permission mode in tazuna's words: auto, full, ask, edits, review, plan.
     pub mode: String,
     /// The router's choice at the start (its `harness_route` event), for its line again after a model picked before the
     /// first message.
@@ -403,7 +403,7 @@ pub fn last_limits(dir: &std::path::Path) -> Option<(f64, f64, u64, Option<u64>)
 
 /// tazuna's own slash commands, beside claude's in a session's list. Most are the terminal's (panels, switches): the
 /// window lists only the ones a sent message runs (main.rs, "complete").
-pub const OWN_COMMANDS: [&str; 29] = ["agent", "good", "bad", "boss", "changelog", "chat", "create", "data", "diff", "effort", "explorer", "hook", "jira", "keys", "login", "loop", "mcp", "model", "new", "preset", "profile", "resume", "review", "route", "verify", "rewind", "usage", "update", "vim"];
+pub const OWN_COMMANDS: [&str; 30] = ["agent", "good", "bad", "boss", "changelog", "chat", "create", "data", "diff", "effort", "explorer", "hook", "jira", "keys", "login", "loop", "mcp", "mode", "model", "new", "preset", "profile", "resume", "review", "route", "verify", "rewind", "usage", "update", "vim"];
 
 impl Session {
     pub fn new(prompt: &str, effort: &str) -> Self {
@@ -890,8 +890,8 @@ impl Session {
             (Some("system"), Some("mcp_status")) => self.mcp_failures(e),
             (Some("system"), Some("call_waiting")) => self.waiting_note = e["message"].as_str().map(String::from),
             (Some("system"), Some("status")) => {
-                // review mode runs as acceptEdits underneath: claude's report of that does not rename it
-                if let Some(m) = e["permissionMode"].as_str() && !(self.mode == "review" && m == "acceptEdits") {
+                // review and auto run as acceptEdits underneath: claude's report of that does not rename them
+                if let Some(m) = e["permissionMode"].as_str() && !(matches!(self.mode.as_str(), "review" | "auto") && m == "acceptEdits") {
                     self.mode = mode_name(m).to_string();
                 }
                 self.activity = Activity::Waiting;
@@ -1602,10 +1602,24 @@ pub fn invisible(c: char) -> bool {
     matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{2028}' | '\u{2029}' | '\u{FEFF}' | '\u{061C}' | '\u{180E}')
 }
 
+/// A permission mode's name in tazuna's words as `Live::set_mode` takes it: claude's name, or tazuna's own auto and
+/// review. None: no such mode.
+pub fn mode_from(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "auto" => "auto",
+        "full" => "bypassPermissions",
+        "ask" => "default",
+        "edits" => "acceptEdits",
+        "review" => "review",
+        "plan" => "plan",
+        _ => return None,
+    })
+}
+
 /// claude's permission mode names in tazuna's words.
 pub fn mode_name(m: &str) -> &str {
     match m {
-        "bypassPermissions" => "auto",
+        "bypassPermissions" => "full",
         "default" => "ask",
         "acceptEdits" => "edits",
         "plan" => "plan",

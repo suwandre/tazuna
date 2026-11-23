@@ -439,6 +439,7 @@ pub fn describe(cmd: &str) -> &'static str {
         "data" => "Which providers may see your code (trusted, any)",
         "diff" => "What this conversation changed, file by file",
         "effort" => "The model's effort level",
+        "mode" => "The permission mode: auto, full, ask, edits, review or plan",
         "explorer" => "The model that searches the repo for the main one",
         "jira" => "A ticket's text as the message: /jira KEY [request]",
         "keys" => "All keyboard shortcuts",

@@ -42,6 +42,8 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     // transcript gets the width and the header the cost (until 0.1.180 the column took half of 80 and answers wrapped at 38)
     let narrow = body.width < 110;
     let mut right = vec![
+        // full never asks: said in the header too, which every width and state shows (the box's tag hides while typing)
+        Span::styled(if v.live && v.mode == "full" { "full   " } else { "" }, st(th.warn)),
         Span::styled(format!("{glyph} {label}"), st(color)),
         Span::styled("   ", st(th.faint)),
         Span::styled(model_short(&s.model), st(th.text)),
