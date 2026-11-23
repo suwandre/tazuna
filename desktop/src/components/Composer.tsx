@@ -137,14 +137,17 @@ export function Composer({ session, where, chat, busy, onSend, onStop, models, o
     // Wrapping also changes without an edit: resizing the window or docking the work rail. Only react to width,
     // not height, so growing the textarea cannot trigger an observer loop.
     let width = 0;
+    let frame = 0;
     const observer = new ResizeObserver(([entry]) => {
       if (entry.contentRect.width === width) return;
       width = entry.contentRect.width;
-      resize();
+      // Measurement changes the container's height; defer it until after observer delivery.
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(resize);
     });
     observer.observe(container);
     window.addEventListener("resize", resize);
-    return () => { observer.disconnect(); window.removeEventListener("resize", resize); };
+    return () => { observer.disconnect(); cancelAnimationFrame(frame); window.removeEventListener("resize", resize); };
   }, [resize]);
   // draft recovery: what is in the box is saved as it changes, under the conversation's key
   const savedAt = useRef(draftKey);
