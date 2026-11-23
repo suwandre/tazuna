@@ -617,6 +617,11 @@ empty `tazuna.exe app-server` console over the app (found and fixed by Devin's Q
 "0.1.110 is out". Either button installed the newest (the install looks for it again), but the older message read as
 installing an older version.
 
+0.1.112 (with tazuna 0.1.212; Devin's QA and design runs, PRs #7, #9, #10, #14, #17, #18): the message box's `@` file and
+`/` command menu works (the window's bridge refused the core's "complete" request); a new chat that cannot send says
+why under the message box; the review shows uncommitted files in a folder with no commit yet; a draft stays visible
+when the window narrows; outside the app (the browser demo) everything says it is read-only.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
