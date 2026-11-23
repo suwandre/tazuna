@@ -84,7 +84,7 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   was 1.08:1, and the sheet read only in light); card, field, hover and the lines each a step up with it, and `faint` too,
   so it still reads 4.6:1 on a hovered row.
 - One mark: 手 (te, the hand of 手綱) drawn in the icons' round stroke, its last stroke ending in a rein's loop
-  (`components/Mark.tsx`). The app icon (`app-icon.svg`, paper on indigo on macOS's grid), the sidebar (22 px tile) and the
+  (`components/Mark.tsx`). The app icon (`app-icon.svg`, paper on indigo on macOS's grid), the sidebar (20 px tile) and the
   terminal's welcome (two cells, `▐手▌`) use it; nothing else stands for tazuna.
 - Quiet structure: hairline borders, not shadows, for everything that sits on the page. What floats over it (a menu, a
   popover, a dialog, a tooltip; a toast or a card that opens by itself: `tz-float`) has the `pop` shadow, and in dark a fill one step lighter than a card: a menu over a card
@@ -127,7 +127,15 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   review 12). In a project it stays folded, a small tab on the sheet's right edge that counts the files changed so far,
   live while a reply edits ("Changes 2"); the tab, ⌘\ and the header's button open it, for the conversation they are
   pressed in (one choice for the whole window put the panel into plain chats), and closing it brings the tab back. A
-  plain chat has no tab. The rules are one function with its check (`panelState`, `demoPanel`, lib/types.ts). (Design
+  plain chat has no tab. Open, it lies on the desk beside the sheet and the reading column keeps the left edge centring gave
+  it with the panel shut, giving up width on the right (700 → 614 px of text at 1440; the composer and what stands over it
+  follow); where that would leave under 580 px of text (a window under 1372 px with the sidebar, any without it) the panel
+  opens over the conversation instead, on a sheet of its own under its tab (the `pop` elevation; Esc, a click outside, the
+  tab, its button or ⌘\ shut it; focus goes into it and back to what opened it) and nothing under it moves (design review
+  12, B3 and B2 of `mockups/v9.html`: the column re-centred and its left edge jumped 146 px). A reply being followed is
+  still followed while the column narrows. Esc shuts the innermost thing first: a menu or dialog, then the panel over the
+  conversation, then it is Stop (`escFor`). Where scrollbars always show, the text and the box keep the same edges. The
+  rules are one function with its check (`panelState`, `demoPanel`, lib/types.ts; the column's CSS is `.tz-col`). (Design
   reviews of 2026-11-18, prototype `mockups/v2.html`, 11 and 12.)
 - The status bar names an account this conversation does not run on, when it needs you, quietly: a dot in its colour and faint
   words ("OpenRouter $0.17 below zero and 2 more"), the advice on hover. A balance its API does not tell is no news: the
@@ -240,7 +248,8 @@ block with its language and copy; work panel section (Changes, Checks, Pull requ
 - Rows move, they do not jump: a sidebar row that changes group slides there (200 ms, kept by the conversation's id); a
   reply's steps unfold and fold in height (180 ms and 150 ms).
 - What closes fades out where it was (`tz-out`, 110 ms; lib/chrome.ts does it for every menu and dialog), and the work
-  panel's column slides open and shut.
+  panel's column slides open and shut (the reading column's left edge stays put while it does); over the conversation it
+  opens as a popover does (`tz-pop`).
 - Selected text is the accent at 30%, not the system's blue.
 - Honour `prefers-reduced-motion`.
 
@@ -249,7 +258,16 @@ block with its language and copy; work panel section (Changes, Checks, Pull requ
 - Keyboard first: Cmd-K palette, Cmd-N new chat, Cmd-/ shortcut sheet, focus states always visible: the accent ring on
   buttons and links; a text field whose box is the visible container (the composer, the palette, a bordered field) shows
   its focus on that box's border instead (`outline-none` and `focus:border-accent` or `focus-within:border-accent`).
-- macOS overlay title bar; native menus.
+- One row at the window's top (design review 12, A2 of `mockups/v9.html`; it was three heights, ~40 px): on macOS the
+  overlay title bar's traffic lights sit on it (tauri.conf.json `trafficLightPosition` {x: 20, y: 30}: centred on y 28,
+  x 20 to 80 on macOS 26), then the brand (the sidebar's top row, 48 px: 8 px over the 40 px row) 12 px after them; the
+  sheet keeps its 8 px inset and rounded top and its 40 px header is centred on the same line, as are a side chat's, a
+  subagent's and the review's, and the work panel's first heading. In a narrow window the lights sit on the sheet's header,
+  which starts after them with the sidebar's button (a dialog opening shuts that sidebar). The row is measured in the
+  screen's points, not CSS px (`--tz-pt`, styles.css): the text sizes zoom the page and the lights do not. Windows and Linux have no lights (the Mac is told by the user agent
+  inside Tauri, `macOverlay` in Sidebar.tsx): the brand sits 18 px in, on the same line. The sidebar's top row, the sheets'
+  headers (their titles too: `data-tauri-drag-region="deep"`, which leaves the controls in them clickable) and the desk
+  between the parts move the window. Native menus.
 - A shortcut is written the Mac's way in the code and shown through `keysOf` (lib/types.ts): "Ctrl+K" on Windows and Linux.
 - One clock (`clock`, lib/health.ts): "9:39pm". A tooltip repeats nothing the control already shows whole; a cut title's
   tooltip is the whole title (the first message), never the cut one.

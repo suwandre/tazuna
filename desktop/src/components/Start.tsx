@@ -53,7 +53,7 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
     // takes less room around it, and what does not fit scrolls under a fade, as the transcript does: at 960×600 the cards
     // ended cut at the trust bar, as if under it (design review 12). The padding is as tall as the fades.
     <div className="tz-doc-edges relative flex min-h-0 flex-1 flex-col">
-    <div className="flex min-h-0 flex-1 flex-col items-center overflow-auto px-7 py-10 [@media(max-height:720px)]:pb-9 [@media(max-height:720px)]:pt-7">
+    <div className="tz-col tz-scroller flex min-h-0 flex-1 flex-col items-center overflow-auto px-7 py-10 [--tz-pad:28px] [@media(max-height:720px)]:pb-9 [@media(max-height:720px)]:pt-7">
       <div className="my-auto flex w-full flex-col items-center pb-[6vh] [@media(max-height:720px)]:pb-0">
       {/* the mark over the question, and under it the day's ledger from your own numbers (design review 11, variant A of
           mockups/v8.html: the page read like every other harness's start). Without a run today, the line that says what

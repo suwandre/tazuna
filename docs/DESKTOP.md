@@ -581,6 +581,24 @@ waiting at once could show the wrong file's change before Allow (an automated se
 switched on for a conversation once it holds such a link). The user's conversation had answered "I couldn't open either
 plan from this session" for two artifacts their account could open.
 
+0.1.106 (with tazuna 0.1.204; the user's picks from mockups/v9.html, "A2 and B3"):
+- The title bar is one row: the window's buttons, the brand and the conversation's header on one line (the lights at
+  trafficLightPosition {x: 20, y: 30}, measured in the real window on macOS 26: their top sits at y - 8.5), the sheet still
+  inset with its rounded top; the row is laid out in screen points, so text sizes Small to Larger keep it on the lights' line.
+  Drag regions: the sidebar's top row, the sheet's header and its title, the desk; never a button or Search.
+- An open work panel no longer moves the answer: the reading column keeps its left edge and narrows (700 to 614 px at
+  1440); where the text would fall under 580 px (under ~1372 px, or no sidebar) the panel floats over the conversation
+  (Esc, a click outside, the tab or the header button close it; focus goes in and back). The transcript keeps following a
+  reply when the column narrows; "Jump to the latest" is centred on the column.
+- Esc closes the innermost thing first: a menu, then the floating panel, then it stops the reply.
+- Below 1000 px, Settings and Search open over the sidebar (they opened under it, and the first click only closed it).
+- Qwen Cloud's Token Plan in Settings → Providers (core 0.1.204).
+- An independent review of the first build found eight defects (the reply no longer followed when the panel opened, the
+  floating panel's click-outside caught by Tauri's drag script, Esc order, focus, the zoom, the jump button, classic
+  scrollbars), fixed before this release.
+- Seen: the sweep (392 steps in Chromium and in WebKit, no page errors), the real window at 1440 and 960 and at every
+  text size (out/review-12/a2b3/real2).
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

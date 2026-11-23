@@ -15,9 +15,9 @@ export function AgentPanel({ view, task, title, running, onStop, onClose }: {
 }) {
   const messages = view ? viewMessages(view) : [];
   return (
-    <aside data-side aria-label="Subagent" className="tz-enter mr-2 mt-2 flex min-h-0 w-[432px] flex-col overflow-hidden rounded-xl bg-main shadow-sheet">
-      {/* one row, the conversation's header's height (design review 11) */}
-      <div className="flex h-[49px] flex-none items-center gap-2 border-b border-line-soft pl-4 pr-3">
+    <aside data-side aria-label="Subagent" className="tz-enter mr-2 mt-[calc(8*var(--tz-pt))] flex min-h-0 w-[432px] flex-col overflow-hidden rounded-xl bg-main shadow-sheet">
+      {/* one row, the conversation's header's height (design review 11), a drag region as it is */}
+      <div data-tauri-drag-region="deep" className="flex h-[calc(40*var(--tz-pt)+1px)] flex-none items-center gap-2 border-b border-line-soft pl-4 pr-3">
         <span className="flex min-w-0 flex-1 items-baseline gap-2"><span className="max-w-[55%] flex-none truncate font-medium" title={title}>{title || "Subagent"}</span>
           <Parts className="min-w-0 truncate text-[12px] text-faint" items={[task?.agent || "subagent", running ? "working" : task?.status ?? "ended",
             task && tokens(task.tokens), task && task.tools > 0 && `${task.tools} step${task.tools === 1 ? "" : "s"}`]} /></span>

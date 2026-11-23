@@ -4,20 +4,31 @@
 //
 //   npm run dev                                   # the app on localhost:1420
 //   node review/sweep.cjs [http://localhost:1420] [out dir]   # needs playwright: npx playwright install chromium
+//   ENGINE=webkit node review/sweep.cjs …         # in WebKit (the Mac app's engine); ONLY=rows: the window's rows alone
 //
 // BASE may be a built copy too (vite build --base ./, with review/mock.js loaded before the app).
-const { chromium } = require(process.env.PW || "playwright");
+const chromium = require(process.env.PW || "playwright")[process.env.ENGINE || "chromium"];
 const fs = require("fs"), path = require("path");
 const BASE = process.argv[2] || "http://localhost:1420", OUT = process.argv[3] || "/tmp/tazuna-sweep";
 const MOCK = fs.readFileSync(path.join(__dirname, "mock.js"), "utf8");
+// Tauri's drag script (tauri 2.12.5, src/window/scripts/drag.js) as far as the page sees it: a press on a drag region stops at
+// the document
+const DRAG = `document.addEventListener("mousedown", (e) => { for (const el of e.composedPath()) { if (!(el instanceof HTMLElement)) continue; const a = el.getAttribute("data-tauri-drag-region");
+  const click = /^(A|BUTTON|INPUT|SELECT|TEXTAREA|LABEL|SUMMARY)$/.test(el.tagName) || (el.hasAttribute("tabindex") && el.getAttribute("tabindex") !== "-1");
+  if (click && a === null) return; if (a === null) continue; if (a === "false") return; if (a === "deep" || el === e.composedPath()[0]) { e.preventDefault(); e.stopImmediatePropagation(); } return; } });`;
+// the traffic lights, drawn where tauri.conf.json's trafficLightPosition ({x: 20, y: 30}) puts them in the real window, as
+// measured there on macOS 26 (design review 12): 13 px, 23 px apart, x 20..80, centred on y 28
+const LIGHTS = `;addEventListener("DOMContentLoaded", () => { const d = document.createElement("div"); d.style.cssText = "position:fixed;left:20.5px;top:21.5px;z-index:99;display:flex;gap:10px;pointer-events:none";
+  d.innerHTML = ["#ff5f57", "#febc2e", "#28c840"].map((c) => \`<i style="width:13px;height:13px;border-radius:50%;background:\${c};box-shadow:inset 0 0 0 .5px #0003"></i>\`).join(""); document.body.append(d); });`;
 fs.mkdirSync(OUT, { recursive: true });
 const log = [];
 (async () => {
   const browser = await chromium.launch();
-  const ctxOf = async ({ theme = "dark", w = 1280, h = 800, setup = true, extra = "" } = {}) => {
-    // a Linux agent: on a Mac one the app leaves its shortcuts to the native menus, which a browser does not have
+  const ctxOf = async ({ theme = "dark", w = 1280, h = 800, setup = true, extra = "", mac = false } = {}) => {
+    // a Linux agent: on a Mac one the app leaves its shortcuts to the native menus, which a browser does not have. `mac`:
+    // a Mac's agent all the same, for the title bar's row (the overlay's traffic lights drawn where the real window has them)
     const ctx = await browser.newContext({ viewport: { width: w, height: h }, colorScheme: theme, userAgent: "Mozilla/5.0 (X11; Linux x86_64) Chrome/140" });
-    await ctx.addInitScript(MOCK);
+    await ctx.addInitScript(mac ? MOCK.replace("X11; Linux x86_64) Chrome/140", "Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15") + (process.env.LIGHTS === "0" ? "" : LIGHTS) : MOCK);
     if (extra) await ctx.addInitScript(extra);
     const p = await ctx.newPage(); p.errs = [];
     p.on("pageerror", (e) => p.errs.push(String(e)));
@@ -33,6 +44,110 @@ const log = [];
   const side = (p) => p.locator("aside[aria-label=Conversations]");
   const open = async (p, title) => { await side(p).locator(`a[title^="${title}"]`).first().click({ timeout: 4000 }); await p.waitForTimeout(800); };
   const esc = async (p) => { await p.keyboard.press("Escape"); await p.waitForTimeout(250); };
+  // design review 12 (A2 and B3 of mockups/v9.html): the window's one top row, and the work panel open beside the reading
+  // column (it keeps its left edge) or, where that leaves under 580 px of text, over the conversation; at the window's sizes
+  // (960 is its least; 760 for the browser), on a Mac's agent, and on Linux's where there are no traffic lights
+  const at = (p) => p.evaluate(() => {
+    const r = (e) => e && e.getBoundingClientRect(), main = r(document.querySelector("main")), msg = r(document.querySelector("[data-msg]")), box = r(document.querySelector("[data-composer]"));
+    const head = r(document.querySelector("main > header")), brand = r(document.querySelector("aside[aria-label=Conversations] > div")), pop = r(document.querySelector("div[data-panel]"));
+    const rail = r(document.querySelector("aside[aria-label='The work']"));
+    return `header ${head ? `${Math.round(head.top)}..${Math.round(head.bottom)} (row ${(head.top + head.height / 2 - 0.5).toFixed(1)})` : "none"}, brand row ${brand ? (brand.top + 8 + (brand.height - 8) / 2).toFixed(1) : "none"}`
+      + `, column ${msg ? `${Math.round(msg.left - main.left)} in, ${Math.round(msg.width - 56)} text` : "none"}, box ${box ? `${Math.round(box.left - main.left)} in, ${Math.round(box.width)}` : "none"}`
+      + `, panel ${pop ? "over" : rail && rail.width > 0 && main.right < innerWidth - 100 ? "beside" : "shut"}`;
+  });
+  const rows = [];
+  for (const [mac, theme, w, h] of [true, false].flatMap((mac) => ["dark", "light"].flatMap((theme) => (mac ? [[1440, 900], [1280, 800], [960, 600], [760, 640]] : [[1440, 900], [960, 600]]).map(([w, h]) => [mac, theme, w, h])))) {
+    const [ctx, p] = await ctxOf({ theme, w, h, mac }), N = `rows-${mac ? "mac" : "linux"}-${theme[0]}-${w}`;
+    const nav = async () => { if (w < 1000) { await p.getByRole("button", { name: "Conversations", exact: true }).click(); await p.waitForTimeout(250); } };
+    await step(p, `${N}-start`, async () => {});
+    await step(p, `${N}-shut`, async () => { await nav(); await open(p, "Why is the CI build"); });
+    rows.push(`${N} shut: ${await at(p)}`);
+    // where a press drags the window, by Tauri's own rule (its drag.js: an element marked "deep" covers what is in it but a
+    // control; a bare mark only itself)
+    rows.push(`${N} drags: ${await p.evaluate((w) => {
+      const drags = (el) => { for (let e = el; e; e = e.parentElement) { const a = e.getAttribute("data-tauri-drag-region"), click = /^(A|BUTTON|INPUT|SELECT|TEXTAREA|LABEL|SUMMARY)$/.test(e.tagName) || (e.hasAttribute("tabindex") && e.getAttribute("tabindex") !== "-1");
+        if (click && a === null) return false; if (a === null) continue; if (a === "false") return false; if (a === "deep") return true; return e === el; } return false; };
+      const title = document.querySelector("main > header h1").getBoundingClientRect(), side = document.querySelector("main > header button[aria-label='Side chat'], main > header button[aria-pressed]").getBoundingClientRect();
+      const pts = { title: [title.left + 10, 28], "header's gap": [title.right + 40, 28], "desk over the sheet": [w / 2, 3], "header's button": [side.left + side.width / 2, 28] };
+      if (w >= 1000) Object.assign(pts, { brand: [125, 28], search: [100, 74] });
+      return Object.entries(pts).map(([k, [x, y]]) => `${k} ${drags(document.elementFromPoint(x, y)) ? "yes" : "no"}`).join(", ");
+    }, w)}`);
+    await step(p, `${N}-open`, async () => { await p.getByTitle(/^Open the work panel/).click(); await p.waitForTimeout(600); });
+    rows.push(`${N} open: ${await at(p)}`);
+    // over the conversation: Esc shuts it; beside: its button
+    if (await p.locator("div[data-panel]").count()) { await esc(p); rows.push(`${N} after Esc: ${await at(p)}`); }
+    else await p.getByTitle(/^Close the work panel/).click();
+    await p.waitForTimeout(300);
+    await step(p, `${N}-long`, async () => { await nav(); await open(p, "Question 1"); await p.mouse.move(w / 2, h / 2); await p.mouse.wheel(0, -900); });
+    await step(p, `${N}-long-open`, async () => { await p.getByTitle(/^Open the work panel/).click(); await p.waitForTimeout(600); });
+    rows.push(`${N} long, open: ${await at(p)}`);
+    if (await p.locator("div[data-panel]").count()) { await p.mouse.click(w / 3, h / 2); await p.waitForTimeout(300); rows.push(`${N} after a click outside: ${await at(p)}`); }
+    else await p.getByTitle(/^Close the work panel/).click();
+    await step(p, `${N}-review`, async () => { await nav(); await open(p, "Fix the flaky retry test"); await p.getByTitle(/Go through this turn/).first().click(); await p.waitForTimeout(500); });
+    await esc(p);
+    await step(p, `${N}-settings`, async () => { await nav(); await side(p).locator("button", { hasText: "Settings" }).last().click(); await p.waitForTimeout(600); });
+    await esc(p);
+    rows.push(`${N} page errors: ${JSON.stringify(p.errs.slice(0, 5))}`);
+    await ctx.close();
+  }
+  // the review of design review 12: the reply still followed when the panel opens beside it, Esc's order (a menu, then the
+  // panel, then Stop), focus in and back, a press on a drag region (Tauri's drag script stops it at the document: copied
+  // here), the narrow sidebar under Settings, scrollbars that always show
+  { const [ctx, p] = await ctxOf({ w: 1440, h: 900, mac: true, extra: DRAG });
+    const gap = () => p.evaluate(() => { const s = document.querySelector("section.tz-scroller"); return Math.round(s.scrollHeight - s.scrollTop - s.clientHeight); });
+    const jump = () => p.evaluate(() => { const b = document.querySelector("button[aria-label='Jump to the latest']")?.getBoundingClientRect(), c = document.querySelector("[data-composer]").getBoundingClientRect();
+      return b ? `the way down ${Math.round(b.left + b.width / 2 - (c.left + c.width / 2))} px off the box's centre` : "no way down"; });
+    await open(p, "Question 1");
+    const g0 = await gap();
+    await step(p, "fix-follow-open", async () => { await p.getByTitle(/^Open the work panel/).click(); await p.waitForTimeout(600); });
+    rows.push(`follow: ${g0} px from the end, then the panel beside: ${await gap()} px, ${await jump()} (0, 0, no way down wanted)`);
+    await p.getByTitle(/^Close the work panel/).click(); await p.waitForTimeout(400);
+    await p.mouse.move(700, 400); await p.mouse.wheel(0, -700); await p.waitForTimeout(400);
+    const g1 = await gap();
+    await step(p, "fix-away-open", async () => { await p.getByTitle(/^Open the work panel/).click(); await p.waitForTimeout(600); });
+    rows.push(`scrolled up ${g1} px, then the panel beside: ${await gap()} px, ${await jump()} (more, 0 off wanted)`);
+    await ctx.close(); }
+  {
+    const [ctx, p] = await ctxOf({ w: 1280, h: 800, mac: true, extra: DRAG });
+    const state = () => p.evaluate(() => { const a = document.activeElement;
+      return `panel ${document.querySelector("div[data-panel].tz-pop") ? "open" : "shut"}, menu ${document.querySelector("#tz-complete") ? "open" : "shut"}, focus ${a?.closest("div[data-panel]") ? "in the panel" : a?.matches("textarea") ? "in the box" : a?.matches("main > header button[aria-pressed]") ? "on its button" : a?.tagName}, ${window.__SENT__.filter(([c]) => c === "interrupt").length} stops`; });
+    await open(p, "Fix the flaky retry test");
+    await p.getByTitle(/^Open the work panel/).click(); await p.waitForTimeout(400);
+    rows.push(`esc: opened by its button: ${await state()} (open, in the panel)`);
+    await esc(p); rows.push(`esc: Esc: ${await state()} (shut, on its button, 0 stops)`);
+    await p.locator("textarea[aria-label=Message]").fill("/"); await p.waitForTimeout(300);
+    await p.keyboard.press("Control+\\"); await p.waitForTimeout(400);
+    await p.locator("textarea[aria-label=Message]").evaluate((t) => t.focus()); await p.waitForTimeout(200);
+    await step(p, "fix-esc-menu", async () => {});
+    rows.push(`esc: a menu over the open panel: ${await state()} (open, open, in the box)`);
+    await esc(p); rows.push(`esc: Esc: ${await state()} (open, shut)`);
+    await esc(p); rows.push(`esc: Esc: ${await state()} (shut, shut, in the box, 0 stops)`);
+    await esc(p); rows.push(`esc: Esc: ${await state()} (1 stop: the reply's Stop)`);
+    for (const [what, x, y] of [["the header's title", 420, 28], ["the brand", 125, 28], ["the desk over the sheet", 700, 3]]) {
+      await p.getByTitle(/^Open the work panel/).click(); await p.waitForTimeout(300);
+      await p.mouse.click(x, y); await p.waitForTimeout(300);
+      rows.push(`a press on ${what} (a drag region): ${await state()} (shut)`);
+    }
+    await ctx.close(); }
+  { const [ctx, p] = await ctxOf({ w: 960, h: 600, mac: true });
+    await p.getByRole("button", { name: "Conversations", exact: true }).click(); await p.waitForTimeout(250);
+    await step(p, "fix-narrow-settings", async () => { await side(p).locator("button", { hasText: "Settings" }).last().click(); await p.waitForTimeout(600); });
+    rows.push(`narrow: Settings from the sidebar: the sidebar ${await p.evaluate(() => document.querySelector("aside[aria-label=Conversations]").getBoundingClientRect().width > 0 ? "OVER IT" : "shut")}, Settings ${await p.getByRole("dialog", { name: "Settings" }).count()}`);
+    await ctx.close(); }
+  for (const w of [1440, 1372]) {
+    // a classic scrollbar, as a 15 px right border on the scroller (it takes the same place; this browser's are overlays)
+    const bars = `addEventListener("DOMContentLoaded", () => { document.documentElement.style.setProperty("--tz-sbw", "15px"); const s = document.createElement("style"); s.textContent = "section.tz-scroller { border-right: 15px solid #8886 }"; document.head.append(s); });`;
+    const [ctx, p] = await ctxOf({ w, h: 900, extra: bars });
+    const widths = () => p.evaluate(() => { const m = document.querySelector("[data-msg]").getBoundingClientRect(), c = document.querySelector("[data-composer]").getBoundingClientRect();
+      return `text ${Math.round(m.left + 28)}..${Math.round(m.right - 28)}, box ${Math.round(c.left)}..${Math.round(c.right)}`; });
+    await open(p, "Why is the CI build");
+    const shut = await widths();
+    await step(p, `fix-scrollbars-${w}`, async () => { await p.getByTitle(/^Open the work panel/).click(); await p.waitForTimeout(600); });
+    rows.push(`scrollbars of 15 px, ${w}: shut ${shut}; open ${await widths()} (the same edges wanted)`);
+    rows.push(`fixes page errors: ${JSON.stringify(p.errs.slice(0, 5))}`);
+    await ctx.close(); }
+  log.push(...rows);
+  if (process.env.ONLY === "rows") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n")); await browser.close(); return; }
   for (const theme of ["dark", "light"]) {
     const [ctx, p] = await ctxOf({ theme }), T = theme[0];
     await step(p, `${T}-start`, async () => {});
@@ -97,7 +212,7 @@ const log = [];
     await step(p, `${T}-panel-tab`, async () => { await p.mouse.move(640, 400); await p.mouse.wheel(0, -9000); });
     await step(p, `${T}-panel-open`, async () => { await p.getByTitle(/^The work panel: changes/).click(); await p.waitForTimeout(500); });
     const col = () => p.evaluate(() => `${document.querySelector('[style*="grid-template-columns"]').style.gridTemplateColumns.split(" ").pop()} column, ${document.querySelectorAll('button[aria-label^="The work panel"]').length} tab`);
-    log.push(`${theme} panel opened by its tab: ${await col()} (300px, 0 tab wanted)`);
+    log.push(`${theme} panel opened by its tab: ${await col()} (0px, 1 tab wanted: at 1280 it opens over the conversation, design review 12)`);
     await step(p, `${T}-receipt-paid`, async () => { await open(p, "Speed up the CI build"); await p.waitForTimeout(300); await p.getByTitle(/^The receipt/).first().click(); await p.waitForTimeout(500); });
     log.push(`${theme} then another empty project conversation: ${await col()} (0px, 1 tab wanted)`);
     await step(p, `${T}-edges`, async () => { await open(p, "Question 1"); await p.mouse.move(640, 400); await p.mouse.wheel(0, -700); });

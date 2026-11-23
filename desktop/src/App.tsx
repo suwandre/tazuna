@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type CSSProperties } from "react";
 import { GitBranch, LoaderCircle, MessagesSquare, PanelLeft, PanelRight } from "lucide-react";
 import { AgentPanel } from "./components/AgentPanel";
 import { Approval } from "./components/Approval";
@@ -19,12 +19,13 @@ import { prChip, type Pr } from "./lib/pr";
 import { checkUpdate, watchUpdates } from "./lib/update";
 import { routeLine } from "./lib/route";
 import { today as todayOf, type Row } from "./lib/usage";
-import { usd, type ChangedFile, type Message, keysOf, panelChoice, panelState } from "./lib/types";
+import { usd, type ChangedFile, type Message, escFor, keysOf, panelChoice, panelState } from "./lib/types";
 import { Sep } from "./components/Sep";
 import type { Turn } from "./components/Receipt";
 import { Rail, UserPanel, WorkCtx, openUsage, type Work } from "./components/Rail";
 import { Slot, slots } from "./lib/slots";
-import { Sidebar } from "./components/Sidebar";
+import { FOCUSABLE } from "./lib/dialog";
+import { Sidebar, macOverlay } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
 import { CoreFailed, Start, type StartItem } from "./components/Start";
 import { StatusBar } from "./components/StatusBar";
@@ -34,6 +35,10 @@ import { askedInput, changedCount, heldTurn, messages as viewMessages, queued, r
 import { modelLabel, shortTitle, titleFrom, type Usage } from "./lib/types";
 import { items as accountItems, mine as accountOf, withLive } from "./lib/health";
 import { Parts } from "./components/Sep";
+
+/** What is open over the window or the box that Esc should shut before the work panel over the conversation: menus and
+ * popovers (`tz-pop`; a closed one's fading copy is `tz-out`), the completion menu, dialogs. */
+const MENUS = ".tz-pop:not([data-panel]):not(.tz-out), [role=menu], [role=listbox], [role=dialog]:not(.tz-out)";
 
 const NO_USAGE: Usage = { contextPct: 0, contextUsed: "0", contextMax: "", plan5h: null, plan5hReset: "", planWeek: null, threadCost: 0, threadTurns: 0, cachedPct: 0, saved: 0, today: 0, todayTurns: 0, todaySeries: [], balance: null };
 import { THEME, applyLooks, darkNow, look } from "./lib/chrome";
@@ -496,13 +501,20 @@ export default function App() {
   const width = useWidth();
   const narrow = width < 1000;
   const [navOpen, setNavOpen] = useState(false);
-  useEffect(() => setNavOpen(false), [active, narrow]);
+  // and when a dialog opens over the window: the narrow sidebar over it took the first click (review of design review 12)
+  useEffect(() => setNavOpen(false), [active, narrow, overlay]);
   // in a project it stays folded, a small tab on the sheet's edge that counts the files changed so far, and it never opens
   // or closes by itself: opening at a turn's end moved the reading column under the reader, and Undo moved it back (design
   // review 12; review 11 had it open by itself at the first change)
   const col = panelState({ project: !!folder, width, choice: panelBy[active] });
   const panelOpen = col.open;
-  const togglePanel = () => setPanelBy(({ [active]: _, ...m }) => { const c = panelChoice(panelOpen); return c === undefined ? m : { ...m, [active]: c }; });
+  // the control pressed (the tab, the header's button), where focus goes back when the panel over the conversation shuts:
+  // WebKit does not focus a button on a click, so what had focus then was the page
+  const opener = useRef<HTMLElement | null>(null);
+  const togglePanel = (e?: { currentTarget: EventTarget | null }) => {
+    opener.current = (e?.currentTarget as HTMLElement | undefined) ?? (document.activeElement as HTMLElement | null);
+    setPanelBy(({ [active]: _, ...m }) => { const c = panelChoice(panelOpen); return c === undefined ? m : { ...m, [active]: c }; });
+  };
   const toggleNow = useRef(togglePanel);
   toggleNow.current = togglePanel;
   // a side chat or a subagent's sheet has the column: the panel's key does nothing then (it flipped the hidden panel)
@@ -616,6 +628,28 @@ export default function App() {
   }, [active]);
   const tasks = view?.tasks ?? [];
   const agentHere = agent?.tid === active ? agent : null, agentTask = agentHere ? tasks.find((t) => t.calls.includes(agentHere.call)) : undefined;
+  // where the column beside the sheet would leave too little text, the panel floats over the conversation (`col.over`):
+  // Esc (after any menu open over it: `escFor`), a click outside it, the tab, its button or ⌘\ shut it. Focus goes into it
+  // and back to what had it. Both listeners in the capture phase: Tauri's drag regions stop a press at the document.
+  const floating = panelOpen && col.over && !side && !agentHere && !reviewing;
+  const popRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!floating) return;
+    const before = opener.current ?? (document.activeElement as HTMLElement | null);
+    const pop = popRef.current;
+    (pop?.querySelector<HTMLElement>(FOCUSABLE) ?? pop)?.focus({ preventScroll: true });
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || escFor({ menu: !!document.querySelector(MENUS), over: true }) !== "panel") return;
+      e.stopPropagation(); toggleNow.current();
+    };
+    const away = (e: MouseEvent) => { if (!(e.target as Element).closest?.("[data-panel]")) toggleNow.current(); };
+    window.addEventListener("keydown", key, true); window.addEventListener("mousedown", away, true);
+    return () => {
+      window.removeEventListener("keydown", key, true); window.removeEventListener("mousedown", away, true);
+      const now = document.activeElement;
+      if (before?.isConnected && (!now || now === document.body || pop?.contains(now))) before.focus({ preventScroll: true });
+    };
+  }, [floating]);
   paneOwns.current = !!side || !!agentHere;
   // a subagent with no task of its own (one that ran inside the reply) runs as long as its step does
   const agentStep = agentHere && (view?.blocks.find((b) => b.kind === "tool" && b.id === agentHere.call) as { running?: boolean; input?: Record<string, unknown> | null } | undefined);
@@ -844,7 +878,7 @@ export default function App() {
     <div className="flex h-screen flex-col overflow-hidden bg-desk">
     <div data-tauri-drag-region className="grid min-h-0 flex-1 overflow-hidden"
       // the right column is always a track (0 px when shut), so it slides: a track that came and went was a jump cut
-      style={{ gridTemplateColumns: [narrow ? null : "248px", "minmax(0, 1fr)", reviewing ? "0px" : agentHere ? "440px" : side ? "380px" : panelOpen ? "300px" : "0px"].filter(Boolean).join(" "), transition: "grid-template-columns .18s cubic-bezier(.2, 0, 0, 1)" }}>
+      style={{ gridTemplateColumns: [narrow ? null : "248px", "minmax(0, 1fr)", reviewing ? "0px" : agentHere ? "440px" : side ? "380px" : panelOpen && !col.over ? "300px" : "0px"].filter(Boolean).join(" "), transition: "grid-template-columns .18s cubic-bezier(.2, 0, 0, 1)" }}>
       {narrow && navOpen && <div onMouseDown={() => setNavOpen(false)} className="tz-fade fixed inset-0 z-40 bg-scrim" />}
       <div className={narrow ? (navOpen ? "tz-enter fixed inset-y-0 left-0 z-40 flex w-[248px] shadow-[var(--shadow-pop)]" : "hidden") : "flex min-h-0"}>
       <Sidebar active={inTauri ? listedId(threads.find((t) => t.tid === active)) ?? folder ?? "" : "t1"}
@@ -859,11 +893,18 @@ export default function App() {
         onHide={inTauri ? (t) => core.hide(t.id).then(refreshSessions) : undefined}
         planLeft={view?.limits ? `${Math.round(100 - view.limits[0])}% left` : inTauri ? "" : "Max · 62% left"} />
       </div>
-      {/* relative: the review is a pane over the conversation (header and box too), not a dialog over the window */}
-      <main className={`relative mr-2 mt-2 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-main shadow-sheet ${narrow ? "ml-2" : ""}`}>
-        <header data-tauri-drag-region className="flex items-center justify-between gap-3 border-b border-line-soft py-2.5 pl-7 pr-4">
+      {/* relative: the review is a pane over the conversation (header and box too), not a dialog over the window. tz-keep: the
+          reading column keeps the left edge centring gives it in the sheet with the panel shut (`col.left`), so an open
+          panel beside it narrows it on the right and nothing jumps (design review 12, B3; styles.css .tz-col); a side chat or
+          a subagent's sheet beside it centres it in what is left, as before */}
+      <main className={`relative mr-2 mt-[calc(8*var(--tz-pt))] flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-main shadow-sheet ${narrow ? "ml-2" : ""} ${side || agentHere ? "" : "tz-keep"}`}
+        style={{ "--tz-l": `${col.left}px` } as CSSProperties}>
+        {/* the window's top row (design review 12, A2): 40 points, centred on the traffic lights' line whatever the text size
+            (`--tz-pt`, styles.css); in a narrow window on a Mac the lights sit on it, so it starts after them. A drag region,
+            its title too */}
+        <header data-tauri-drag-region="deep" className={`flex h-[calc(40*var(--tz-pt)+1px)] flex-none items-center justify-between gap-3 border-b border-line-soft pr-4 ${narrow && macOverlay ? "pl-[calc(92*var(--tz-pt)-8px)]" : "pl-7"}`}>
           <div className="flex min-w-0 flex-1 items-center gap-2 font-medium">
-            {narrow && <button onClick={() => setNavOpen(true)} aria-label="Conversations" title="Conversations" className="-ml-3 grid size-7 flex-none place-items-center rounded-md text-muted hover:text-ink"><PanelLeft size={16} strokeWidth={1.5} /></button>}
+            {narrow && <button onClick={() => setNavOpen(true)} aria-label="Conversations" title="Conversations" className={`${macOverlay ? "" : "-ml-3"} grid size-7 flex-none place-items-center rounded-md text-muted hover:text-ink`}><PanelLeft size={16} strokeWidth={1.5} /></button>}
             <span className="min-w-0 max-w-[30%] truncate text-muted">{place}</span><span className="text-faint" aria-hidden="true">/</span><h1 key={`title:${active}`} title={firstAsked || title} className={`tz-enter truncate text-[inherit] font-[inherit] ${view && more ? "max-w-[60%] shrink-[0.3]" : ""} min-w-0`}>{title}</h1>
             {view && more && <span className="min-w-0 truncate text-[12px] font-normal text-faint" aria-hidden="true">— {more}</span>}</div>
           <div className="flex flex-none items-center gap-1.5">
@@ -890,95 +931,102 @@ export default function App() {
           onDiff={(turn, path) => (inTauri ? setReviewing({ scope: "turn", turn, path }) : core.diff(turn, path))} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={(turn) => core.undo(turn)} />}
         </div>
         {inTauri && col.tab && !side && !agentHere && !reviewing && !fresh && !failed && (
-          <button onClick={togglePanel} aria-expanded={false} aria-label={`The work panel: ${changes} file${changes === 1 ? "" : "s"} changed`} title={`The work panel: changes, checks, the pull request (${keysOf("⌘\\")})`}
-            className="tz-enter absolute right-[var(--tz-sbw,0px)] top-[62px] z-[2] flex items-center gap-1.5 rounded-l-[7px] border border-r-0 border-line bg-desk py-1 pl-2 pr-[9px] text-[12px] text-muted hover:text-ink">
+          <button data-panel onClick={togglePanel} aria-expanded={panelOpen} aria-label={`The work panel: ${changes} file${changes === 1 ? "" : "s"} changed`} title={`The work panel: changes, checks, the pull request (${keysOf("⌘\\")})`}
+            className={`tz-enter absolute right-[var(--tz-sbw,0px)] top-[calc(40*var(--tz-pt)+13px)] z-[2] flex items-center gap-1.5 rounded-l-[7px] border border-r-0 border-line py-1 pl-2 pr-[9px] text-[12px] hover:text-ink ${panelOpen ? "bg-hover text-ink" : "bg-desk text-muted"}`}>
             <GitBranch size={13} strokeWidth={1.5} aria-hidden="true" />Changes<span className={`font-medium tabular-nums ${changes ? "text-ink-2" : "text-faint"}`}>{changes}</span></button>
         )}
         {diff && <DiffView diff={diff} onClose={() => setDiff(null)} />}
         {reviewing && <ReviewView start={reviewing} turns={(view?.changes ?? []).filter((c) => !c.undone).map((c) => c.turn)}
           onClose={() => setReviewing(null)} onSend={(text) => say(text)} />}
-        {view?.untrusted && (
-          <div className="mx-auto mb-2 flex w-full max-w-[756px] items-center gap-3 px-7 text-[12.5px] text-ink-2">
-            <span className="flex-1">This folder's settings run code ({view.untrusted}). tazuna works here without them until you trust it.</span>
-            <button onClick={() => core.trust().then(restart)} className={`${quietButton} font-medium`}>Trust folder</button>
-          </div>
-        )}
-        {error && !failed && <div className="mx-auto mb-2 max-w-[756px] px-7 text-[12.5px] text-bad">{error}</div>}
-        {folder && wtNotes[folder] && (
-          <div className="mx-auto mb-2 flex w-full max-w-[756px] items-center gap-3 px-7 text-[12.5px] text-ink-2">
-            <span className="flex-1">Worktree ready. {wtNotes[folder]}.</span>
-            <button onClick={() => setWtNotes((m) => { const { [folder]: _, ...rest } = m; return rest; })} className={quietButton}>Dismiss</button>
-          </div>
-        )}
-        {createAsk != null && (
-          <div className="mx-auto mb-2 flex w-full max-w-[700px] flex-wrap items-center gap-2 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
-            <span className="flex-1">What should <span className="text-ink">“{createAsk.slice(0, 60)}”</span> be?</span>
-            <button onClick={() => { createPanel(createAsk); setCreateAsk(null); }} className={quietButton} title="A panel in the right column, or a plugin that changes the window">Part of the window</button>
-            <button onClick={() => { createBehaviour(createAsk); setCreateAsk(null); }} className={accentButton} title="A /command, a skill the agent reads, or a tool (MCP server): on every model">Something tazuna does</button>
-            <button onClick={() => setCreateAsk(null)} className={quietButton}>Cancel</button>
-          </div>
-        )}
-        {creation && creation.state !== "done" && (
-          <div className="mx-auto mb-2 flex w-full max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
-            <span className="flex-1">{creation.state === "made" ? "It is made and checked: what it is and where it is are in the conversation above. Read it, then turn it on." : "It did not pass the checks: the conversation says why."}</span>
-            {creation.state === "made" && <button onClick={() => core.createDoneIn(active, true).catch(() => {})} className={accentButton}>Enable</button>}
-            <button onClick={() => core.createDoneIn(active, false).catch(() => {})} className={quietButton}>Discard</button>
-          </div>
-        )}
-        {wt && (
-          <div className="mx-auto mb-2 flex w-full max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
-            {wt.ask && <><span className="flex-1">This project has <span className="font-mono">.tazuna/setup.sh</span>. Run it in the new worktree (installs and the like)?
-              {wt.script != null && <pre className="mt-1.5 max-h-60 overflow-auto whitespace-pre-wrap rounded bg-field px-2 py-1.5 font-mono text-[11.5px] text-ink">{wt.script}</pre>}
-              <span className="mt-1 block text-[11.5px] text-muted">This is the whole script; exactly this runs.</span></span>
-              <button onClick={() => core.worktreeNew(true, wt.id).catch(() => {})} className={accentButton}>Run it</button>
-              <button onClick={() => core.worktreeNew(false).catch(() => {})} className={quietButton}>Skip</button></>}
-            {wt.error && <span className="flex-1 text-bad">The worktree was not made: {wt.error}</span>}
-            {wt.remove && <><span className="flex-1">{wt.remove.dirty ? `It has changes that are not committed: ${wt.remove.dirty.slice(0, 160)}` : "Remove this worktree? Its folder goes; its branch and commits stay."}</span>
-              <button onClick={() => core.worktreeRemove(wt.remove!.path, !!wt.remove!.dirty).catch(() => {})} className={`${quietButton} font-medium text-bad!`}>{wt.remove.dirty ? "Remove anyway" : "Remove"}</button></>}
-            <button onClick={() => setWt(null)} className={quietButton}>{wt.ask ? "Cancel" : "Close"}</button>
-          </div>
-        )}
-        {inTauri && safeMode() && userWidgets.some((w) => w.kind === "plugin") && (
-          <div className="mx-auto mb-2 max-w-[756px] px-7 text-[12.5px] text-muted">Safe mode: plugins are off (Settings turns them back on).</div>
-        )}
-        {ready[active] && (
-          <div className="mx-auto mb-2 flex w-full max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2.5 text-[12.5px] text-ink-2">
-            <span className="flex-1"><span className="font-medium text-ink">{ready[active]!.title}</span> is ready. Its own code says it {ready[active]!.summary}.
-              <span className="block text-[12px] text-muted">That is self-reported: read the code to be sure. A plugin runs inside tazuna's window and can send messages to the agent.</span></span>
-            <button onClick={() => setCodeView({ title: ready[active]!.title, text: ready[active]!.code })}
-              className={quietButton}>Code</button>
-            <button onClick={() => enableReady(active)} className={accentButton}>Enable</button>
-          </div>
-        )}
-        {codeView && <DiffView diff={{ turn: 0, path: `${codeView.title} / plugin.js`, text: codeView.text }} plain onClose={() => setCodeView(null)} />}
-        {/* claude's work that goes on after the reply: a subagent or a command in the background. The conversation looked
-            idle while one ran and spent the plan (the user, 2026-11-20); the terminal says "1 working in background" */}
-        {tasks.some((t) => t.running) && (
-          <div className="mx-auto mb-2 flex w-full max-w-[756px] flex-col gap-1 px-7">
-            {tasks.filter((t) => t.running).map((t) => {
-              const isAgent = t.kind === "local_agent" && t.calls.length > 0;
-              return (
-                <button key={t.id} disabled={!isAgent} onClick={() => setAgent({ tid: active, call: t.calls[0] })} title={isAgent ? "See what it is doing: its reasoning, steps and answers" : undefined}
-                  className="flex w-full items-center gap-2 rounded-lg border border-line bg-card px-3 py-1.5 text-left text-[12.5px] text-ink-2 disabled:cursor-default">
-                  <LoaderCircle size={13} strokeWidth={1.75} className="flex-none animate-spin text-accent" aria-hidden="true" />
-                  <span className="flex-none text-ink">{isAgent ? "Subagent" : "Command"} in the background</span>
-                  <span className="min-w-0 flex-1 truncate text-muted">{t.doing || t.description}</span>
-                  {t.tokens > 0 && <span className="flex-none tabular-nums text-faint">{(t.tokens / 1000).toFixed(1)}k tokens</span>}
-                  {isAgent && <span className="flex-none text-accent-ink">Watch</span>}
-                </button>
-              );
-            })}
-          </div>
-        )}
-        {view?.asking && <Approval asking={view.asking} input={askedInput(view)} onAnswer={(allow, always) => core.answer(allow, always)} />}
-        {!fresh && !failed && composer}
+        {/* what stands over the message box, and the box: in the reading column (tz-col), the 700 px ones on the box's edges */}
+        <div className="tz-col flex flex-none flex-col">
+          {view?.untrusted && (
+            <div className="mx-auto mb-2 flex w-full max-w-[756px] items-center gap-3 px-7 text-[12.5px] text-ink-2">
+              <span className="flex-1">This folder's settings run code ({view.untrusted}). tazuna works here without them until you trust it.</span>
+              <button onClick={() => core.trust().then(restart)} className={`${quietButton} font-medium`}>Trust folder</button>
+            </div>
+          )}
+          {error && !failed && <div className="mx-auto mb-2 max-w-[756px] px-7 text-[12.5px] text-bad">{error}</div>}
+          {folder && wtNotes[folder] && (
+            <div className="mx-auto mb-2 flex w-full max-w-[756px] items-center gap-3 px-7 text-[12.5px] text-ink-2">
+              <span className="flex-1">Worktree ready. {wtNotes[folder]}.</span>
+              <button onClick={() => setWtNotes((m) => { const { [folder]: _, ...rest } = m; return rest; })} className={quietButton}>Dismiss</button>
+            </div>
+          )}
+          {createAsk != null && (
+            <div className="mx-auto mb-2 flex w-[calc(100%-56px)] max-w-[700px] flex-wrap items-center gap-2 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
+              <span className="flex-1">What should <span className="text-ink">“{createAsk.slice(0, 60)}”</span> be?</span>
+              <button onClick={() => { createPanel(createAsk); setCreateAsk(null); }} className={quietButton} title="A panel in the right column, or a plugin that changes the window">Part of the window</button>
+              <button onClick={() => { createBehaviour(createAsk); setCreateAsk(null); }} className={accentButton} title="A /command, a skill the agent reads, or a tool (MCP server): on every model">Something tazuna does</button>
+              <button onClick={() => setCreateAsk(null)} className={quietButton}>Cancel</button>
+            </div>
+          )}
+          {creation && creation.state !== "done" && (
+            <div className="mx-auto mb-2 flex w-[calc(100%-56px)] max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
+              <span className="flex-1">{creation.state === "made" ? "It is made and checked: what it is and where it is are in the conversation above. Read it, then turn it on." : "It did not pass the checks: the conversation says why."}</span>
+              {creation.state === "made" && <button onClick={() => core.createDoneIn(active, true).catch(() => {})} className={accentButton}>Enable</button>}
+              <button onClick={() => core.createDoneIn(active, false).catch(() => {})} className={quietButton}>Discard</button>
+            </div>
+          )}
+          {wt && (
+            <div className="mx-auto mb-2 flex w-[calc(100%-56px)] max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
+              {wt.ask && <><span className="flex-1">This project has <span className="font-mono">.tazuna/setup.sh</span>. Run it in the new worktree (installs and the like)?
+                {wt.script != null && <pre className="mt-1.5 max-h-60 overflow-auto whitespace-pre-wrap rounded bg-field px-2 py-1.5 font-mono text-[11.5px] text-ink">{wt.script}</pre>}
+                <span className="mt-1 block text-[11.5px] text-muted">This is the whole script; exactly this runs.</span></span>
+                <button onClick={() => core.worktreeNew(true, wt.id).catch(() => {})} className={accentButton}>Run it</button>
+                <button onClick={() => core.worktreeNew(false).catch(() => {})} className={quietButton}>Skip</button></>}
+              {wt.error && <span className="flex-1 text-bad">The worktree was not made: {wt.error}</span>}
+              {wt.remove && <><span className="flex-1">{wt.remove.dirty ? `It has changes that are not committed: ${wt.remove.dirty.slice(0, 160)}` : "Remove this worktree? Its folder goes; its branch and commits stay."}</span>
+                <button onClick={() => core.worktreeRemove(wt.remove!.path, !!wt.remove!.dirty).catch(() => {})} className={`${quietButton} font-medium text-bad!`}>{wt.remove.dirty ? "Remove anyway" : "Remove"}</button></>}
+              <button onClick={() => setWt(null)} className={quietButton}>{wt.ask ? "Cancel" : "Close"}</button>
+            </div>
+          )}
+          {inTauri && safeMode() && userWidgets.some((w) => w.kind === "plugin") && (
+            <div className="mx-auto mb-2 max-w-[756px] px-7 text-[12.5px] text-muted">Safe mode: plugins are off (Settings turns them back on).</div>
+          )}
+          {ready[active] && (
+            <div className="mx-auto mb-2 flex w-[calc(100%-56px)] max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2.5 text-[12.5px] text-ink-2">
+              <span className="flex-1"><span className="font-medium text-ink">{ready[active]!.title}</span> is ready. Its own code says it {ready[active]!.summary}.
+                <span className="block text-[12px] text-muted">That is self-reported: read the code to be sure. A plugin runs inside tazuna's window and can send messages to the agent.</span></span>
+              <button onClick={() => setCodeView({ title: ready[active]!.title, text: ready[active]!.code })}
+                className={quietButton}>Code</button>
+              <button onClick={() => enableReady(active)} className={accentButton}>Enable</button>
+            </div>
+          )}
+          {codeView && <DiffView diff={{ turn: 0, path: `${codeView.title} / plugin.js`, text: codeView.text }} plain onClose={() => setCodeView(null)} />}
+          {/* claude's work that goes on after the reply: a subagent or a command in the background. The conversation looked
+              idle while one ran and spent the plan (the user, 2026-11-20); the terminal says "1 working in background" */}
+          {tasks.some((t) => t.running) && (
+            <div className="mx-auto mb-2 flex w-full max-w-[756px] flex-col gap-1 px-7">
+              {tasks.filter((t) => t.running).map((t) => {
+                const isAgent = t.kind === "local_agent" && t.calls.length > 0;
+                return (
+                  <button key={t.id} disabled={!isAgent} onClick={() => setAgent({ tid: active, call: t.calls[0] })} title={isAgent ? "See what it is doing: its reasoning, steps and answers" : undefined}
+                    className="flex w-full items-center gap-2 rounded-lg border border-line bg-card px-3 py-1.5 text-left text-[12.5px] text-ink-2 disabled:cursor-default">
+                    <LoaderCircle size={13} strokeWidth={1.75} className="flex-none animate-spin text-accent" aria-hidden="true" />
+                    <span className="flex-none text-ink">{isAgent ? "Subagent" : "Command"} in the background</span>
+                    <span className="min-w-0 flex-1 truncate text-muted">{t.doing || t.description}</span>
+                    {t.tokens > 0 && <span className="flex-none tabular-nums text-faint">{(t.tokens / 1000).toFixed(1)}k tokens</span>}
+                    {isAgent && <span className="flex-none text-accent-ink">Watch</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {view?.asking && <Approval asking={view.asking} input={askedInput(view)} onAnswer={(allow, always) => core.answer(allow, always)} />}
+          {!fresh && !failed && composer}
+        </div>
       </main>
       {agentHere ? <div className="flex min-h-0 justify-end overflow-hidden"><AgentPanel key={agentHere.call} view={agentViews[agentHere.call] ?? null} task={agentTask} running={agentRunning}
           title={agentTask?.description || String(agentStep?.input?.description ?? "")} onClose={() => setAgent(null)}
           onStop={agentTask ? () => { core.taskStopIn(agentHere.tid, agentTask.id).catch(() => {}); } : undefined} /></div>
         : side ? <SideChat key={side.tid} view={side.view} onClose={() => closeSide(active)} onStop={() => core.interruptIn(side.tid)}
           onSend={(text) => core.sendIn(side.tid, text).catch(() => {})} onAnswer={(allow, always) => core.opIn(side.tid, { op: "answer", allow, always })} />
-        : panelOpen && <div className="flex min-h-0 justify-end overflow-hidden"><WorkCtx.Provider value={work}><Rail usage={usage} data={data} messages={messages} /></WorkCtx.Provider></div>}
+        : panelOpen && !col.over && <div className="flex min-h-0 justify-end overflow-hidden"><WorkCtx.Provider value={work}><Rail usage={usage} data={data} messages={messages} /></WorkCtx.Provider></div>}
+      {/* the panel over the conversation, under its tab (design review 12, B2 of mockups/v9.html): where beside it the text
+          would be under 580 px; nothing under it moves */}
+      {floating && <div ref={popRef} data-panel tabIndex={-1} aria-label="The work panel" className="tz-pop fixed right-5 top-[calc(48*var(--tz-pt)+47px)] z-30 flex max-h-[calc(100vh-48*var(--tz-pt)-88px)] w-[300px] flex-col overflow-hidden rounded-xl border border-line-strong outline-none">
+        <WorkCtx.Provider value={work}><Rail usage={usage} data={data} messages={messages} over /></WorkCtx.Provider></div>}
       <Slot name="overlay" props={{ data }} />
       {overlay === "palette" && <Palette actions={actions()} query={paletteQ} onClose={() => setOverlay(null)} />}
       {overlay === "shortcuts" && <Shortcuts onClose={() => setOverlay(null)} />}
@@ -1054,7 +1102,7 @@ const titleOf = (t: Thread) => shortTitle((t.view?.blocks.find((b) => b.kind ===
 
 /** The header's built-in chips read this (and a plugin replacing one can too). */
 export const HeaderCtx = createContext<{ modelLabel: string; effort: string; branch: string; changed: number; review?: () => void; side?: () => void; sideOpen?: boolean;
-  pr?: string | null; openPr?: () => void; cost?: number; panelOpen?: boolean; togglePanel?: () => void }>({ modelLabel: "", effort: "", branch: "", changed: 0 });
+  pr?: string | null; openPr?: () => void; cost?: number; panelOpen?: boolean; togglePanel?: (e?: { currentTarget: EventTarget | null }) => void }>({ modelLabel: "", effort: "", branch: "", changed: 0 });
 
 function ModelChip() {
   const h = useContext(HeaderCtx);
@@ -1089,7 +1137,7 @@ function CostChip() {
 }
 function PanelChip() {
   const h = useContext(HeaderCtx);
-  return h.togglePanel ? <button onClick={h.togglePanel} aria-pressed={h.panelOpen} title={`${h.panelOpen ? "Close" : "Open"} the work panel (${keysOf("⌘\\")})`}
+  return h.togglePanel ? <button data-panel onClick={h.togglePanel} aria-pressed={h.panelOpen} title={`${h.panelOpen ? "Close" : "Open"} the work panel (${keysOf("⌘\\")})`}
     className={`grid size-7 place-items-center rounded-md ${h.panelOpen ? "bg-field text-ink" : "text-muted hover:text-ink"}`}><PanelRight size={16} strokeWidth={1.5} /></button> : null;
 }
 // the cost moved to the status bar (desktop 0.1.71): CostChip stays exported for a plugin that wants it in the header

@@ -90,6 +90,19 @@ export function Transcript({ messages, activity, jumps = true, ...props }: Props
   // before the paint: after it, a scroll event of the last follow could see the new content's height first, read the reader
   // as scrolled up, and leave a reply's change card and receipt under the box (design review 12, now and then)
   useLayoutEffect(() => { if (stick.current && box.current) box.current.scrollTop = box.current.scrollHeight; });
+  // and when the box changes size with no render of its own: the work panel sliding open beside the column re-wraps it
+  // taller, and the reply being followed stopped being followed, its way back down not shown (review of design review 12).
+  // The browser's scroll anchoring is off here, so a re-wrap is no scroll of the reader's
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      if (stick.current) el.scrollTop = el.scrollHeight;
+      setAway(el.scrollHeight - el.scrollTop - el.clientHeight > 240);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   // the rail's list of your messages (or a plugin) asks for message i with a "tazuna-jump" event: drawn if it was not, then
   // scrolled to
   const [jump, setJump] = useState<number | null>(null);
@@ -104,7 +117,7 @@ export function Transcript({ messages, activity, jumps = true, ...props }: Props
     <TranscriptCtx.Provider value={rest}>
     <div className={`tz-doc-edges relative flex min-h-0 flex-1 flex-col ${away ? "away" : ""}`}>
     <section ref={box} onScroll={(e) => { const el = e.currentTarget, gap = el.scrollHeight - el.scrollTop - el.clientHeight; stick.current = gap < 40; setAway(gap > 240); }}
-      className="min-h-0 flex-1 overflow-auto pb-9 pt-7">
+      className="tz-col tz-scroller min-h-0 flex-1 overflow-auto pb-9 pt-7 [overflow-anchor:none]">
       {hidden > 0 && (
         <div className="mx-auto mb-5 max-w-[756px] px-7">
           <button onClick={() => { stick.current = false; setLimit((l) => l + 40); }} className={quietButton}>
@@ -147,7 +160,7 @@ export function Transcript({ messages, activity, jumps = true, ...props }: Props
       {/* over the scroller, not in it: the transcript's own fade is under the button (in it, the fade took the button
           too; before the fade it sat on a message's words, "public API s↓ame", design review 9) */}
       {away && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-1 z-[2] flex justify-center">
+        <div className="tz-col pointer-events-none absolute inset-x-0 bottom-1 z-[2] flex justify-center">
           <button onClick={() => { stick.current = true; box.current?.scrollTo({ top: box.current.scrollHeight, behavior: "smooth" }); }} title="Jump to the latest" aria-label="Jump to the latest"
             className="tz-enter pointer-events-auto grid size-8 place-items-center rounded-full border border-line-strong bg-card text-ink-2 shadow-[var(--shadow-pop)]"><ArrowDown size={15} strokeWidth={1.75} /></button>
         </div>

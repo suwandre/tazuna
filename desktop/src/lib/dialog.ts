@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 
-const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+export const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 /** A modal panel's keyboard behaviour (accessibility pass, 0.1.34): focus moves into it when it opens (unless something
  * inside took it already, such as a search box), Tab and Shift-Tab stay inside it, and focus goes back where it was when

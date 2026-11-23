@@ -225,31 +225,55 @@ export function demoKeys() {
  * 2. a choice made by hand in this conversation (the header's button, ⌘\, the tab) stands, in this conversation only;
  * 3. else it is never open: a project in a window of 1280 px or more has the folded tab on the sheet's edge ("Changes 2"),
  *    a plain chat and a narrower window have nothing. It never opens or closes by itself.
- * Closing it by hand is no choice: it goes back to its tab (`panelChoice`). */
-export function panelState(a: { project: boolean; width: number; choice?: boolean; pane?: boolean }): { open: boolean; tab: boolean } {
-  if (a.pane) return { open: false, tab: false };
-  if (a.choice) return { open: true, tab: false };
-  return { open: false, tab: a.project && a.width >= 1280 };
+ * Closing it by hand is no choice: it goes back to its tab (`panelChoice`).
+ * Open, it lies on the desk beside the sheet, and the reading column keeps the left edge centring gave it with the panel
+ * shut (`left`: from the sheet's edge to the column's 756 px box, its 28 px sides included) and gives up width on the right
+ * (700 → 614 px of text at 1440). Where that leaves under 580 px of text (a window under 1372 px with the sidebar, any
+ * without it), the panel floats over the conversation instead, under its tab, and nothing moves (`over`). Design review
+ * 12, B3 and B2 of mockups/v9.html: the column re-centred and its left edge jumped 146 px at 1440. */
+export function panelState(a: { project: boolean; width: number; choice?: boolean; pane?: boolean }): { open: boolean; tab: boolean; over: boolean; left: number } {
+  const sheet = a.width - (a.width < 1000 ? 16 : 256);   // the sheet with the panel shut: 8 px from the window's edges, the sidebar's 248 px
+  const left = Math.max(0, (sheet - 756) / 2);
+  const over = sheet - 300 - left - 56 < 580;              // the panel takes 300 px from the sheet's right
+  const tab = a.project && a.width >= 1280;
+  if (a.pane) return { open: false, tab: false, over, left };
+  if (a.choice) return { open: true, tab: tab && over, over, left };
+  return { open: false, tab, over, left };
 }
 /** The choice a click leaves for a conversation: open, or none (shut: its tab, where it has one). */
 export const panelChoice = (open: boolean): boolean | undefined => (open ? undefined : true);
+/** What Esc shuts, the innermost first: an open menu, popover or dialog (each shuts itself), then the work panel over the
+ * conversation, and with neither it is the message box's Stop for a running reply (review of design review 12: the panel
+ * went first and took Stop's Esc). */
+export const escFor = (a: { menu: boolean; over: boolean }): "menu" | "panel" | "box" => (a.menu ? "menu" : a.over ? "panel" : "box");
 export function demoPanel() {
-  const st = (a: Parameters<typeof panelState>[0]) => { const s = panelState(a); return `${s.open ? "open" : "shut"}${s.tab ? "+tab" : ""}`; };
+  const st = (a: Parameters<typeof panelState>[0]) => { const s = panelState(a); return `${s.open ? "open" : "shut"}${s.tab ? "+tab" : ""}${s.open ? (s.over ? "+over" : `@${s.left}`) : ""}`; };
   const P = { project: true, width: 1280 }, by: Record<string, boolean | undefined> = {};
   // the tab opened in one conversation, then another opened: the choice is the first one's only
   by.a = panelChoice(false);
   const cases: [string, string, string][] = [
     ["a plain chat", st({ project: false, width: 1680 }), "shut"],
-    ["a plain chat, opened by hand", st({ project: false, width: 1680, choice: true }), "open"],
+    ["a plain chat, opened by hand: beside, the column 334 px in", st({ project: false, width: 1680, choice: true }), "open@334"],
     ["a plain chat opened by hand, closed again", st({ project: false, width: 1680, choice: panelChoice(true) }), "shut"],
     ["a project, whatever it changed: folded to its tab", st(P), "shut+tab"],
-    ["a project opened by its tab", st({ ...P, choice: by.a }), "open"],
+    ["a project opened by its tab, 1280 px: over the conversation, under its tab", st({ ...P, choice: by.a }), "open+tab+over"],
     ["then another conversation in the project", st({ ...P, choice: by.b }), "shut+tab"],
     ["then a plain chat", st({ project: false, width: 1280, choice: by.c }), "shut"],
     ["the opened one closed again: its tab is back", st({ ...P, choice: panelChoice(true) }), "shut+tab"],
     ["a side chat or a subagent has the column", st({ ...P, choice: true, pane: true }), "shut"],
+    ["1440 px: beside, the column stays 214 px in (614 px of text)", st({ project: true, width: 1440, choice: true }), "open@214"],
+    ["1372 px: 580 px of text, still beside", st({ project: true, width: 1372, choice: true }), "open@180"],
+    ["1371 px: over", st({ project: true, width: 1371, choice: true }), "open+tab+over"],
     ["1100 px", st({ project: true, width: 1100 }), "shut"],
-    ["900 px, opened by hand", st({ project: true, width: 900, choice: true }), "open"],
+    ["900 px, opened by hand: over (no sidebar)", st({ project: true, width: 900, choice: true }), "open+over"],
+    ["1000 px, opened: over, no tab under 1280", st({ project: true, width: 1000, choice: true }), "open+over"],
+    ["1279 px, opened: over, no tab", st({ project: true, width: 1279, choice: true }), "open+over"],
+    ["1000 px: the sheet (744) is narrower than the column, left 0", `${panelState({ project: true, width: 1000 }).left}`, "0"],
+    ["1011 px: still 0", `${panelState({ project: true, width: 1011 }).left}`, "0"],
+    ["1014 px: 1", `${panelState({ project: true, width: 1014 }).left}`, "1"],
+    ["Esc with a menu open over the panel: the menu", escFor({ menu: true, over: true }), "menu"],
+    ["then Esc: the panel", escFor({ menu: false, over: true }), "panel"],
+    ["then Esc: the box (Stop while a reply runs)", escFor({ menu: false, over: false }), "box"],
   ];
   const bad = cases.filter(([, got, want]) => got !== want).map(([what, got, want]) => `${what}: ${got} (wanted ${want})`);
   if (bad.length) throw new Error(bad.join("\n"));

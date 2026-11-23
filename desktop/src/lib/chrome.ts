@@ -117,6 +117,9 @@ export function applyLooks() {
   document.documentElement.classList.toggle("dark", darkNow());
   document.documentElement.classList.toggle("prose-sans", localStorage.getItem(PROSE) === "sans");
   const zoom = Number(localStorage.getItem(ZOOM)) || 1;
-  // only inside the app's window: a browser has its own zoom
-  if ("__TAURI_INTERNALS__" in window) import("@tauri-apps/api/webview").then(({ getCurrentWebview }) => getCurrentWebview().setZoom(zoom)).catch(() => {});
+  // only inside the app's window: a browser has its own zoom. The window's top row divides by it (`--tz-pt`, styles.css)
+  if ("__TAURI_INTERNALS__" in window) {
+    document.documentElement.style.setProperty("--tz-z", String(zoom));
+    import("@tauri-apps/api/webview").then(({ getCurrentWebview }) => getCurrentWebview().setZoom(zoom)).catch(() => {});
+  }
 }

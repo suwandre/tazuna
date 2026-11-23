@@ -145,8 +145,9 @@ function OpenRow({ o, active, onSwitch, onClose }: { o: Open; active: boolean; o
   );
 }
 
-// in the Tauri window on macOS the title bar is an overlay: the traffic lights sit over the sidebar's top
-const macOverlay = "__TAURI_INTERNALS__" in window && navigator.userAgent.includes("Mac");
+// in the Tauri window on macOS the title bar is an overlay: the traffic lights sit on the window's top row, beside the brand
+// (or the sheet's header, in a narrow window), moved there by tauri.conf.json's trafficLightPosition
+export const macOverlay = "__TAURI_INTERNALS__" in window && navigator.userAgent.includes("Mac");
 
 type Props = {
   chats: Thread[]; projects: Project[]; active: string; planLeft: string;
@@ -206,10 +207,11 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
   return (
     // the column's whole width, whatever its rows: with a short list it shrank to them and left a strip of the window's
     // background between it and the conversation (desktop 0.1.75)
-    <aside aria-label="Conversations" className="flex min-w-0 flex-1 flex-col gap-0.5 overflow-hidden bg-desk px-2.5 py-3.5">
-      {macOverlay && <div data-tauri-drag-region className="-mx-2.5 -mt-3.5 h-[38px] flex-none" />}
-      <div data-tauri-drag-region className="flex items-center gap-2 px-2 pb-3 pt-0.5 font-semibold tracking-[-0.01em]">
-        <Mark size={22} />
+    <aside aria-label="Conversations" className="flex min-w-0 flex-1 flex-col gap-0.5 overflow-hidden bg-desk px-2.5 pb-3.5">
+      {/* the window's one top row (design review 12, A2 of mockups/v9.html): the traffic lights, then the brand on their line,
+          the sheet's header centred on it too (y 28); a drag region, its words too ("deep": Tauri's drag ignores children) */}
+      <div data-tauri-drag-region="deep" className={`-mx-2.5 mb-1.5 flex h-[calc(48*var(--tz-pt))] flex-none items-center gap-2 pt-[calc(8*var(--tz-pt))] font-semibold tracking-[-0.01em] ${macOverlay ? "pl-[calc(92*var(--tz-pt))]" : "pl-[18px]"}`}>
+        <Mark size={20} />
         <span>tazuna</span>
       </div>
       <button onClick={onSearch} className="tz-search mb-1 flex items-center gap-2 rounded-md border border-line px-[9px] py-[7px] text-left text-muted hover:bg-hover">

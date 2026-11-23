@@ -181,11 +181,12 @@ export function UserPanel({ w, data, onEdit, onRemove }: { w: UserWidget; data: 
 }
 
 /** The right column: the `rail` spot (tazuna's cards and the user's panels and plugins). */
-export function Rail({ usage, data, messages }: { usage: Usage; data?: unknown; messages: Message[] }) {
+export function Rail({ usage, data, messages, over }: { usage: Usage; data?: unknown; messages: Message[]; over?: boolean }) {
   return (
     // 300 px wide whatever its column is: the column slides open and shut (App's grid), the cards do not reflow in it.
-    // With no card (a plain chat) it says so, not a blank column.
-    <aside aria-label="The work" className="tz-enter flex min-h-0 w-[300px] flex-col gap-3.5 overflow-y-auto py-4 pl-2.5 pr-4 empty:after:text-[12.5px] empty:after:leading-relaxed empty:after:text-faint empty:after:content-['Nothing_here_for_a_plain_chat._In_a_project_this_shows_its_changes,_checks_and_pull_request.']">
+    // With no card (a plain chat) it says so, not a blank column. Its first heading on the window's top row (design review
+    // 12); `over`: on its own sheet over the conversation (B2), even sides
+    <aside aria-label="The work" className={`tz-enter flex min-h-0 flex-col gap-3.5 overflow-y-auto pb-4 ${over ? "pt-3.5" : "pt-[calc(28*var(--tz-pt)-14px)]"} ${over ? "w-full px-4" : "w-[300px] pl-2.5 pr-4"} empty:after:text-[12.5px] empty:after:leading-relaxed empty:after:text-faint empty:after:content-['Nothing_here_for_a_plain_chat._In_a_project_this_shows_its_changes,_checks_and_pull_request.']`}>
       <Slot name="rail" props={{ usage, data, messages }} />
     </aside>
   );

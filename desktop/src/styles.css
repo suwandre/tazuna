@@ -129,6 +129,18 @@ button.bg-accent:not(:disabled):hover { background-color: var(--accent-ink); }
 .tz-doc-edges::after { bottom: 0; height: 34px; background: linear-gradient(to top, var(--main), transparent); }
 /* scrolled up, the way back down stands over the lower fade: the fade is deeper there, so the button is on no word */
 .tz-doc-edges.away::after { height: 84px; background: linear-gradient(to top, var(--main), color-mix(in srgb, var(--main) 80%, transparent) 42px, transparent); }
+/* the reading column keeps its left edge (design review 12, B3 of mockups/v9.html): in the sheet (`.tz-keep`, App) the
+   column's 756 px box (700 of text, 28 each side) starts where centring puts it with the work panel shut (`--tz-l`, lib/types.ts
+   `panelState`), and an open panel beside the sheet takes width from its right; with the sheet whole it is centring itself.
+   The padding's percentage is of the parent's width, so the column follows the sheet while the panel slides. On the
+   transcript's and the start page's scrollers (the start page keeps its own 28 px sides, `--tz-pad`), on the way back down
+   and on what stands over the message box. Where scrollbars always show (`--tz-sbw`, lib/chrome.ts) a scroller's own takes
+   its width out of the right padding, and the rest give up the same, so the text is as wide as the box. */
+.tz-keep .tz-col { padding-left: max(var(--tz-pad, 0px), var(--tz-l)); padding-right: max(var(--tz-pad, 0px), var(--tz-sbw, 0px), calc(100% - var(--tz-l) - 756px)); }
+.tz-keep .tz-col.tz-scroller { padding-right: max(var(--tz-pad, 0px), calc(100% - var(--tz-l) - 756px - var(--tz-sbw, 0px))); }
+/* one point of the screen in CSS px: the window's top row is laid out in points, so it stays on the traffic lights' line
+   whatever the text size (the webview's zoom, `--tz-z`, lib/chrome.ts: the lights do not zoom; review of design review 12) */
+:root { --tz-pt: calc(1px / var(--tz-z, 1)); }
 /* the receipt: a slip of paper, its lower edge torn (the mask); the hairline around it is drawn by the filter, so it
    follows the torn edge */
 .tz-slip-wrap { width: 452px; max-width: 100%; filter: drop-shadow(0 0 .5px var(--line-strong)) drop-shadow(0 0 .5px var(--line-strong)) drop-shadow(0 1px 1.5px #2321191f); }

@@ -6,6 +6,7 @@ import { code } from "../lib/markdown";
 import { Counts, Parts, Sep } from "./Sep";
 import { keysOf } from "../lib/types";
 import { accentButton, Segmented, quietButton } from "./Controls";
+import { macOverlay } from "./Sidebar";
 
 type Comment = { path: string; line: number; text: string; quote: string };
 type Writing = { path: string; line: number; quote: string; text: string };
@@ -130,7 +131,8 @@ export function ReviewView({ start, turns, onClose, onSend }: {
 
   return (
     <section ref={pane} tabIndex={-1} aria-label="Review changes" className="tz-enter absolute inset-0 z-10 flex min-h-0 flex-col bg-main outline-none">
-      <div className="flex h-[49px] flex-none items-center gap-2.5 border-b border-line-soft pl-3 pr-4">
+      {/* on the conversation's header's row (a drag region as it is), clear of the traffic lights in a narrow window */}
+      <div data-tauri-drag-region="deep" className={`flex h-[calc(40*var(--tz-pt)+1px)] flex-none items-center gap-2.5 border-b border-line-soft pl-3 pr-4 ${macOverlay ? "max-[1000px]:pl-[calc(92*var(--tz-pt)-8px)]" : ""}`}>
         <button onClick={onClose} title="Back to the conversation (Esc)" className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-muted hover:bg-hover hover:text-ink">
           <ChevronLeft size={14} strokeWidth={1.5} />Conversation<kbd className="rounded-[5px] border border-line px-[5px] font-mono text-[11px] text-faint">Esc</kbd></button>
         <span className="h-4 w-px bg-line-strong" aria-hidden="true" />
