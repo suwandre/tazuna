@@ -16,6 +16,11 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.210 (2026-11-23): 0.1.209 for Windows
+
+0.1.209's Windows build stopped at its tests: two new tests of the auto check use Unix paths ("/work/proj" has no drive,
+so Windows does not take it as absolute). They run on macOS and Linux only now; nothing else changed.
+
 ## 0.1.209 (2026-11-23): auto asks before a destructive command; full never asks
 
 The user: should there be "a full access mode … more powerful than auto"? Auto already was one: it never asked, and only a
