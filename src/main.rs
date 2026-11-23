@@ -1413,14 +1413,22 @@ fn app_server(a: &Args) -> Result<()> {
     // review mode: the question the reviewer has (its request id); a cell, since the view reads it too
     let reviewing = std::cell::RefCell::new(None::<String>);
     fetch_balance(&tx);
-    // the providers' model lists for the picker (the terminal refreshes them at its start): at most once an hour, since
-    // each open conversation of the desktop runs a server of its own
-    let stale = labels::dir().ok().and_then(|d| std::fs::metadata(d.join("openrouter-models.json")).and_then(|m| m.modified()).ok())
+    // Each desktop conversation has its own process: refresh a stale catalog once an hour, but don't let a fresh
+    // public list hide a newly configured provider whose list has never loaded.
+    let dir = labels::dir().ok();
+    let stale = dir.as_ref().and_then(|d| std::fs::metadata(d.join("openrouter-models.json")).and_then(|m| m.modified()).ok())
         .is_none_or(|t| t.elapsed().is_ok_and(|e| e.as_secs() > 3600));
-    if stale {
-        std::thread::spawn(|| {
-            models::refresh_mortera();
-            models::refresh_openrouter();
+    let missing = if stale { vec![] } else { dir.as_deref().map(|d| models::missing_keyed_lists(d, |var| models::key(var).is_some())).unwrap_or_default() };
+    if stale || !missing.is_empty() {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            if stale {
+                models::refresh_mortera();
+                models::refresh_openrouter();
+            } else {
+                models::refresh_lists(&missing);
+            }
+            let _ = tx.send(json!({"type": "tazuna_lists"}));
         });
     }
     // the model servers on this machine, at each start (a refused port answers at once); claude's login, for the pickers

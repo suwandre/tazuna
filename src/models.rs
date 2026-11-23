@@ -912,13 +912,20 @@ pub fn refresh_mortera() {
     crate::oauth::refresh_models();
 }
 
+fn keyed_lists() -> impl Iterator<Item = (&'static str, String, String)> {
+    [("MORTERA_API_KEY", "https://mortera.cloud/v1/models".into(), "mortera-models.json".into()),
+     ("CHEAPER_INFERENCE_API_KEY", "https://api.cheaperinference.com/v1/models".into(), "cheaperinference-models.json".into())].into_iter()
+        .chain(LOGINS.iter().filter(|l| l.source == Source::List).map(|l| (l.vars[0], format!("{}/models", l.url), list_file(l))))
+}
+
+pub(crate) fn missing_keyed_lists(dir: &Path, has_key: impl Fn(&str) -> bool) -> Vec<&'static str> {
+    keyed_lists().filter(|(var, _, name)| !dir.join(name).is_file() && has_key(var)).map(|(var, _, _)| var).collect()
+}
+
 /// The model lists that need a key, each whose variable is in `only` (all of them when empty): a key just saved fetches
 /// its provider's list alone.
 pub fn refresh_lists(only: &[&str]) {
-    let lists = LOGINS.iter().filter(|l| l.source == Source::List).map(|l| (l.vars[0], format!("{}/models", l.url), list_file(l)));
-    for (var, url, name) in [("MORTERA_API_KEY", "https://mortera.cloud/v1/models".to_string(), "mortera-models.json".to_string()),
-                             ("CHEAPER_INFERENCE_API_KEY", "https://api.cheaperinference.com/v1/models".into(), "cheaperinference-models.json".into())].into_iter().chain(lists)
-                             .filter(|(var, ..)| only.is_empty() || only.contains(var)) {
+    for (var, url, name) in keyed_lists().filter(|(var, ..)| only.is_empty() || only.contains(var)) {
         let Some(k) = key(var) else { continue };
         let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(15))).build().into();
         let Ok(mut r) = http.get(&url).header("Authorization", format!("Bearer {}", k.trim())).call() else { continue };
@@ -2836,6 +2843,19 @@ mod tests {
         assert_eq!(c["seadance-3"]["category"], "other", "a video model is not listed as chat");
         assert!(c.get("no-provider").is_none(), "a model nobody serves is left out");
         assert!(super::subrouter_catalog(&serde_json::json!({"data": []})).is_none());
+    }
+
+    #[test]
+    fn missing_keyed_lists_are_independent_of_the_public_catalog() {
+        let dir = std::env::temp_dir().join(format!("tazuna-keyed-lists-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("openrouter-models.json"), r#"{"data":[]}"#).unwrap();
+        let mortera_only = |var: &str| var == "MORTERA_API_KEY";
+        assert_eq!(missing_keyed_lists(&dir, mortera_only), ["MORTERA_API_KEY"]);
+        assert!(missing_keyed_lists(&dir, |_| false).is_empty());
+        std::fs::write(dir.join("mortera-models.json"), r#"{"data":[{"id":"model"}]}"#).unwrap();
+        assert!(missing_keyed_lists(&dir, mortera_only).is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
