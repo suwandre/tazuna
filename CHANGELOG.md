@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.212 (2026-11-23): releases publish only when every platform is built; `tazuna update` past GitHub's rate limit
+
+From Devin's QA runs (PRs #8, #11, #16):
+- A release stays a draft until every platform's build is uploaded, then publishes. 0.1.209's failed Windows build had
+  left a published latest release without a Windows archive, so the installers failed there until the next tag.
+- `tazuna update` when GitHub's API refuses the release list (HTTP 403 or 429, its rate limit for unsigned requests):
+  it reads the newest version from the public download link instead, accepts only a link to this repo's own release
+  and the archive for this platform, and checks that the downloaded binary reports that version.
+- Replay's fold hints name the key that expands a fold.
+
 ## 0.1.211 (2026-11-23): the auto check reads Git Bash paths on Windows
 
 From Devin's QA run of 0.1.209 on Windows (PR #4): a path starting with "/" counts as absolute there too, as Git Bash
