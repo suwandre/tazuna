@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.208 (2026-11-23): desktop notifications take their text as data
+
+An automated security review of 0.1.207: the macOS notification was AppleScript source with the text spliced in (straight
+quotes and backslashes replaced), and 0.1.207 put a permission question's command there, text the model writes. AppleScript
+also takes curly quotes as string delimiters, so a crafted command could have run `do shell script` before it was
+allowed. The texts now go to osascript as the script's arguments (`on run argv`), never into its source; a command with
+curly quotes and `do shell script` comes back as plain text (checked). The loop's notifications (`tazuna loop`) use the
+same function.
+
 ## 0.1.207 (2026-11-23): a question you cannot miss; the cost box names the account you run on
 
 The user: a permission question in the terminal "is quite hidden, sometimes i dont realize until way later", and the cost

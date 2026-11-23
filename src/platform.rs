@@ -230,13 +230,15 @@ pub fn open_in_editor(path: &Path, line: u32) -> std::io::Result<String> {
     Ok(cmd)
 }
 
-/// A desktop notification: macOS through osascript; elsewhere none (the session shows the same line).
+/// A desktop notification: macOS through osascript; elsewhere none (the session shows the same line). The texts go to the
+/// script as its arguments, never into its source: a model's command in a question's notification could hold AppleScript's
+/// curly quotes and run `do shell script` before it was allowed (an automated security review of 0.1.207).
 pub fn notify(title: &str, text: &str) {
     #[cfg(target_os = "macos")]
     {
-        let esc = |s: &str| s.replace(['"', '\\'], "'");
-        let script = format!("display notification \"{}\" with title \"{}\"", esc(text), esc(title));
-        let _ = Command::new("osascript").args(["-e", &script]).output();
+        let _ = Command::new("osascript")
+            .args(["-e", "on run argv", "-e", "display notification (item 1 of argv) with title (item 2 of argv)", "-e", "end run", text, title])
+            .output();
     }
     #[cfg(not(target_os = "macos"))]
     let _ = (title, text);
