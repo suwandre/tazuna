@@ -32,7 +32,9 @@ export async function checkUpdate(told: boolean | "inline" = false): Promise<"ne
     if (u && (told || announced !== u.version)) {
       announced = u.version;
       const notes = u.notes && u.notes !== `tazuna desktop ${u.version}` ? `${u.notes}\n\n` : "";
-      toast(`tazuna desktop ${u.version} is out`, { kind: "info", sticky: true, modal: !!told, action: { label: "Install and restart", run: () => installUpdate() },
+      // one at a time: two releases an hour apart stacked "0.1.109 is out" over "0.1.110 is out" (the user, 2026-11-23);
+      // either button installed the newest (update_install looks again), but the older one read as installing it
+      toast(`tazuna desktop ${u.version} is out`, { key: "update", kind: "info", sticky: true, modal: !!told, action: { label: "Install and restart", run: () => installUpdate() },
         detail: `${notes}You have ${now || "an older version"}. Installing restarts tazuna: replies running now stop, conversations stay resumable.` });
     } else if (!u && told && !inline) toast("You're up to date", { kind: "ok", modal: true, detail: `tazuna desktop ${now} is the newest version.` });
     return u ? "new" : "none";
