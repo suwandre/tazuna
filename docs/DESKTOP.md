@@ -577,6 +577,10 @@ reviews on test data missed):
 call whose path ends in it); otherwise only the path, as before 0.1.103. It fell back to another open call, so two edits
 waiting at once could show the wrong file's change before Allow (an automated security review of 0.1.103).
 
+0.1.105 (with tazuna 0.1.202): a claude.ai artifact linked in a message is read on Claude (Claude Code's Artifact tool,
+switched on for a conversation once it holds such a link). The user's conversation had answered "I couldn't open either
+plan from this session" for two artifacts their account could open.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
