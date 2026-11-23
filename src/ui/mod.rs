@@ -252,6 +252,8 @@ pub struct LoginPanel {
     pub rows: Vec<(String, String, String)>,
     pub selected: usize,
     pub form: Option<LoginForm>,
+    /// What was typed to find a provider (the rows are the ones it finds).
+    pub filter: String,
 }
 
 /// A provider's login page, OMP-style: where keys are made (opened in the browser), the key typed so far (its length
@@ -951,6 +953,14 @@ fn draw_login(f: &mut Frame, p: &LoginPanel, th: &Theme, band: Rect) {
         None => {
             let mut lines = wrapped("Log in to a provider to use its models in /model: an API key (the provider's page opens in your browser to make one), or for ChatGPT, GitHub Copilot, SuperGrok, Gemini CLI and Antigravity a sign-in.", th.faint);
             lines.push(Line::from(""));
+            // the search, as /model's: what was typed, or how to start one
+            lines.push(if p.filter.is_empty() {
+                Line::from(Span::styled("  type to search", st(th.faint)))
+            } else {
+                Line::from(vec![Span::styled("› ", st(th.accent)), Span::styled(p.filter.clone(), st(th.text)), Span::styled("▍", st(th.accent)),
+                    Span::styled(match p.rows.len() { 0 => "   no provider matches".to_string(), 1 => "   1 provider".to_string(), n => format!("   {n} providers") }, st(th.faint))])
+            });
+            lines.push(Line::from(""));
             let nw = p.rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(0);
             // the rows that fit (some 70 providers since 0.1.196), the selected one in view, its terms' line under them
             let note = p.rows.get(p.selected).map(|r| wrapped(&r.2, th.warn)).unwrap_or_default();
@@ -971,7 +981,7 @@ fn draw_login(f: &mut Frame, p: &LoginPanel, th: &Theme, band: Rect) {
                 lines.push(Line::from(""));
                 lines.extend(note);
             }
-            ("login".to_string(), "↑↓ move · enter logs in · esc closes", lines)
+            ("login".to_string(), if p.filter.is_empty() { "type to search · ↑↓ move · enter logs in · esc closes" } else { "↑↓ move · enter logs in · esc clears the search" }, lines)
         }
     };
     let inner = overlay(f, th, overlay_area(band, lines.len(), false), &title, "", keys);
@@ -3234,7 +3244,7 @@ mod tests {
     #[test]
     fn login_lists_providers_then_a_page_that_asks_for_the_key() {
         let row = |n: &str, s: &str| (n.to_string(), s.to_string(), String::new());
-        let mut p = LoginPanel { rows: vec![row("Claude", "subscription · the claude CLI's own login"), row("SubRouter", "logged in"),
+        let mut p = LoginPanel { filter: String::new(), rows: vec![row("Claude", "subscription · the claude CLI's own login"), row("SubRouter", "logged in"),
             row("Mortera", "not logged in")], selected: 2, form: None };
         let draw = |p: &LoginPanel, w: u16| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, 30)).unwrap();
@@ -3245,7 +3255,7 @@ mod tests {
         let list = draw(&p, 100).join("\n");
         assert!(list.contains("› Mortera") && list.contains("not logged in") && list.contains("↑↓ move   enter logs in   esc closes"), "{list}");
         // 80 columns with 0.1.196's longest names: a state whole beside the longest name (it lost "trusted yet", review 11)
-        let mut wide = LoginPanel { rows: vec![row("Alibaba Model Studio China", "key in this terminal only · not trusted yet"), row("DeepSeek", "logged in")],
+        let mut wide = LoginPanel { filter: String::new(), rows: vec![row("Alibaba Model Studio China", "key in this terminal only · not trusted yet"), row("DeepSeek", "logged in")],
             selected: 1, form: None };
         assert!(draw(&wide, 80).join("\n").contains("Alibaba Model Studio China  key in this terminal only · not trusted yet"), "{}", draw(&wide, 80).join("\n"));
         wide.rows[0].1 = "x".repeat(200);
@@ -3266,7 +3276,7 @@ mod tests {
 
     #[test]
     fn a_sign_in_page_says_its_warning_how_it_goes_and_where_the_tokens_stay() {
-        let mut p = LoginPanel { rows: vec![], selected: 1, form: Some(LoginForm { name: "SuperGrok".into(), page: "https://grok.com".into(), opened: false,
+        let mut p = LoginPanel { filter: String::new(), rows: vec![], selected: 1, form: Some(LoginForm { name: "SuperGrok".into(), page: "https://grok.com".into(), opened: false,
             place: String::new(), example: String::new(), typed: 0, host: "api.x.ai".into(), var: String::new(), has: String::new(),
             note: "tazuna signs in as xAI's Grok CLI. Use at your own risk.".into(), sign_in: "Enter shows a code to type on SuperGrok's page.".into(), confirm: true, other: false }) };
         let draw = |p: &LoginPanel| {

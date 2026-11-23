@@ -1253,7 +1253,10 @@ fn rebuild_text(s: &session::Session) -> Option<String> {
 
 /// `/login`: the provider list (row 0 Claude, then `models::LOGINS`), and the key being typed on a provider's page.
 struct LoginPick {
+    /// The provider on: 0 Claude, i + 1 LOGINS[i] (whatever the search shows).
     sel: usize,
+    /// What was typed to find a provider among some 80 (the user, 2026-11-23: "i have to scroll to find a specific provider").
+    filter: String,
     form: Option<String>,
     /// The page where keys are made opened in the browser.
     opened: bool,
@@ -3387,7 +3390,7 @@ fn run_live(
     let mut resume_pick: Option<(Vec<Earlier>, usize)> = None;
     // what /login and /model last drew from: their rows are built again only when it changes (each frame, some 3,000 rows
     // and 70 providers kept a core ~45% busy while /model was open, review 11)
-    let mut login_drawn: Option<(usize, Option<String>, bool)> = None;
+    let mut login_drawn: Option<(usize, Option<String>, bool, String)> = None;
     let mut models_drawn: Option<u64> = None;
     // /loop: the running loop (its stop flag, its progress), or the flags of one waiting for PRD.md and TODO.md; and
     // TODO.md's open items when the /loop hint last showed
@@ -3484,7 +3487,7 @@ fn run_live(
         v.vim = if !vim { "" } else if normal { "NORMAL" } else { "INSERT" };
         v.sessions = resume_pick.as_ref().map(|(l, i)| ui::SessionsPanel { rows: l.iter().map(Earlier::row).collect(), selected: *i });
         v.rewind = rewind_sel.map(|i| ui::RewindPanel { items: live.checkpoints.iter().map(|c| c.text.clone()).collect(), selected: i });
-        let login_now = login.as_ref().map(|lp| (lp.sel, lp.form.clone(), lp.opened));
+        let login_now = login.as_ref().map(|lp| (lp.sel, lp.form.clone(), lp.opened, lp.filter.clone()));
         if login_now != login_drawn {
             login_drawn = login_now;
             v.login = login.as_ref().map(|lp| login_panel(lp));
@@ -3905,9 +3908,26 @@ fn run_live(
                         Err(e) => s.apply(&json!({"type": "harness_info", "text": format!("{e:#}")}), live.elapsed_ms()),
                     }
                 }
-                (None, KeyCode::Up) => lp.sel = lp.sel.saturating_sub(1),
-                (None, KeyCode::Down) => lp.sel = (lp.sel + 1).min(models::LOGINS.len()),
+                (None, KeyCode::Up | KeyCode::Down) => {
+                    let shown = login_shown(&lp.filter);
+                    let at = shown.iter().position(|&i| i == lp.sel).unwrap_or(0);
+                    let to = if key.code == KeyCode::Up { at.saturating_sub(1) } else { (at + 1).min(shown.len().saturating_sub(1)) };
+                    lp.sel = shown.get(to).copied().unwrap_or(lp.sel);
+                }
+                // type to search: the first match is picked; backspace edits, esc clears the search before it closes
+                (None, KeyCode::Char(c)) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    lp.filter.push(c);
+                    lp.sel = login_shown(&lp.filter).first().copied().unwrap_or(lp.sel);
+                }
+                (None, KeyCode::Backspace) => {
+                    lp.filter.pop();
+                    if !login_shown(&lp.filter).contains(&lp.sel) {
+                        lp.sel = login_shown(&lp.filter).first().copied().unwrap_or(1);
+                    }
+                }
+                (None, KeyCode::Esc) if !lp.filter.is_empty() => lp.filter.clear(),
                 (None, KeyCode::Esc) => login = None,
+                (None, KeyCode::Enter) if !login_shown(&lp.filter).contains(&lp.sel) => {}
                 (None, KeyCode::Enter) if lp.sel == 0 => {
                     s.apply(&json!({"type": "harness_info", "text": "Claude runs on the claude CLI's own login (your subscription): if \
                         it is not signed in, run `claude auth login` in a terminal"}), live.elapsed_ms());
@@ -4387,7 +4407,7 @@ fn run_live(
                     continue;
                 }
                 if text == "/login" {
-                    login = Some(LoginPick { sel: 1, form: None, opened: false, shown: None });
+                    login = Some(LoginPick { sel: 1, filter: String::new(), form: None, opened: false, shown: None });
                     continue;
                 }
                 if text == "/model" {
@@ -5238,10 +5258,27 @@ fn sign_in_key(l: &'static models::Login, code: KeyCode, tx: &std::sync::mpsc::S
     }
 }
 
+/// The `/login` rows a search shows (0 Claude, i + 1 LOGINS[i]): every word typed (any case, any order) in the provider's
+/// name, its key page's place or its host, `-`, `.`, `(` and `)` read as spaces ("qwen" finds Alibaba's Coding Plan).
+fn login_shown(filter: &str) -> Vec<usize> {
+    let words: Vec<String> = filter.to_lowercase().split_whitespace().map(String::from).collect();
+    let fits = |hay: String| {
+        let hay = hay.to_lowercase();
+        let hay = format!("{hay} {}", hay.replace(['-', '_', '/', ':', '.', '(', ')'], " "));
+        words.iter().all(|w| hay.contains(w.as_str()))
+    };
+    std::iter::once((0, "Claude Anthropic subscription".to_string()))
+        .chain(models::LOGINS.iter().enumerate().map(|(i, l)| (i + 1, format!("{} {} {}", l.name, l.place, l.host()))))
+        .filter_map(|(i, hay)| fits(hay).then_some(i))
+        .collect()
+}
+
 /// `/login`'s list and page as drawn (from `run_live`'s loop, only when the selection or the page changes).
 #[inline(never)]
 fn login_panel(lp: &LoginPick) -> ui::LoginPanel {
+    let shown = login_shown(&lp.filter);
     ui::LoginPanel {
+        filter: lp.filter.clone(),
         rows: std::iter::once(("Claude".to_string(), if accounts::claude_logged_in() == Some(false) { "not signed in · `claude auth login` in a terminal" }
                 else { "subscription · the claude CLI's own login" }.to_string(), String::new()))
             .chain(models::LOGINS.iter().map(|l| {
@@ -5255,8 +5292,11 @@ fn login_panel(lp: &LoginPick) -> ui::LoginPanel {
                 };
                 (l.name.to_string(), state, l.note.to_string())
             }))
+            .enumerate()
+            .filter(|(i, _)| shown.contains(i))
+            .map(|(_, r)| r)
             .collect(),
-        selected: lp.sel,
+        selected: shown.iter().position(|&i| i == lp.sel).unwrap_or(usize::MAX),
         form: lp.form.as_ref().and_then(|typed| {
             let l = models::LOGINS.get(lp.sel.checked_sub(1)?)?;
             // a sign-in: how it goes (the browser, or a code to type), and its warning to confirm the first time
@@ -5412,6 +5452,17 @@ fn short_command<'a>(word: &str, commands: &'a [String]) -> Option<&'a String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn login_finds_a_provider_by_any_of_its_words() {
+        let name = |i: usize| if i == 0 { "Claude" } else { crate::models::LOGINS[i - 1].name };
+        let names = |f: &str| super::login_shown(f).into_iter().map(name).collect::<Vec<_>>();
+        assert_eq!(super::login_shown("").len(), crate::models::LOGINS.len() + 1, "nothing typed: every provider");
+        assert!(names("qwen").contains(&"Alibaba Coding Plan (Qwen)") && names("qwen").contains(&"Alibaba Coding Plan China (Qwen)"));
+        assert!(names("coding plan china").iter().all(|n| n.contains("China")) && !names("coding plan china").is_empty(), "words in any order: {:?}", names("plan china coding"));
+        assert_eq!(names("CLAUDE"), ["Claude"]);
+        assert!(names("zzzz nothing").is_empty());
+    }
+
     #[test]
     fn an_update_line_loses_its_colours() {
         assert_eq!(super::strip_ansi("\x1b[32m✓\x1b[0m Upgraded to tazuna 0.1.200 \x1b[2m(/x)\x1b[0m"), "✓ Upgraded to tazuna 0.1.200 (/x)");

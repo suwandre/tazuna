@@ -16,6 +16,17 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.203 (2026-11-23): /login finds a provider by typing; the Qwen Coding Plan says Qwen
+
+The user: "you should be able to search for which provider you want to login, right? right now i have to scroll", and
+could not find the Qwen Coding Plan among some 80 providers.
+
+- /login's list takes a search as /model's does: every word typed, in any order and any case, in the provider's name, its
+  key page or its host; the first match is picked, ↑↓ move among the matches, backspace edits, esc clears the search
+  before it closes the list.
+- Alibaba's Coding Plan (the Qwen Coding Plan) is "Alibaba Coding Plan (Qwen)" and "Alibaba Coding Plan China (Qwen)" in
+  /login, /model and the window's Settings, so "qwen" finds it anywhere.
+
 ## 0.1.202 (2026-11-23): a claude.ai artifact link is read, on the claude path
 
 The user linked two claude.ai artifacts in a desktop conversation; Claude answered "I couldn't open either plan from this

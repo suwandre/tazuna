@@ -1746,11 +1746,11 @@ pub const LOGINS: &[Login] = &[
             page: "https://bailian.console.aliyun.com/?tab=model#/api-key", place: "Bailian's console (Beijing, API keys)", example: "sk-...",
             source: Md("alibaba-cn"), ..P },
     // the Qwen Coding Plan (the user, 2026-11-22)
-    Login { name: "Alibaba Coding Plan", vars: &["ALIBABA_CODING_PLAN_API_KEY"], url: "https://coding-intl.dashscope.aliyuncs.com/v1",
+    Login { name: "Alibaba Coding Plan (Qwen)", vars: &["ALIBABA_CODING_PLAN_API_KEY"], url: "https://coding-intl.dashscope.aliyuncs.com/v1",
             page: "https://modelstudio.console.alibabacloud.com/?tab=coding-plan", place: "Model Studio's Coding Plan page (Qwen Coding Plan)",
             example: "sk-sp-...", source: Md("alibaba-coding-plan"), plan: true,
             note: "Alibaba allows the Coding Plan only for interactive use in coding tools, never scripts or benchmarks; it may refuse tazuna", ..P },
-    Login { name: "Alibaba Coding Plan China", vars: &["ALIBABA_CODING_PLAN_CN_API_KEY"], url: "https://coding.dashscope.aliyuncs.com/v1",
+    Login { name: "Alibaba Coding Plan China (Qwen)", vars: &["ALIBABA_CODING_PLAN_CN_API_KEY"], url: "https://coding.dashscope.aliyuncs.com/v1",
             page: "https://bailian.console.aliyun.com/?tab=coding-plan", place: "Bailian's Coding Plan page", example: "sk-sp-...",
             source: Md("alibaba-coding-plan-cn"), plan: true,
             note: "Alibaba allows the Coding Plan only for interactive use in coding tools, never scripts or benchmarks; it may refuse tazuna", ..P },
@@ -2232,7 +2232,7 @@ mod tests {
         assert_eq!(zen, ["plain"]);
         assert_eq!((provider_of(f).as_str(), f.state), ("DeepSeek", if key("DEEPSEEK_API_KEY").is_some() { State::Ready } else { State::NoKey }));
         // a plan: "plan", nothing for the cap, its terms first in the note; the same model under each provider that lists it
-        let plan = rows.iter().find(|c| c.place == "Alibaba Coding Plan").unwrap();
+        let plan = rows.iter().find(|c| c.place == "Alibaba Coding Plan (Qwen)").unwrap();
         assert_eq!((plan.price.as_str(), plan.route.as_ref().unwrap().2.as_str(), plan.route.as_ref().unwrap().0.as_str()), ("plan", "0,0,0", "https://coding-intl.dashscope.aliyuncs.com/v1"));
         assert!(plan.note.starts_with("Alibaba allows the Coding Plan only for interactive use"), "{}", plan.note);
         assert_eq!(login_of(plan).map(|l| l.note), Some(plan.note.split(" · ").next().unwrap()));
@@ -2466,9 +2466,9 @@ mod tests {
     #[test]
     fn the_discretion_notes_sit_on_the_providers_whose_terms_need_them() {
         let note = |n: &str| LOGINS.iter().find(|l| l.name == n).unwrap().note;
-        assert!(note("Alibaba Coding Plan").contains("interactive use in coding tools") && note("Alibaba Coding Plan").contains("benchmarks"));
+        assert!(note("Alibaba Coding Plan (Qwen)").contains("interactive use in coding tools") && note("Alibaba Coding Plan (Qwen)").contains("benchmarks"));
         assert!(note("Z.ai Coding Plan").contains("tazuna is not listed") && note("Z.ai Coding Plan").contains("at risk"));
-        for n in ["Alibaba Coding Plan China", "Alibaba Token Plan", "Zhipu Coding Plan", "Kimi Code", "Xiaomi Token Plan", "Fire Pass", "Chutes", "OpenCode Go", "OpenCode Zen"] {
+        for n in ["Alibaba Coding Plan China (Qwen)", "Alibaba Token Plan", "Zhipu Coding Plan", "Kimi Code", "Xiaomi Token Plan", "Fire Pass", "Chutes", "OpenCode Go", "OpenCode Zen"] {
             assert!(!note(n).is_empty(), "{n}");
         }
         for n in ["DeepSeek", "Z.ai", "MiniMax", "Groq", "OpenAI", "SubRouter", "Umans Coding Plan", "ClinePass"] {
@@ -2480,7 +2480,7 @@ mod tests {
         assert!(note("Kimi Code").contains("may refuse tazuna") && note("Kimi Code").contains("before buying"));
         // the warn colour only where the account may be at risk or the provider may refuse tazuna (review 11, UI-1)
         let warns = |n: &str| LOGINS.iter().find(|l| l.name == n).unwrap().warns();
-        assert!(["Z.ai Coding Plan", "Zhipu Coding Plan", "Alibaba Coding Plan", "Kimi Code", "Alibaba Token Plan", "Xiaomi Token Plan", "Fire Pass"].iter().all(|n| warns(n)));
+        assert!(["Z.ai Coding Plan", "Zhipu Coding Plan", "Alibaba Coding Plan (Qwen)", "Kimi Code", "Alibaba Token Plan", "Xiaomi Token Plan", "Fire Pass"].iter().all(|n| warns(n)));
         assert!(!["Chutes", "OpenCode Go", "OpenCode Zen", "DeepSeek"].iter().any(|n| warns(n)));
         // the provider's row in /model and the desktop picker read it through login_of
         let row = Choice { model: "glm-5".into(), label: "glm-5".into(), route: Some(("https://api.z.ai/api/coding/paas/v4".into(), "ZAI_API_KEY".into(), "0,0,0".into())),
