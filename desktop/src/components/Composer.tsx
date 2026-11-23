@@ -81,13 +81,15 @@ export function completions(text: string, caret: number, c: Completions | null |
   return { from: caret - at[1].length - 1, items: ranked.map(([, f]) => ({ text: `@${f} `, label: name(f), about: f.slice(0, f.length - name(f).length) })) };
 }
 
-// the permission modes in tazuna's words, in the order shift-tab steps through them (as in the terminal)
+// the permission modes in tazuna's words, in the order shift-tab steps through them (as in the terminal); full last, a
+// choice made on purpose
 export const MODES: [string, string][] = [
-  ["auto", "runs commands and edits without asking"],
+  ["auto", "runs commands and edits without asking, but asks before rm outside the project, force push, reset --hard, sudo, disk tools"],
   ["ask", "asks before each command and edit"],
   ["edits", "edits freely, asks before commands"],
   ["review", "edits freely; a reviewer model answers command requests, run in a sandbox"],
   ["plan", "reads only: no edits, asks before commands"],
+  ["full", "never asks, not even before destructive commands"],
 ];
 
 // one line always (a narrow window wrapped "Opus 5.5" onto two), and readable while a reply runs (faded, they read as broken)
@@ -277,7 +279,9 @@ export function ModePill({ composer: c }: { composer: ComposerBag }) {
   return (
     <span className="relative">
       <button disabled={!c.onMode} onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open} title="Permission mode (shift-tab)" className={pill}>
-        <Shield size={14} strokeWidth={1.5} />{c.session.mode}<ChevronDown size={13} strokeWidth={1.5} className="text-faint" />
+        {/* full never asks: in the warning colour, so it is never on unnoticed */}
+        <Shield size={14} strokeWidth={1.5} className={c.session.mode === "full" ? "text-warn" : undefined} />
+        <span className={c.session.mode === "full" ? "text-warn" : undefined}>{c.session.mode}</span><ChevronDown size={13} strokeWidth={1.5} className="text-faint" />
       </button>
       {open && (
         <Menu onClose={() => setOpen(false)} width={320}>

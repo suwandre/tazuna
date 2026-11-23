@@ -55,7 +55,7 @@ export function BestOfStart({ choices, onStart, onClose }: { choices: ModelChoic
             );
           })}
           <div className="mt-3 text-[12px] text-muted">Each lane gets a worktree of its own (a branch and folder; the setup script does not run) and the same
-            message, in auto mode: the agent works without asking, inside its worktree. Each lane bills as its model does.</div>
+            message, in auto mode: the agent works without asking, inside its worktree, but asks before a destructive command. Each lane bills as its model does.</div>
         </div>
         <div className="flex justify-end gap-2 border-t border-line-soft px-5 py-3">
           <button onClick={onClose} className={quietButton}>Cancel</button>

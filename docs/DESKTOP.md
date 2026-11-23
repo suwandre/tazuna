@@ -8,7 +8,7 @@ Open folder (a project, recent ones in the sidebar); inside a project the router
 tagged, with "send to agent"; a folder whose settings run code runs lean until the user trusts it; tool steps, markdown
 answers, cost per turn and thread, context and plan usage; the model picker (the /model catalog by provider, searchable, with
 what a locked row needs) and the effort menu; saved conversations in the sidebar (chats and each project's, the CLI's
-/resume list: either side opens the other's); the permission mode under the composer (auto, ask, edits, plan; shift-tab)
+/resume list: either side opens the other's); the permission mode under the composer (auto, ask, edits, review, plan, full; shift-tab)
 and approvals inline (allow, always, decline; y / a / n); each turn's changes as a card (files, +/-, each file's diff) with
 undo of the last turn (git snapshots before and after, src/turns.rs; the next message tells the model); Cmd-K palette
 (chats, folders, conversations, model, effort, mode, undo, theme) and the Cmd-/ shortcut sheet. 0.1.1 carries its own tazuna (built
@@ -605,6 +605,10 @@ same service's models.dev catalog); they had none to choose.
 0.1.108 (with tazuna 0.1.206): a chat asked "do you have access to my PC stats?" (or "can you browse the web?") hands the
 question to the agent, which can, instead of answering "no".
 
+0.1.109 (with tazuna 0.1.209): a new permission mode, full, which never asks (the old auto); auto now asks before a
+destructive command (rm or chmod outside the project, force push, reset --hard, sudo, disk tools), with the rule in the
+question. The mode menu lists full last, and its pill turns the warning colour while it is on.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
@@ -663,7 +667,7 @@ mobile companion and team settings. Code signing stays off by choice.
 - Both engines: the Claude path and the own loop; model and effort picker grouped by provider, searchable.
 - Transcript: streaming markdown and code, tool calls collapsed to one line each, expandable.
 - Cost: per message, per thread, Claude plan usage (5-hour and weekly), SubRouter balance; context use as a ring.
-- Permission mode always visible under the composer (auto, ask, edits, plan) with its shortcut; approvals inline.
+- Permission mode always visible under the composer (auto, ask, edits, review, plan, full) with its shortcut; approvals inline.
 - Changes: a read-only diff of each turn, and undo of the last turn (tazuna's rewind).
 - Sessions shared with the CLI (open either way); settings for providers and keys (`/login`) and the data policy.
 - Light and dark from one set of design tokens; Cmd-K palette; Cmd-/ shortcut sheet.
