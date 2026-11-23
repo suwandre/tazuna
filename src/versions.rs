@@ -41,6 +41,17 @@ fn github_token() -> Option<String> {
     })
 }
 
+#[derive(Debug)]
+struct GithubStatus(u16, String);
+
+impl std::fmt::Display for GithubStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GitHub answered HTTP {} for {}", self.0, self.1)
+    }
+}
+
+impl std::error::Error for GithubStatus {}
+
 fn github_get(url: &str, accept: &str, token: Option<&str>) -> anyhow::Result<ureq::http::Response<ureq::Body>> {
     let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(60))).http_status_as_error(false).build().into();
     let mut q = http.get(url).header("Accept", accept).header("User-Agent", "tazuna").header("X-GitHub-Api-Version", "2022-11-28");
@@ -51,8 +62,27 @@ fn github_get(url: &str, accept: &str, token: Option<&str>) -> anyhow::Result<ur
     match r.status().as_u16() {
         200 => Ok(r),
         404 => anyhow::bail!("no tazuna release yet ({url})"),
-        s => anyhow::bail!("GitHub answered HTTP {s} for {url}"),
+        s => Err(GithubStatus(s, url.to_string()).into()),
     }
+}
+
+fn latest_download_version<'a>(location: &'a str, asset: &str) -> Option<&'a str> {
+    let prefix = format!("https://github.com/{REPO}/releases/download/v");
+    let (version, name) = location.strip_prefix(&prefix)?.split_once('/')?;
+    (name == asset && version.split('.').count() == 3 && version.split('.').all(|n| n.bytes().all(|b| b.is_ascii_digit())
+        && n.parse::<u64>().is_ok())).then_some(version)
+}
+
+fn latest_download(asset: &str) -> anyhow::Result<(String, String)> {
+    use anyhow::Context;
+    let url = format!("https://github.com/{REPO}/releases/latest/download/{asset}");
+    let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(60)))
+        .max_redirects(0).max_redirects_will_error(false).build().into();
+    let r = http.get(&url).call()?;
+    anyhow::ensure!(r.status().is_redirection(), "no redirect for {url}");
+    let location = r.headers().get("location").and_then(|h| h.to_str().ok()).context("no latest tazuna download URL")?;
+    let version = latest_download_version(location, asset).context("unexpected latest tazuna download URL")?;
+    Ok((version.to_string(), location.to_string()))
 }
 
 /// The CLI's releases, newest version first: (version, GitHub's description). The desktop's own releases (desktop-v...)
@@ -318,6 +348,21 @@ pub fn upgrade_cli(args: &[String], back: bool) -> anyhow::Result<()> {
     let spin = ui.spin(if back { "Looking for the version to go back to…" } else { "Checking for a new tazuna…" });
     let list = releases(token.as_deref());
     spin.stop();
+    if !back && want.is_none() && !wait && matches!(list.as_ref().err().and_then(|e| e.downcast_ref::<GithubStatus>()),
+        Some(GithubStatus(403 | 429, _))) {
+        let (version, url) = latest_download(asset).context("could not find the latest tazuna download after GitHub rejected the release list")?;
+        if !older(current, &version) {
+            ui.line(&format!("{} tazuna {current} is up to date", ui.paint("32", "✓")));
+            return Ok(());
+        }
+        ui.line(&ui.paint("1", &format!("Upgrading tazuna {current} → {version}")));
+        let r = github_get(&url, "application/octet-stream", None)?;
+        let size = r.headers().get("content-length").and_then(|h| h.to_str().ok()).and_then(|n| n.parse().ok()).unwrap_or(0);
+        install_archive(&ui, &exe, asset, &version, r, size)?;
+        ui.line(&format!("{} Upgraded to tazuna {version} {}", ui.paint("32", "✓"), ui.paint("2", &format!("({})", exe.display()))));
+        record_upgrade(current, &version);
+        return Ok(());
+    }
     let list = list?;
     let ready: Vec<(String, bool)> = list.iter().map(|(v, r)| (v.clone(), built(r, asset).is_some())).collect();
     let previous = upgrades_file().and_then(|f| std::fs::read_to_string(f).ok()).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
@@ -364,7 +409,40 @@ pub fn upgrade_cli(args: &[String], back: bool) -> anyhow::Result<()> {
         note = None;
     }
     let (url, size) = built(&release, asset).context("no archive")?;
-    let mut r = github_get(&url, "application/octet-stream", token.as_deref())?;
+    let r = github_get(&url, "application/octet-stream", token.as_deref())?;
+    install_archive(&ui, &exe, asset, &version, r, size)?;
+    ui.line(&format!("{} {} {}", ui.paint("32", "✓"), if back { format!("Rolled back to tazuna {version}") } else { format!("Upgraded to tazuna {version}") },
+        ui.paint("2", &format!("({})", exe.display()))));
+    if back {
+        let newest = &list[0].0;
+        ui.line(&format!("{} `tazuna upgrade` brings {newest} back", ui.paint("2", "→")));
+        return Ok(());
+    }
+    // what came: each release between the two, newest first; six here, all kept for the next session's word and rollback
+    let span: Vec<&(String, serde_json::Value)> = list.iter().filter(|(v, _)| older(current, v) && !older(&version, v)).collect();
+    let notes = if span.is_empty() { vec![] } else { changelog(&version) };
+    let title = |v: &str, r: &serde_json::Value| notes.iter().find(|e| e.version == v).map(|e| e.title.clone()).unwrap_or_else(|| headline(r));
+    let items: Vec<(String, String)> = span.iter().map(|(v, r)| (v.clone(), title(v, r))).collect();
+    for (v, h) in items.iter().take(6) {
+        if !h.is_empty() {
+            ui.line(&format!("  {} {h}", ui.paint("2", &format!("{v:<8}"))));
+        }
+    }
+    if items.len() > 6 {
+        ui.line(&ui.paint("2", &format!("  … {} more", items.len() - 6)));
+    }
+    if !items.is_empty() {
+        ui.line(&ui.paint("2", "  in tazuna: /changelog has every version's notes"));
+    }
+    record_upgrade(current, &version);
+    if let Some(n) = note.take() {
+        ui.line(&format!("{} {n}", ui.paint("33", "→")));
+    }
+    Ok(())
+}
+
+fn install_archive(ui: &Ui, exe: &Path, asset: &str, version: &str, mut r: ureq::http::Response<ureq::Body>, size: u64) -> anyhow::Result<()> {
+    use anyhow::Context;
     let mut reader = r.body_mut().with_config().limit(200 << 20).reader();
     let mut bytes = Vec::with_capacity(size as usize);
     let mut buf = [0u8; 64 * 1024];
@@ -406,50 +484,26 @@ pub fn upgrade_cli(args: &[String], back: bool) -> anyhow::Result<()> {
         anyhow::ensure!(ok, "tar could not unpack {asset}");
         let new = dir.join(if cfg!(windows) { "tazuna.exe" } else { "tazuna" });
         let out = std::process::Command::new(&new).arg("--version").output().context("running the downloaded tazuna")?;
-        anyhow::ensure!(String::from_utf8_lossy(&out.stdout).contains(&version), "the downloaded tazuna does not say {version}: left as it was");
+        anyhow::ensure!(String::from_utf8_lossy(&out.stdout).contains(version), "the downloaded tazuna does not say {version}: left as it was");
         #[cfg(unix)]
         std::fs::set_permissions(&new, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
         // a running binary cannot be overwritten on Windows but can be renamed: it moves aside and goes on the next start
         if cfg!(windows) {
             std::fs::rename(&exe, exe.with_extension("old.exe"))?;
         }
-        std::fs::rename(&new, &exe)?;
+        std::fs::rename(&new, exe)?;
         Ok(())
     })();
     let _ = std::fs::remove_dir_all(&dir);
     spin.stop();
-    result?;
-    ui.line(&format!("{} {} {}", ui.paint("32", "✓"), if back { format!("Rolled back to tazuna {version}") } else { format!("Upgraded to tazuna {version}") },
-        ui.paint("2", &format!("({})", exe.display()))));
-    if back {
-        let newest = &list[0].0;
-        ui.line(&format!("{} `tazuna upgrade` brings {newest} back", ui.paint("2", "→")));
-        return Ok(());
-    }
-    // what came: each release between the two, newest first; six here, all kept for the next session's word and rollback
-    let span: Vec<&(String, serde_json::Value)> = list.iter().filter(|(v, _)| older(current, v) && !older(&version, v)).collect();
-    let notes = if span.is_empty() { vec![] } else { changelog(&version) };
-    let title = |v: &str, r: &serde_json::Value| notes.iter().find(|e| e.version == v).map(|e| e.title.clone()).unwrap_or_else(|| headline(r));
-    let items: Vec<(String, String)> = span.iter().map(|(v, r)| (v.clone(), title(v, r))).collect();
-    for (v, h) in items.iter().take(6) {
-        if !h.is_empty() {
-            ui.line(&format!("  {} {h}", ui.paint("2", &format!("{v:<8}"))));
-        }
-    }
-    if items.len() > 6 {
-        ui.line(&ui.paint("2", &format!("  … {} more", items.len() - 6)));
-    }
-    if !items.is_empty() {
-        ui.line(&ui.paint("2", "  in tazuna: /changelog has every version's notes"));
-    }
+    result
+}
+
+fn record_upgrade(current: &str, version: &str) {
     if let Some(f) = upgrades_file() {
         let _ = f.parent().map(std::fs::create_dir_all);
         let _ = std::fs::write(f, serde_json::json!({"from": current, "to": version}).to_string());
     }
-    if let Some(n) = note.take() {
-        ui.line(&format!("{} {n}", ui.paint("33", "→")));
-    }
-    Ok(())
 }
 
 /// Once a day at most: "tazuna X is out" when the newest release is newer than this binary. The check is cached in
@@ -517,6 +571,18 @@ mod tests {
             assert_eq!(name, Some("tazuna-aarch64-apple-darwin.tar.gz"));
         }
         assert!(super::older("0.1.75", "0.1.76") && !super::older("0.1.76", "0.1.76") && super::older("0.1.9", "0.1.10"));
+    }
+
+    #[test]
+    fn latest_download_redirect_must_name_a_cli_release_and_the_requested_asset() {
+        let asset = "tazuna-aarch64-apple-darwin.tar.gz";
+        let prefix = format!("https://github.com/{REPO}/releases/download");
+        assert_eq!(latest_download_version(&format!("{prefix}/v0.1.211/{asset}"), asset), Some("0.1.211"));
+        for tag in ["desktop-v0.1.211", "v0.1.211-rc.1", "v0..211"] {
+            assert_eq!(latest_download_version(&format!("{prefix}/{tag}/{asset}"), asset), None, "{tag}");
+        }
+        assert_eq!(latest_download_version(&format!("{prefix}/v0.1.211/wrong.tar.gz"), asset), None);
+        assert_eq!(latest_download_version(&format!("https://example.com/{REPO}/releases/download/v0.1.211/{asset}"), asset), None);
     }
 
     #[test]
