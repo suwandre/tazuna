@@ -1,5 +1,5 @@
 import { ArrowUp, Check, ChevronDown, FileText, FolderOpen, Gauge, MessageCircle, Paperclip, Plus, Shield, Square, X, Zap } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { quotePath, type ModelChoice, type Models } from "../lib/tazuna";
 import { modelLabel, type Session } from "../lib/types";
 import { Slot } from "../lib/slots";
@@ -124,12 +124,28 @@ export function Composer({ session, where, chat, busy, onSend, onStop, models, o
   const box = useRef<HTMLTextAreaElement>(null);
   // the box grows with what is typed, up to 40% of the window, then scrolls (it was one line, and earlier lines went out
   // of sight); at the window's bottom it grows upwards
-  useLayoutEffect(() => {
+  const resize = useCallback(() => {
     const el = box.current;
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.4))}px`;
-  }, [text]);
+  }, []);
+  useLayoutEffect(resize, [text, resize]);
+  useEffect(() => {
+    const container = box.current?.parentElement;
+    if (!container) return;
+    // Wrapping also changes without an edit: resizing the window or docking the work rail. Only react to width,
+    // not height, so growing the textarea cannot trigger an observer loop.
+    let width = 0;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width === width) return;
+      width = entry.contentRect.width;
+      resize();
+    });
+    observer.observe(container);
+    window.addEventListener("resize", resize);
+    return () => { observer.disconnect(); window.removeEventListener("resize", resize); };
+  }, [resize]);
   // draft recovery: what is in the box is saved as it changes, under the conversation's key
   const savedAt = useRef(draftKey);
   useEffect(() => {
