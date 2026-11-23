@@ -31,7 +31,7 @@ import { CoreFailed, Start, type StartItem } from "./components/Start";
 import { StatusBar } from "./components/StatusBar";
 import { getVersion } from "@tauri-apps/api/app";
 import * as demo from "./lib/demo";
-import { askedInput, changedCount, heldTurn, messages as viewMessages, queued, resetIn, sessionIds, unsaved, usage as viewUsage } from "./lib/fromView";
+import { askedInput, changedCount, heldTurn, messages as viewMessages, queued, readableError, resetIn, sessionIds, unsaved, usage as viewUsage } from "./lib/fromView";
 import { modelLabel, shortTitle, titleFrom, type Usage } from "./lib/types";
 import { items as accountItems, mine as accountOf, withLive } from "./lib/health";
 import { Parts } from "./components/Sep";
@@ -796,6 +796,7 @@ export default function App() {
   // Not while a saved conversation's messages are on their way: the start screen showed for a moment before them, each
   // time one was opened (the user, 2026-11-20: "quickly flashes the main new chat page")
   const fresh = inTauri && !!view && !busy && !view.asking && !editing && !resuming && !view.blocks.some((b) => b.kind === "prompt");
+  const freshError = fresh ? [...view.blocks].reverse().find((b) => b.kind === "notice" && b.error) : undefined;
   // the start page's ledger reads the run log again when the page shows and when the day turns: yesterday's numbers stood
   // there overnight as "Today", and runs made in the terminal never came (design review 11)
   const [day, setDay] = useState(0);
@@ -848,13 +849,15 @@ export default function App() {
                 <button onClick={() => { localStorage.setItem(paidKey, "1"); const t = paidAsk; setPaidAsk(null); sendNow(t); }} className={accentButton}>Send</button>
                 <button onClick={() => { setDraft({ text: paidAsk, n: Date.now() }); setPaidAsk(null); }} className={quietButton}>Cancel</button>
               </div>
-            ) : editing && (
+            ) : editing ? (
               <div className="mx-auto mb-2 flex max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
                 <span className="flex-1">Editing an earlier message: sending it goes back to before it, and the messages after it leave the conversation.
                   {editing.files > 0 && <label className="mt-1 flex items-center gap-2 text-ink"><input type="checkbox" checked={editing.keep} onChange={(e) => setEditing({ ...editing, keep: e.target.checked })} />
                     Also put back the {editing.files} file{editing.files === 1 ? "" : "s"} tazuna changed since</label>}</span>
                 <button onClick={() => { setEditing(null); setDraft({ text: "", n: Date.now() }); }} className={quietButton}>Cancel</button>
               </div>
+            ) : freshError?.kind === "notice" && (
+              <div role="alert" className="mx-auto mb-2 max-w-[700px] text-[12.5px] text-bad">{readableError(freshError.text)}</div>
             )} onStop={stop}
             models={models} onModels={inTauri ? () => core.models() : undefined}
             onPickModel={inTauri ? pickModel : undefined} onPickEffort={inTauri ? (e) => core.setEffort(e) : undefined}
