@@ -3346,7 +3346,9 @@ mod tests {
             "request": {"subtype": "can_use_tool", "tool_name": tool, "input": {"command": cmd}}}));
         ask(&live, "r-1", "Bash", "ls -la && rm -rf target");
         assert!(live.poll().iter().all(|(_, e)| e["type"] != "harness_permission") && live.pending.is_empty(), "runs without a question");
-        assert!(stub::sent(&dir, "r-1") && std::fs::read_to_string(dir.join("stdin")).unwrap().contains(r#""behavior":"allow""#));
+        // what claude was sent, as the stub copies it in: a moment after the write, so it is waited for
+        let got = |want: &str| (0..80).any(|_| std::fs::read_to_string(dir.join("stdin")).is_ok_and(|s| s.contains(want)) || { std::thread::sleep(Duration::from_millis(25)); false });
+        assert!(got(r#""request_id":"r-1""#) && got(r#""behavior":"allow""#));
         ask(&live, "r-2", "Bash", "git push --force");
         assert!(live.poll().iter().any(|(_, e)| e["type"] == "harness_permission"));
         assert_eq!(live.pending.front().unwrap()["request"]["risky"], "git push --force: rewrites the remote's history");
@@ -3362,9 +3364,9 @@ mod tests {
         live.poll();
         assert_eq!(live.pending.front().map(|r| r["request_id"].clone()), Some(json!("r-5")), "{:?}", live.pending);
         live.set_mode("bypassPermissions");
-        assert!(std::fs::read_to_string(dir.join("stdin")).unwrap().contains(r#""mode":"bypassPermissions""#), "full: claude's own");
+        assert!(got(r#""mode":"bypassPermissions""#), "full: claude's own");
         live.set_mode("auto");
-        assert!(std::fs::read_to_string(dir.join("stdin")).unwrap().contains(r#""mode":"acceptEdits""#), "auto reaches claude as acceptEdits");
+        assert!(got(r#""mode":"acceptEdits""#), "auto reaches claude as acceptEdits");
         drop(live);
         std::fs::remove_dir_all(&dir).ok();
     }

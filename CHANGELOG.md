@@ -16,6 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.213 (2026-11-24): edits mode asks before a write outside the project; replay reads as replay
+
+- Edits mode on the own loop asks before a write or edit outside the project, under its .git, or among the home
+  folder's hidden files (a shell profile, tazuna's hooks file: both run commands later), once, with no "always"
+  (security scan, Devin, PR #24). Claude's own edits mode checks paths itself; the other modes are unchanged.
+- Replay: a strip that says "Replay · Playing" with its keys, and the time and speed above the conversation, in place
+  of a message box that read as live ("Message tazuna…") (Devin's design review, PR #23).
+- The desktop app gets the draft back when the core refuses a message (PR #22).
+- The cockpit's header under 110 columns has the cost after the status again: it read "≈$0● working" since 0.1.209 (PR
+  #25).
+- desktop/review/model.py: a scripted model for reviews, on LM Studio's port so tazuna finds it with no setup. Every
+  flow (tools, permission questions, errors, slow and long replies, a chat's hand-off) runs on real tazuna at $0.
+- A test of auto mode read what the stub claude was sent before the stub had written it; it failed about once in six
+  runs and now waits for it.
+
 ## 0.1.212 (2026-11-23): releases publish only when every platform is built; `tazuna update` past GitHub's rate limit
 
 From Devin's QA runs (PRs #8, #11, #16):
