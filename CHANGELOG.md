@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.211 (2026-11-23): the auto check reads Git Bash paths on Windows
+
+From Devin's QA run of 0.1.209 on Windows (PR #4): a path starting with "/" counts as absolute there too, as Git Bash
+reads it (Windows takes only "C:\x" as absolute, so "rm -rf /c/Users/me" read as a path in the project); it now counts
+as outside and asks. The two tests 0.1.210 kept off Windows run there again: one of them built a Windows home folder
+into a command unquoted, and bash takes its backslashes as escapes.
+
 ## 0.1.210 (2026-11-23): 0.1.209 for Windows
 
 0.1.209's Windows build stopped at its tests: two new tests of the auto check use Unix paths ("/work/proj" has no drive,

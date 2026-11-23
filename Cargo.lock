@@ -1525,7 +1525,7 @@ dependencies = [
 
 [[package]]
 name = "tazuna"
-version = "0.1.210"
+version = "0.1.211"
 dependencies = [
  "anyhow",
  "libc",

@@ -9,7 +9,8 @@
 //! through `sh -c`, `eval`, `env`, `xargs`, `if`, `{ ...; }` and the like, and takes a path it cannot work out ($VAR,
 //! ~user) as outside.
 // ponytail: a lexical reading; a symlink in the project pointing out, aliases and functions, and a script the agent wrote
-// and then runs pass. On Windows Git Bash's "/c/..." paths read as relative and PowerShell's Remove-Item is not read. A real fence is the review sandbox (sandbox.rs); widen this list when a miss is seen.
+// and then runs pass. On Windows PowerShell's Remove-Item is not read, and Git Bash's "/c/proj" is not matched to C:\proj
+// (it errs towards asking). A real fence is the review sandbox (sandbox.rs); widen this list when a miss is seen.
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -389,8 +390,6 @@ mod tests {
         scan(command, project, Some(project)).0
     }
 
-    // Unix paths: "/work/proj" has no drive on Windows, so it is not absolute there
-    #[cfg(unix)]
     #[test]
     fn auto_asks_about_the_destructive_commands_only() {
         let cwd = Path::new("/work/proj");
@@ -500,7 +499,6 @@ mod tests {
     }
 
     /// The lean bash keeps its folder between calls: `cd ..` in one, the sibling's removal in the next asks.
-    #[cfg(unix)]
     #[test]
     fn a_cd_carries_to_the_next_call() {
         let cwd = Path::new("/work/proj");
