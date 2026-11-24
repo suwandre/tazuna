@@ -241,6 +241,11 @@ pub struct View {
     pub login: Option<LoginPanel>,
     /// Claude's cache has expired: the tokens the next message re-reads without it (0: warm, small, or the own loop).
     pub cold: u64,
+    /// "y" chose "allow once" on a destructive command auto asked about: enter confirms it, any other key lets it go (a
+    /// message typed into the question can start with "y", design review 13).
+    pub confirm: bool,
+    /// The question in front is a destructive command auto asked about (live.rs risky), whichever note it shows.
+    pub ask_risky: bool,
     /// Vim mode's state for the composer ("NORMAL", "INSERT"); empty when vim mode is off.
     pub vim: &'static str,
 }
@@ -601,6 +606,23 @@ fn whole_hints(keys: &str, room: usize) -> String {
     out
 }
 
+/// A meter's row with its bar (█ used, ░ left) `by` cells shorter, at least 6, the used share kept.
+fn shrink_bar(r: &str, by: usize) -> String {
+    let n = r.chars().filter(|c| matches!(c, '█' | '░')).count();
+    let to = n.saturating_sub(by).max(6.min(n));
+    let full = (r.chars().filter(|&c| c == '█').count() * to + n / 2) / n.max(1);
+    let (mut out, mut done) = (String::new(), false);
+    for c in r.chars() {
+        if !matches!(c, '█' | '░') {
+            out.push(c);
+        } else if !std::mem::replace(&mut done, true) {
+            out.push_str(&"█".repeat(full));
+            out.push_str(&"░".repeat(to - full));
+        }
+    }
+    out
+}
+
 /// `t` in at most `w` columns, ending in "…" when it had to be cut.
 pub fn ellipsis(t: &str, w: usize) -> String {
     if t.width() <= w {
@@ -613,6 +635,8 @@ pub fn ellipsis(t: &str, w: usize) -> String {
         }
         out.push(c);
     }
+    // "Z.ai Coding …" read as a word left out: the cut ends on the last letter (design review 13)
+    out.truncate(out.trim_end().len());
     out + "…"
 }
 
@@ -622,16 +646,13 @@ pub fn ellipsis(t: &str, w: usize) -> String {
 fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme, clock_ms: f64, band: Rect) -> (Option<Rect>, Vec<(Rect, String)>, Vec<(Rect, usize)>, usize) {
     // a rule straight under a heading is not drawn: a section is its bold heading, as the window's (v8.html)
     let ruled = |i: usize| p.rows[i].1 == Tone::Rule && i > 0 && p.rows[i - 1].1 == Tone::Head;
-    let drawn = (0..p.rows.len()).filter(|&i| !ruled(i)).count();
-    let area = overlay_area(band, drawn + usize::from(!p.head.is_empty()) + (3 * p.open.len()).min(12), false);
-    // the keys that do something here: a click only where rows unfold, sideways only where a row is cut ("←→ scroll"
-    // stood over every list)
-    let cut_row = p.hscroll > 0 || p.rows.iter().any(|r| r.0.width() + 2 > area.width as usize);
-    let keys = ["↑↓ scroll", if p.details.iter().any(Option::is_some) { "click unfolds a row" } else { "" }, if cut_row { "←→ sideways" } else { "" }, "esc closes"]
-        .into_iter().filter(|k| !k.is_empty()).collect::<Vec<_>>().join(" · ");
-    let inner = overlay(f, th, area, &p.title, "", &keys);
-    let inner = Rect { x: inner.x + 1, width: inner.width.saturating_sub(2), ..inner };
-    let width = inner.width as usize;
+    // the text's width: the band less the border and a column of margin on each side
+    let width = band.width.saturating_sub(4) as usize;
+    // the meters' bars shrink together, down to 6 cells, before a row is cut: "5-hour session ▬▬▬▬▬▬▬▬ 15%   resets …" at
+    // 80 columns (/usage, design review 13)
+    let meter = |r: &str| r.contains('█') || r.contains('░');
+    let over = p.rows.iter().filter(|r| meter(&r.0)).map(|r| r.0.width().saturating_sub(width)).max().unwrap_or(0);
+    let fit = |r: &str| if over > 0 && p.hscroll == 0 && meter(r) { shrink_bar(r, over) } else { r.to_string() };
     // sideways scrolled: the text from there on; else cut to the modal with "…" (a click unfolds it)
     let cut = |t: &str| -> String {
         let t: String = t.chars().skip(p.hscroll).collect();
@@ -652,6 +673,17 @@ fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme, clock_ms: f64, band: Rect
     let detail_lines = |i: usize| p.open.contains(&i).then(|| p.details.get(i).cloned().flatten()).flatten()
         .map_or(0, |d| d.chars().count().div_ceil(width.saturating_sub(p.link_from.min(width / 3)).max(10)));
     let height = |i: usize| if ruled(i) { 0 } else { (if wraps(i) { wrapped(&p.rows[i].0).len() } else { 1 }) + detail_lines(i) };
+    // as tall as its rows as drawn: a note's wrapped lines counted, its last line ("…Atlassian Rovo" / "1%") fell under the
+    // panel's edge (design review 13)
+    let drawn: usize = (0..p.rows.len()).map(height).sum();
+    let area = overlay_area(band, drawn + usize::from(!p.head.is_empty()), false);
+    // the keys that do something here: a click only where rows unfold, sideways only where a row is cut ("←→ scroll"
+    // stood over every list)
+    let cut_row = p.hscroll > 0 || p.rows.iter().enumerate().any(|(i, r)| !wraps(i) && fit(&r.0).width() > width);
+    let keys = ["↑↓ scroll", if p.details.iter().any(Option::is_some) { "click unfolds a row" } else { "" }, if cut_row { "←→ sideways" } else { "" }, "esc closes"]
+        .into_iter().filter(|k| !k.is_empty()).collect::<Vec<_>>().join(" · ");
+    let inner = overlay(f, th, area, &p.title, "", &keys);
+    let inner = Rect { x: inner.x + 1, width: inner.width.saturating_sub(2), ..inner };
     let room = inner.height as usize;
     // the last top that still fills the panel: scrolling went on to the last row alone, a page of empty space under it
     // (/usage, the user, 2026-11-24)
@@ -680,7 +712,7 @@ fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme, clock_ms: f64, band: Rect
             lines.push(Line::from(Span::styled("─".repeat(width), st(th.border))));
             continue;
         }
-        let shown = if p.pending && i == 0 { cut(&format!("{} {r}", spinner(clock_ms))) } else { cut(r) };
+        let shown = if p.pending && i == 0 { cut(&format!("{} {r}", spinner(clock_ms))) } else { cut(&fit(r)) };
         rows.push((Rect::new(inner.x, y, inner.width, 1), i));
         match p.links.get(i).cloned().flatten() {
             None if wraps(i) => {
@@ -1041,6 +1073,57 @@ fn draw_rewind(f: &mut Frame, p: &RewindPanel, th: &Theme, band: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
+/// `name` cut in its middle to `room` characters: the head keeps at least `keep` of them where it can (what tells it from a
+/// row that would read the same), the tail a third of the rest (", fast").
+fn mid_cut(name: &str, room: usize, keep: usize) -> String {
+    let n = name.chars().count();
+    let room = room.max(2);
+    if n <= room {
+        return name.to_string();
+    }
+    if keep >= room - 1 {
+        // the difference lies past the room: the stretch that ends with it
+        return format!("…{}", name.chars().skip(keep.min(n) + 1 - room).take(room - 1).collect::<String>());
+    }
+    let tail = ((room - 1) / 3).min(room - 1 - keep);
+    format!("{}…{}", name.chars().take(room - 1 - tail).collect::<String>(), name.chars().skip(n - tail).collect::<String>())
+}
+
+/// The model column of the rows on screen, (name, whose it is) in `lw` columns. The model's name comes first: whose it is
+/// shortens (to 4 characters and "…") or goes before the name is cut; at 100 columns the name gave way to the provider and
+/// "Mistral …tral Mistral Vibe" stood three times (design review 13). Rows that would then read the same keep what tells
+/// them apart: one model at two providers its providers, the name giving way (design review 11), two names their first
+/// differing characters.
+fn model_cells(rows: &[(&str, &str)], lw: usize) -> Vec<(String, String)> {
+    let one = |name: &str, prov: &str| -> (String, String) {
+        let (n, p) = (name.chars().count(), prov.chars().count());
+        match prov {
+            "" => (mid_cut(name, lw, 0), String::new()),
+            _ if n + 1 + p <= lw => (name.to_string(), prov.to_string()),
+            _ if n + 1 + 5 <= lw => (name.to_string(), ellipsis(prov, lw - n - 1)),
+            _ => (mid_cut(name, lw, 0), String::new()),
+        }
+    };
+    let base: Vec<(String, String)> = rows.iter().map(|(n, p)| one(n, p)).collect();
+    let common = |a: &str, b: &str| a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count();
+    (0..rows.len()).map(|i| {
+        let (name, prov) = rows[i];
+        let same: Vec<usize> = (0..rows.len()).filter(|&j| j != i && base[j] == base[i] && rows[j] != rows[i]).collect();
+        if same.is_empty() {
+            base[i].clone()
+        } else if same.iter().any(|&j| rows[j].0 == name) {
+            // a provider and its region's twin ("MiniMax Plan", "MiniMax Plan China") shortened alike keep their ends
+            let twin = same.iter().any(|&j| rows[j].0 == name && rows[j].1 != prov && ellipsis(rows[j].1, lw / 2) == ellipsis(prov, lw / 2));
+            let prov = if prov.is_empty() { String::new() } else if twin { mid_cut(prov, lw / 2, 0) } else { ellipsis(prov, lw / 2) };
+            (mid_cut(name, lw.saturating_sub(prov.chars().count() + usize::from(!prov.is_empty())), 0), prov)
+        } else {
+            let keep = same.iter().map(|&j| common(name, rows[j].0)).max().unwrap_or(0) + 1;
+            let p = &base[i].1;
+            (mid_cut(name, lw.saturating_sub(p.chars().count() + usize::from(!p.is_empty())), keep), p.clone())
+        }
+    }).collect()
+}
+
 /// /model: Claude's models and the checked routes; ready ones in the text colour, a missing key greyed out, an untrusted
 /// provider (the code would go there) in the warning colour, a route checked long ago marked stale. The columns fit the
 /// panel's width: the label gives way first (cut in the middle, so "· fast" stays), then the scores go; the price always
@@ -1081,8 +1164,9 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme, band: Rect) {
         for (i, (name, n, ok, _)) in p.groups.iter().enumerate().skip(first).take(room) {
             let mark = if i == p.group { "›" } else { " " };
             let dot = if i == 0 { "◆" } else if *ok { "●" } else { "○" };
-            // a name too long for the pane keeps more of itself without its count (the details say it)
-            let count = if name.chars().count() + n.to_string().len() + 5 <= gw { format!(" {n}") } else { String::new() };
+            // a name too long for the pane is cut, its count kept: without it "Qwen Cloud Tok…" said nothing of how many
+            // models it holds (design review 13)
+            let count = format!(" {n}");
             let room = gw.saturating_sub(4 + count.len());
             let label = ellipsis(name, room);
             let text = format!("{mark}{dot} {label:<room$}{count}");
@@ -1142,15 +1226,9 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme, band: Rect) {
     let lw = iw.saturating_sub(fixed + 1 + if scores { bw + aw + 4 } else { 0 }).max(4);
     // a row: the name, then whose it is in faint where both fit ("Codestral 2508 Mistral"; ", mistral" was part of the
     // name, and a cut one ran into it: "ERNIE 5.5 Flash Previe…openrouter"), the price, the two scores to the right
+    // `name` and `provider` as model_cells fitted them to the column
     let cols = |mark: &str, name: &str, provider: &str, pr: &str, b: &str, a: &str, base: Style, on: bool| -> Line<'static> {
-        // the provider stays and the name gives way to it: dropped where the name filled the column, two "DeepSeek V4.1
-        // …h 1017" rows of two providers read the same at 80 columns (design review 11)
-        let prov = if provider.is_empty() { String::new() } else { format!(" {}", ellipsis(provider, lw / 2)) };
-        let room = lw.saturating_sub(prov.width()).max(2);
-        // a name too long is cut in its middle, so what tells two rows of one model apart stays (", fast")
-        let n = name.chars().count();
-        let tail = room.saturating_sub(1) / 3;
-        let name = if n <= room { name.to_string() } else { format!("{}…{}", name.chars().take(room - 1 - tail).collect::<String>(), name.chars().skip(n - tail).collect::<String>()) };
+        let prov = if provider.is_empty() { String::new() } else { format!(" {provider}") };
         let pad = " ".repeat(lw.saturating_sub(name.width() + prov.width()));
         let price = if on { base } else { match pr { "free" => st(th.ok), "plan" => st(th.faint), _ => base } };
         let mut sp = vec![Span::styled(format!("{mark} {name}"), base), Span::styled(prov, if on { base } else { st(th.faint) }), Span::styled(format!("{pad} "), base),
@@ -1187,12 +1265,13 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme, band: Rect) {
         return;
     }
     let mut lines: Vec<Line<'static>> = vec![search, cols(" ", "model", "", "$/M in / out", "bench", "AA", st(th.faint), false)];
-    for (i, r) in p.rows.iter().enumerate().skip(first).take(room) {
+    let shown: Vec<(&str, &str)> = p.rows.iter().skip(first).take(room).map(|r| (r.label.as_str(), r.provider.as_str())).collect();
+    for ((i, r), (name, prov)) in p.rows.iter().enumerate().skip(first).take(room).zip(model_cells(&shown, lw)) {
         let on = i == p.selected && (p.in_models || !two);
         let mark = if on { "›" } else if r.current { "•" } else { " " };
         let color = match r.state { 1 | 4 => th.faint, 2 => th.warn, 3 => th.dim, _ if r.stale => th.warn, _ => th.text };
         // the selected row as every list's: the accent fill (it was the row's own ink reversed)
-        lines.push(cols(mark, &r.label, &r.provider, &r.price, &score(&r.bench), &r.aa, if on { picked(th) } else { st(color) }, on));
+        lines.push(cols(mark, &name, &prov, &r.price, &score(&r.bench), &r.aa, if on { picked(th) } else { st(color) }, on));
     }
     if p.rows.is_empty() {
         lines.push(Line::from(Span::styled(" no model matches", st(th.faint))));
@@ -2064,8 +2143,8 @@ fn block_lines(b: &Block, i: usize, s: &Session, v: &View, th: &Theme, o: &Opts,
                 Line::from(vec![
                     Span::styled(if loud { "! " } else { "· " }, st(if loud { th.err } else { th.faint })),
                     Span::styled(r.why.clone(), st(color).add_modifier(if loud { Modifier::BOLD } else { Modifier::empty() })),
-                    Span::styled(format!("  {state}"), st(color)),
-                    Span::styled(if open { "  ▾" } else { "  ▸" }, st(th.faint)),
+                    Span::styled(format!("  {}", whole(&state)), st(color)),
+                    Span::styled(if open { FOLD_OPEN } else { FOLD_SHUT }, st(th.faint)),
                 ]),
                 vec![Span::raw("  ")],
             )];
@@ -2129,7 +2208,7 @@ fn block_lines(b: &Block, i: usize, s: &Session, v: &View, th: &Theme, o: &Opts,
             }
             // writing (after the first token) and end to end (the waits included), each where known
             match (tps, e2e) {
-                (Some(r), Some(e)) => facts.push(format!("{r:.0} tok/s writing · {e:.0} end to end")),
+                (Some(r), Some(e)) => facts.extend([format!("{r:.0} tok/s writing"), format!("{e:.0} end to end")]),
                 (Some(r), None) => facts.push(format!("{r:.0} tok/s writing")),
                 (None, Some(e)) => facts.push(format!("{e:.0} tok/s end to end")),
                 (None, None) => {}
@@ -2140,13 +2219,15 @@ fn block_lines(b: &Block, i: usize, s: &Session, v: &View, th: &Theme, o: &Opts,
             let took = if d.secs < 60.0 { format!("{:.0} s", d.secs) } else { format!("{} min {:02} s", d.secs as u64 / 60, d.secs as u64 % 60) };
             // an estimate says so, and a cost nobody can tell is not shown as one (design review 12)
             let cost = d.run_cost.map_or("cost not known".into(), |c| format!("{}{}", if d.estimate { "≈" } else { "" }, usd(c)));
-            let mut first = vec![Span::styled(format!("{glyph} {word}"), st(color).add_modifier(Modifier::BOLD)), Span::styled(format!("  {took}  {cost}"), st(th.dim))];
+            let mut first = vec![Span::styled(format!("{glyph} {word}"), st(color).add_modifier(Modifier::BOLD)), Span::styled(format!("  {}  {}", whole(&took), whole(&cost)), st(th.dim))];
             if !open {
-                first.push(Span::styled("  ▸", st(th.faint)));
+                first.push(Span::styled(FOLD_SHUT, st(th.faint)));
             }
             let mut out = vec![(Line::from(first), vec![])];
             if open {
-                out.push((Line::from(Span::styled(format!("  so far: {}", facts.join(" · ")), st(th.dim))), vec![Span::raw("  ")]));
+                // it wraps between its facts, each whole: "· 424" / "tok/s end to end" (design review 13)
+                let facts: Vec<String> = facts.iter().map(|f| whole(f)).collect();
+                out.push((Line::from(Span::styled(format!("  so far: {}", facts.join("\u{a0}· ")), st(th.dim))), vec![Span::raw("  ")]));
             }
             out
         }
@@ -2238,7 +2319,8 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool,
         (Some(_), false) => ("✓", th.ok),
         (Some(_), true) => ("✗", th.err),
     };
-    let mut meta = match (&t.result, name) {
+    // each fact whole, so the row's fold mark takes no half of one with it (`wrap`)
+    let mut meta = whole(&match (&t.result, name) {
         (Some(_), _) if t.declined() => "declined".to_string(),
         // a failed command says how it ended ("exit 1"), anything else "error"
         (Some(r), _) if t.error => crate::session::exit_line(r).and_then(|l| l.strip_prefix("[exit ")).map_or("error".to_string(), |c| format!("exit {}", c.trim_end_matches(']'))),
@@ -2248,11 +2330,11 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool,
         (None, _) if t.done_ms.is_some() => "stopped".to_string(),
         (None, _) if asked(t, s, v) => "waits for your answer".to_string(),
         (None, _) => String::new(),
-    };
+    });
     if let Some((n, last)) = &t.sub {
         // a running subagent: its progress, not its whole transcript
         let last: String = last.chars().take(60).collect();
-        meta = if meta.is_empty() { format!("{n} steps · {last}") } else { format!("{meta} · {n} steps") };
+        meta = if meta.is_empty() { format!("{} · {last}", whole(&format!("{n} steps"))) } else { format!("{meta} · {}", whole(&format!("{n} steps"))) };
     }
     if let (true, Some(secs)) = (o.durations, t.secs()) {
         meta.push_str(&format!(" · {secs:.1}s"));
@@ -2266,7 +2348,7 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool,
     let prompt = if matches!(name, "Agent" | "Task") { t.input["prompt"].as_str().unwrap_or_default() } else { "" };
     let more = cut || !prompt.is_empty() || (!t.declined() && t.result.as_deref().is_some_and(|r| !r.trim().is_empty()));
     if more && !matches!(name, "edit" | "TodoWrite") {
-        meta.push_str(if open { "  ▾" } else { "  ▸" });
+        meta.push_str(if open { FOLD_OPEN } else { FOLD_SHUT });
     }
     // the counts and time on the same row when it all fits, else on a row of their own under the summary (wrapped
     // straight after a long command they were hard to find)
@@ -2364,7 +2446,8 @@ fn group_lines(blocks: &[Block], s: &Session, v: &View, th: &Theme, o: &Opts, wi
     let said_no = tools.iter().filter(|t| t.declined()).count();
     let errors = did.iter().filter(|t| t.error).count();
     let ran = did.len();
-    let mix = counts.iter().map(|(n, c)| format!("{n} ×{c}")).collect::<Vec<_>>().join("  ");
+    // each count whole: the row wraps between them ("2" / "failed" at 80 columns, design review 13)
+    let mix = counts.iter().map(|(n, c)| whole(&format!("{n} ×{c}"))).collect::<Vec<_>>().join("  ");
     let busy = (running.is_some() || thinking_now) && waits.is_none();
     let what = match (ran, thinking_now) {
         (0, false) if said_no > 0 => format!("declined {}", tools.iter().filter(|t| t.declined()).map(|t| short_name(&t.name)).collect::<Vec<_>>().join(", ")),
@@ -2376,17 +2459,17 @@ fn group_lines(blocks: &[Block], s: &Session, v: &View, th: &Theme, o: &Opts, wi
     let mut spans = vec![
         // the call a question is about waits for the user: no spinner, and it is drawn under this line, not counted in it
         Span::styled(if busy { format!("{} ", spinner(v.clock_ms)) } else { "⌁ ".into() }, st(if busy { th.accent } else { th.faint })),
-        Span::styled(what, st(th.dim)),
-        Span::styled(if ran == 0 { String::new() } else { format!("   {mix}   {}", lines_n(lines)) }, st(th.faint)),
+        Span::styled(whole(&what), st(th.dim)),
+        Span::styled(if ran == 0 { String::new() } else { format!("   {mix}   {}", whole(&lines_n(lines))) }, st(th.faint)),
     ];
     if thought > 0 {
-        spans.push(Span::styled(format!("   thought {approx}{thought} tok"), st(th.faint)));
+        spans.push(Span::styled(format!("   {}", whole(&format!("thought {approx}{thought} tok"))), st(th.faint)));
     }
     if errors > 0 {
-        spans.push(Span::styled(format!("   {errors} failed"), st(th.err)));
+        spans.push(Span::styled(format!("   {}", whole(&format!("{errors} failed"))), st(th.err)));
     }
     if said_no > 0 && ran > 0 {
-        spans.push(Span::styled(format!("   {said_no} declined"), st(th.faint)));
+        spans.push(Span::styled(format!("   {}", whole(&format!("{said_no} declined"))), st(th.faint)));
     }
     let mut out = vec![(Line::from(spans), vec![Span::raw("  ")])];
     if waits.is_some() && ran == 0 && thought == 0 && said_no == 0 {
@@ -2750,33 +2833,51 @@ pub fn wrap(mut line: Line<'static>, width: usize, cont: &[Span<'static>]) -> Ve
         *w = cont_w;
         *start = cont_w;
     };
-    for span in line.spans.clone() {
-        for word in span.content.split_inclusive(' ') {
-            let ww = word.trim_end().width();
-            if w + ww > width && w > start {
-                flush(&mut cur, &mut w, &mut start, &mut out);
-            }
-            if ww > width.saturating_sub(w) {
-                // longer than a whole row: split by character
-                let mut buf = String::new();
-                for ch in word.chars() {
-                    let cw = ch.width().unwrap_or(0);
-                    if w + cw > width && w > start {
-                        cur.push(Span::styled(std::mem::take(&mut buf), span.style));
-                        flush(&mut cur, &mut w, &mut start, &mut out);
-                    }
-                    buf.push(ch);
-                    w += cw;
+    // the words in order, each with its style. No-break spaces (`whole`) hold an item together, and a word that starts with
+    // one holds on to the word before it: a row's "▸" went alone to the next line (design review 13)
+    // (only one right after it: after a plain space a row may break there as anywhere)
+    let words: Vec<(&str, Style)> = line.spans.iter().flat_map(|s| s.content.split_inclusive(' ').map(move |x| (x, s.style))).collect();
+    for (k, &(word, style)) in words.iter().enumerate() {
+        let ww = word.trim_end().width();
+        let glued: usize = if word.ends_with(' ') { 0 } else {
+            words[k + 1..].iter().take_while(|(x, _)| x.starts_with(NBSP)).map(|(x, _)| x.trim_end().width()).sum()
+        };
+        let held = word.starts_with(NBSP) && k > 0 && !words[k - 1].0.ends_with(' ');
+        if w + ww + glued > width && w > start && !held {
+            flush(&mut cur, &mut w, &mut start, &mut out);
+        }
+        let word = word.replace(NBSP, " ");
+        if ww > width.saturating_sub(w) {
+            // longer than a whole row: split by character
+            let mut buf = String::new();
+            for ch in word.chars() {
+                let cw = ch.width().unwrap_or(0);
+                if w + cw > width && w > start {
+                    cur.push(Span::styled(std::mem::take(&mut buf), style));
+                    flush(&mut cur, &mut w, &mut start, &mut out);
                 }
-                cur.push(Span::styled(buf, span.style));
-            } else {
-                cur.push(Span::styled(word.to_string(), span.style));
-                w += word.width();
+                buf.push(ch);
+                w += cw;
             }
+            cur.push(Span::styled(buf, style));
+        } else {
+            w += word.width();
+            cur.push(Span::styled(word, style));
         }
     }
     out.push(Line::from(cur).style(line.style));
     out
+}
+
+/// The no-break space: `wrap` breaks a row only at plain spaces.
+const NBSP: char = '\u{a0}';
+/// A block's fold mark, held to the word before it.
+const FOLD_SHUT: &str = "\u{a0}\u{a0}▸";
+const FOLD_OPEN: &str = "\u{a0}\u{a0}▾";
+
+/// `s` as one item for `wrap`: its spaces do not break it ("2 failed", "424 tok/s end to end").
+fn whole(s: &str) -> String {
+    s.replace(' ', "\u{a0}")
 }
 
 const REPLAY_KEYS: &str = "tab design · space pause · ←/→ speed · ↑/↓ scroll · e expand · q quit";
@@ -2851,10 +2952,13 @@ pub fn composer_rows(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
 // ponytail: a click in a draft taller than a box capped under six rows lands by the six-row scroll (composer_index);
 // give composer_index the cap when someone edits long drafts in a 12-row window.
 pub fn composer_rows_in(v: &View, th: &Theme, glyph: &str, placeholder: &str, width: u16, max: usize) -> Vec<Line<'static>> {
-    if let Some(q) = &v.asking {
-        return asking_rows(q, th, width);
+    let typed = v.live && !v.input.is_empty();
+    // an open question over the draft: what is typed meanwhile stays in sight under it (design review 13)
+    let ask = v.asking.as_ref().map(|q| asking_rows(q, th, width, v.ask_risky, v.confirm && !typed, typed)).unwrap_or_default();
+    if !ask.is_empty() && !typed {
+        return ask;
     }
-    if !(v.live && !v.input.is_empty()) {
+    if !typed {
         return vec![composer_line(v, th, glyph, placeholder, width)];
     }
     let room = (width as usize).saturating_sub(4).max(1);
@@ -2863,7 +2967,7 @@ pub fn composer_rows_in(v: &View, th: &Theme, glyph: &str, placeholder: &str, wi
     COMPOSER_TOP.set((skip, max));
     let hints = hint_row(v, th, width);
     let sel = v.select;
-    rows.into_iter()
+    let draft: Vec<Line<'static>> = rows.into_iter()
         .enumerate()
         .skip(skip)
         .take(max)
@@ -2897,27 +3001,41 @@ pub fn composer_rows_in(v: &View, th: &Theme, glyph: &str, placeholder: &str, wi
             Line::from(spans)
         })
         .chain(hints)
-        .collect()
+        .collect();
+    ask.into_iter().chain(draft).collect()
 }
 
 /// A permission question as the box draws it: what asks (in the warn colour), the call itself whole up to ASK_ROWS rows,
 /// then the answers. One row with the call cut to fit ("sysctl vm.swapusa") was easy to miss and hid what was allowed
 /// (the user, 2026-11-23: "quite hidden, sometimes i dont realize until way later").
-fn asking_rows(q: &str, th: &Theme, width: u16) -> Vec<Line<'static>> {
-    let (tool, note, call) = asking_parts(q, width);
+fn asking_rows(q: &str, th: &Theme, width: u16, risky: bool, confirm: bool, typed: bool) -> Vec<Line<'static>> {
+    let (tool, (beside, under), call) = asking_parts(q, width);
     // the answers are what to act on: the brightest text, their keys in the accent (design review 2026-11-19); no
     // "always" where it is not given (main.rs question_parts)
     let key = |k: &'static str| Span::styled(k, st(th.accent).add_modifier(Modifier::BOLD));
     let word = |w: &'static str| Span::styled(w, st(th.text).add_modifier(Modifier::BOLD));
+    // the note beside the question where it fits, else wrapped under it: cut at the edge, the reason auto asked was lost
+    // ("auto asks: git push --force: rewrites the remote's history · al", design review 13)
     let mut out = vec![Line::from(vec![Span::styled(" ? ", st(th.warn).add_modifier(Modifier::BOLD)),
         Span::styled(format!("allow {tool}?"), st(th.warn).add_modifier(Modifier::BOLD)),
-        Span::styled(if note.is_empty() { String::new() } else { format!("   {note}") }, st(th.faint))])];
+        Span::styled(if beside.is_empty() { String::new() } else { format!("   {beside}") }, st(th.faint))])];
+    out.extend(under.into_iter().map(|l| Line::from(vec![Span::raw("   "), Span::styled(l, st(th.faint))])));
     out.extend(call.into_iter().map(|l| Line::from(vec![Span::raw("   "), Span::styled(l, st(th.text))])));
-    let mut keys = vec![Span::raw("   "), key("y"), word(" yes   ")];
+    // a destructive command auto asked about: y chooses "allow once", enter confirms it (main.rs question_key)
+    let mut keys = vec![Span::raw("   ")];
+    if confirm {
+        keys.extend([Span::styled("allow once", picked(th)), Span::styled("  enter", st(th.accent).add_modifier(Modifier::BOLD)), word(" confirms   ")]);
+    } else {
+        keys.extend([key("y"), word(if risky { " allow once   " } else { " yes   " })]);
+    }
     if !q.contains("  (once only") {
         keys.extend([key("a"), word(" always   ")]);
     }
     keys.extend([key("n"), word(" no")]);
+    // with a draft in the box every key types (main.rs): the answers wait for it to be empty
+    if typed {
+        keys.push(Span::styled("   · answer with an empty box", st(th.faint)));
+    }
     out.push(Line::from(keys));
     out
 }
@@ -2926,18 +3044,25 @@ fn asking_rows(q: &str, th: &Theme, width: u16) -> Vec<Line<'static>> {
 const ASK_ROWS: usize = 6;
 
 /// A question's tool, its note and its call wrapped to the box ("Bash: ls -la  (always = this command)", main.rs question):
-/// a call past ASK_ROWS rows ends in "…" (its step in the transcript shows it whole).
-fn asking_parts(q: &str, width: u16) -> (String, String, Vec<String>) {
+/// the note one row when it fits beside "? allow TOOL?", else its rows under it; a call past ASK_ROWS rows ends in "…" (its
+/// step in the transcript shows it whole).
+fn asking_parts(q: &str, width: u16) -> (String, (String, Vec<String>), Vec<String>) {
     let (head, note) = q.rsplit_once("  (").map_or((q, ""), |(h, n)| (h, n.strip_suffix(')').unwrap_or(n)));
     let (tool, call) = head.split_once(": ").unwrap_or(("this", head));
-    let mut rows: Vec<String> = call.lines().flat_map(|l| wrap_words(l, (width as usize).saturating_sub(4).max(10))).collect();
+    let room = (width as usize).saturating_sub(4).max(10);
+    let mut rows: Vec<String> = call.lines().flat_map(|l| wrap_words(l, room)).collect();
     if rows.len() > ASK_ROWS {
         rows.truncate(ASK_ROWS);
         if let Some(last) = rows.last_mut() {
             last.push_str(" …");
         }
     }
-    (tool.to_string(), note.to_string(), rows)
+    // " ? allow TOOL?   NOTE" in the box's inside (`width`, less a column of margin)
+    let note = match note {
+        n if 3 + "allow ?".len() + tool.width() + 3 + n.width() < width as usize => (n.to_string(), vec![]),
+        n => (String::new(), wrap_words(n, room)),
+    };
+    (tool.to_string(), note, rows)
 }
 
 /// The typed text as the composer draws it: wrapped rows of (char, its byte index in the input; None for the cursor),
@@ -2959,7 +3084,7 @@ fn text_rows(input: &str, at: usize, cursor: bool, room: usize) -> Vec<(Vec<(cha
     if cursor && at == input.len() {
         cells.push((CURSOR, None));
     }
-    let (mut rows, mut row, mut w) = (vec![], vec![], 0);
+    let (mut rows, mut row, mut w): (Vec<_>, Vec<(char, Option<usize>)>, usize) = (vec![], vec![], 0);
     for (c, i) in cells {
         if let (Some(i), '\n') = (i, c) {
             rows.push((std::mem::take(&mut row), i));
@@ -2967,9 +3092,17 @@ fn text_rows(input: &str, at: usize, cursor: bool, room: usize) -> Vec<(Vec<(cha
             continue;
         }
         let cw = c.width().unwrap_or(0);
-        if w + cw > room {
-            rows.push((std::mem::take(&mut row), i.unwrap_or(at)));
-            w = 0;
+        // a space past the row's end hangs there, in the box's spare column
+        if w + cw > room && !(c == ' ' && w <= room) {
+            // a row breaks between words where the word fits on the next one ("…in the compos" / "er box", design review
+            // 13): the word in progress goes down whole; one longer than a row breaks where it must
+            let carry = match row.iter().rposition(|(x, _)| *x == ' ') {
+                Some(k) if c != ' ' && k > 0 && k + 1 < row.len() => row.split_off(k + 1),
+                _ => vec![],
+            };
+            let end = carry.first().map_or(i, |&(_, j)| j).unwrap_or(at);
+            rows.push((std::mem::replace(&mut row, carry), end));
+            w = row.iter().map(|(x, _)| x.width().unwrap_or(0)).sum();
         }
         row.push((c, i));
         w += cw;
@@ -3033,12 +3166,12 @@ pub fn composer_index(v: &View, width: u16, col: u16, row: i32) -> Option<usize>
 /// Up or down a row of the draft as drawn (a long line wraps into several): the byte index under the cursor's column on
 /// the row above or below. None on the first or last row, where up and down go through the history.
 pub fn composer_step(v: &View, width: u16, down: bool) -> Option<usize> {
-    if !v.live || v.input.is_empty() || v.asking.is_some() {
+    if !v.live || v.input.is_empty() {
         return None;
     }
-    // the rows without the cursor's cell: it shifts the wrapping by a column, and the column drifted row by row
+    // the rows as drawn, the cursor's cell in them: up and down follow the rows on screen
     let at = cursor_at(v);
-    let rows = text_rows(&v.input, at, false, (width as usize).saturating_sub(4).max(1));
+    let rows = composer_layout(v, (width as usize).saturating_sub(4).max(1));
     let r = cursor_row(&rows, at);
     let (cells, end) = rows.get(if down { r + 1 } else { r.checked_sub(1)? })?;
     let col: usize = rows[r].0.iter().take_while(|(_, i)| i.is_some_and(|i| i < at)).map(|(c, _)| c.width().unwrap_or(0)).sum();
@@ -3102,15 +3235,17 @@ fn with_cursor(v: &View) -> String {
 
 /// Height of a bordered composer box for this input at this outer width.
 pub fn composer_height(v: &View, outer_width: u16) -> u16 {
-    if let Some(q) = &v.asking {
-        return asking_parts(q, outer_width.saturating_sub(2)).2.len() as u16 + 2 + 2;
-    }
+    // a question's rows: what asks, its note under it, the call, the answers
+    let ask = v.asking.as_ref().map_or(0, |q| {
+        let (_, (_, under), call) = asking_parts(q, outer_width.saturating_sub(2));
+        (under.len() + call.len()) as u16 + 2
+    });
     if !(v.live && !v.input.is_empty()) {
-        return 3;
+        return if ask > 0 { ask + 2 } else { 3 };
     }
     let room = (outer_width as usize).saturating_sub(2 + 4).max(1);
-    let rows: usize = with_cursor(v).split('\n').map(|l| l.width().div_ceil(room).max(1)).sum();
-    rows.clamp(1, COMPOSER_MAX_ROWS) as u16 + 2 + u16::from(!v.hints.is_empty() || v.toast.is_some() || v.input.starts_with('!') || at_nothing(v).is_some())
+    let rows = composer_layout(v, room).len();
+    ask + rows.clamp(1, COMPOSER_MAX_ROWS) as u16 + 2 + u16::from(!v.hints.is_empty() || v.toast.is_some() || v.input.starts_with('!') || at_nothing(v).is_some())
 }
 
 /// A row's two sides made to fit `width` by leaving whole parts out: the left's last first, then the right's, each down
@@ -3154,11 +3289,16 @@ pub fn split_row(f: &mut Frame, area: Rect, left: Line<'static>, right: Line<'st
 
 #[cfg(test)]
 mod tests {
+    /// A live cockpit view with nothing open.
+    fn live_view() -> View {
+        View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false }
+    }
+
     /// Under 110 columns the cockpit's header carries the cost, after the status: "● ready   ≈$0", not "≈$0● ready".
     #[test]
     fn the_narrow_header_puts_the_cost_after_the_status() {
         let s = Session::new("", "medium");
-        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
         term.draw(|f| { draw(f, &s, &v); }).unwrap();
         let top = (0..80).map(|x| term.backend().buffer()[(x, 0)].symbol().to_string()).collect::<String>();
@@ -3170,7 +3310,7 @@ mod tests {
     fn replay_strip_keeps_state_and_real_keys_without_a_live_composer() {
         let mut s = Session::new("Why does the retry test fail?", "medium");
         for design in [Design::Cockpit, Design::Zen] {
-            let mut v = View { design, expand_all: false, scroll: 0, clock_ms: 18_000.0, speed: 0.25, paused: false, live: false, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+            let mut v = View { design, expand_all: false, scroll: 0, clock_ms: 18_000.0, speed: 0.25, paused: false, live: false, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
             for (width, height) in [(40, 12), (80, 24), (120, 34), (160, 40)] {
                 for paused in [false, true] { for expanded in [false, true] { for initialized in [false, true] {
                     (v.paused, v.expand_all) = (paused, expanded);
@@ -3314,6 +3454,91 @@ mod tests {
         assert!(mid.contains("task number 20") && mid.contains("earlier") && mid.contains("more"), "{mid}");
     }
 
+    /// Rows break between items, each whole, a fold mark never alone, and the composer between words (design review 13).
+    #[test]
+    fn rows_break_between_items_and_the_composer_between_words() {
+        let text = |l: &Line| l.spans.iter().map(|s| s.content.to_string()).collect::<String>();
+        let tools = Line::from(vec![Span::raw("⌁ "), Span::raw(whole("ran 4 tools")), Span::raw(format!("   {}  {}   {}", whole("bash ×2"), whole("edit ×1"), whole("11 lines"))),
+            Span::raw(format!("   {}", whole("thought ~20 tok"))), Span::raw(format!("   {}", whole("2 failed")))]);
+        for width in [76usize, 60, 40] {
+            let rows: Vec<String> = wrap(tools.clone(), width, &[Span::raw("  ")]).iter().map(text).collect();
+            assert!(rows.iter().all(|r| !r.contains(NBSP) && r.width() <= width), "{width}: {rows:#?}");
+            assert!(rows.iter().any(|r| r.contains("2 failed")) && rows.iter().any(|r| r.contains("thought ~20 tok")), "{width}: {rows:#?}");
+        }
+        let done = Line::from(vec![Span::raw("✓ Done"), Span::raw(format!("  {}  {}", whole("2 min 03 s"), whole("cost not known"))), Span::raw(FOLD_SHUT)]);
+        let rows: Vec<String> = wrap(done, 33, &[]).iter().map(text).collect();
+        assert!(rows.iter().all(|r| r.trim() != "▸") && rows.last().unwrap().ends_with("cost not known  ▸"), "{rows:#?}");
+        let facts = ["↑ 15.0k", "5 calls", "cache 32% (4.8k)", "↓ 800", "1 file", "0.1s to first token", "424 end to end"].map(whole).join("\u{a0}· ");
+        let rows: Vec<String> = wrap(Line::from(format!("  so far: {facts}")), 56, &[Span::raw("  ")]).iter().map(text).collect();
+        assert!(rows.iter().any(|r| r.contains("0.1s to first token")) && rows.iter().any(|r| r.contains("424 end to end")) && rows.iter().all(|r| !r.trim_start().starts_with('·')), "{rows:#?}");
+        // the composer: words whole where they fit; a click and up/down land where the text is drawn
+        let typed = "this is a long message that will wrap onto a second line in the composer box and keep going";
+        let v = View { input: typed.into(), cursor: typed.len(), ..live_view() };
+        let rows = composer_layout(&v, 30);
+        let lines: Vec<String> = rows.iter().map(|(cells, _)| cells.iter().filter(|(_, i)| i.is_some()).map(|(c, _)| *c).collect()).collect();
+        assert!(lines.iter().all(|l| l.chars().count() <= 31), "{lines:#?}");
+        let words: Vec<&str> = typed.split(' ').collect();
+        assert!(lines.iter().all(|l| l.split_whitespace().all(|w| words.contains(&w))), "no word cut: {lines:#?}");
+        assert_eq!(lines.concat(), typed, "every character once");
+        for k in 0..rows.len() - 1 {
+            assert_eq!(rows[k].1, rows[k + 1].0.iter().find_map(|(_, i)| *i).unwrap(), "a click past a row's end lands on the next row's start");
+        }
+        assert_eq!(composer_height(&v, 36) as usize, rows.len().min(COMPOSER_MAX_ROWS) + 2, "the box as tall as the rows drawn");
+        // up and down from several places: a drawn row up or down, by the rows drawn with the cursor where it is
+        for word in ["this", "wrap", "second", "composer", "going"] {
+            for at in [typed.find(word).unwrap(), typed.find(word).unwrap() + 2] {
+                let here = View { input: typed.into(), cursor: at, ..live_view() };
+                let rows = composer_layout(&here, 30);
+                let row_of = |i: usize| rows.iter().position(|(cells, _)| cells.iter().any(|(_, j)| *j == Some(i))).unwrap_or(rows.len() - 1);
+                let r = cursor_row(&rows, at);
+                match composer_step(&here, 34, false) {
+                    Some(up) => assert_eq!(row_of(up) + 1, r, "up from {at}"),
+                    None => assert_eq!(r, 0, "up from the first row goes to the history"),
+                }
+                match composer_step(&here, 34, true) {
+                    Some(down) => assert_eq!(row_of(down), r + 1, "down from {at}"),
+                    None => assert_eq!(r, rows.len() - 1),
+                }
+            }
+        }
+        // a no-break space in the text itself: after a plain space a row may still break there
+        let rows: Vec<String> = wrap(Line::from("aaaa \u{a0}bbbb"), 6, &[]).iter().map(text).collect();
+        assert!(rows.len() == 2 && rows.iter().all(|r| r.width() <= 6), "{rows:?}");
+        let rows: Vec<String> = wrap(Line::from("aa x\u{a0}y"), 4, &[]).iter().map(text).collect();
+        assert_eq!(rows, ["aa ", "x y"], "an item in the text keeps together");
+    }
+
+    /// The model's name first, whose it is shortened or dropped, and no two rows alike: at 100 columns "Mistral …tral Mistral
+    /// Vibe" stood three times and "Nemotron 3…ree) OpenRouter" four (design review 13).
+    #[test]
+    fn model_names_win_over_providers_and_never_read_alike() {
+        let rows = [("Codestral 2508, mistral", "Mistral Vibe"), ("Mistral Large 4, mistral", "Mistral Vibe"), ("Mistral Medium 3.5, mistral", "Mistral Vibe"),
+            ("Mistral Large 4", "Mistral"), ("Nemotron 3 Super 120B A12B (free)", "OpenRouter"), ("Nemotron 3 Nano 30B A3B (free)", "OpenRouter"),
+            ("Nemotron 3 Nano 9B V2 (free)", "OpenRouter"), ("Nemotron 3 Nano 12B V2 VL (free)", "OpenRouter"), ("DeepSeek V4.1 Flash 1017", ""),
+            ("DeepSeek V4.1 Flash 1017", "Mistral"), ("DeepSeek V4.1 Flash 1017", "OpenRouter"), ("GLM-5.3", "Mistral Vibe")];
+        // a provider and its region's twin, one model at both
+        let twins = [("MiniMax M3", "MiniMax Plan"), ("MiniMax M3", "MiniMax Plan China"), ("Kimi K3.1", "Kimi Code"), ("Kimi K3.1", "Kimi Code China")];
+        for lw in [24usize, 20, 16] {
+            let shown: Vec<String> = model_cells(&twins, lw).iter().map(|(n, p)| format!("{n} {p}")).collect();
+            for (i, a) in shown.iter().enumerate() {
+                assert!(shown.iter().skip(i + 1).all(|b| a != b), "{lw}: twins read alike: {shown:#?}");
+            }
+        }
+        for lw in [26usize, 20, 14] {
+            let cells = model_cells(&rows, lw);
+            let shown: Vec<String> = cells.iter().map(|(n, p)| if p.is_empty() { n.clone() } else { format!("{n} {p}") }).collect();
+            assert!(shown.iter().all(|t| t.chars().count() <= lw), "{lw}: {shown:#?}");
+            for (i, a) in shown.iter().enumerate() {
+                assert!(shown.iter().skip(i + 1).all(|b| a != b), "{lw}: two rows read \"{a}\": {shown:#?}");
+            }
+            if lw == 26 {
+                assert_eq!(&shown[1], "Mistral Large 4, mistral", "the name whole, the provider dropped first");
+                assert_eq!(&shown[3], "Mistral Large 4 Mistral", "both where both fit");
+                assert_eq!(&shown[11], "GLM-5.3 Mistral Vibe");
+            }
+        }
+    }
+
     #[test]
     fn model_picker_shows_rows_effort_and_why_not() {
         let row = |label: &str, state: u8, stale: bool| ModelRow { label: label.into(), provider: String::new(), place: "SubRouter · kriora, shared-openai-pro-50, shared-openai-pro-52".into(),
@@ -3372,7 +3597,7 @@ mod tests {
             group: 60, in_models: true, effort: None };
         let lines = draw(&many, 80);
         assert!(lines.iter().any(|l| l.contains("Qwen3 Coder Plus 2025 09 ")), "the name whole at 80 columns: {lines:#?}");
-        assert!(lines.iter().any(|l| l.contains("›○ Alibaba Model S…")) && !lines.iter().any(|l| l.contains("All models")), "the selected provider in view: {lines:#?}");
+        assert!(lines.iter().any(|l| l.contains("›○ Alibaba Mod… 120")) && !lines.iter().any(|l| l.contains("All models")), "the selected provider in view, its count kept: {lines:#?}");
         // with a search typed, esc empties it first, and the hint says that
         assert!(draw(&two, 80).concat().contains("esc closes"));
         two.filter = "deepseek v4.1".into();
@@ -3407,7 +3632,7 @@ mod tests {
 
     #[test]
     fn the_command_menu_lists_commands_over_the_box() {
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: "/re".into(), cursor: 3, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: "/re".into(), cursor: 3, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         let cmds: Vec<String> = ["new", "resume", "review", "rewind", "security-review"].map(String::from).to_vec();
         v.menu = crate::editor::command_menu("re", &cmds, &[]);
         v.menu_sel = 1;
@@ -3491,7 +3716,7 @@ mod tests {
         s.limits = Some((12.0, 14.0));
         s.balance = Some(8.816);
         for d in [Design::Cockpit, Design::Zen] {
-            let v = View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+            let v = View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
             term.draw(|f| { draw(f, &s, &v); }).unwrap();
             let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
@@ -3502,7 +3727,7 @@ mod tests {
         }
         // on SubRouter, the cockpit says its balance whole
         (s.provider, s.price_m, s.credits) = (Some("SubRouter".into()), Some((0.1, 0.01, 0.4)), vec![("SubRouter".into(), Some("$8.82 left".into()))]);
-        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
         term.draw(|f| { draw(f, &s, &v); }).unwrap();
         let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
@@ -3518,7 +3743,7 @@ mod tests {
             result: Some("It runs sequentially.".into()), error: false, started_ms: 0.0, done_ms: Some(6700.0), sub: None }));
         s.blocks.push(Block::Tool(Tool { id: "b".into(), name: "Bash".into(), input: serde_json::json!({"command": format!("gh run view 1 --jq '{}'", "x".repeat(400))}),
             result: Some("ok".into()), error: false, started_ms: 0.0, done_ms: Some(4300.0), sub: None }));
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         let text = |v: &View| { let (l, _, owners) = transcript(&s, v, Design::Cockpit.theme(), &cockpit::OPTS, 100); (l.iter().map(|l| l.spans.iter().map(|x| x.content.to_string()).collect::<String>()).collect::<Vec<_>>(), owners) };
         let (closed, owners) = text(&v);
         // closed: the subagent as who and what for (its 25-row prompt hidden), the long command cut, both marked ▸
@@ -3671,7 +3896,7 @@ mod tests {
         assert!(links("[x](javascript:alert(1)) [y](https://a.b/\u{1b}]8;;)").iter().all(|(_, u)| u.is_none()), "only plain http(s) addresses");
         let mut s = Session::new("", "medium");
         s.blocks.push(Block::Text { text: "Sources: [GitHub changelog](https://github.blog/c)".into(), live: false });
-        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20)).unwrap();
         let mut areas = None;
         term.draw(|f| areas = Some(draw(f, &s, &v))).unwrap();
@@ -3693,7 +3918,7 @@ mod tests {
     #[test]
     fn the_session_picker_lists_and_marks_the_selected_one() {
         let s = Session::new("", "medium");
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         v.sessions = Some(SessionsPanel { rows: vec!["8m ago · 2 messages · review PR 1370  (4cb8a388)".into(), "2h ago · 5 messages · fix the login  (aa11bb22)".into()], selected: 1 });
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
         term.draw(|f| { draw(f, &s, &v); }).unwrap();
@@ -3705,7 +3930,7 @@ mod tests {
     #[test]
     fn background_tasks_show_live_under_the_transcript() {
         let s = Session::new("", "medium");
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 400.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 400.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         let row = |agent: &str, kind: &str, secs, tokens, tools, doing: &str| TaskRow { kind: kind.into(), description: "Tick workflows loss window check".into(), status: "running".into(), secs, output: String::new(), agent: agent.into(), tokens, tools, doing: doing.into() };
         assert!(transcript(&s, &v, Design::Cockpit.theme(), &cockpit::OPTS, 100).0.is_empty(), "nothing while none run");
         v.running = vec![row("explorer", "local_agent", 72, 21_129, 3, "Running Show Ledger tick workflow"), row("", "local_bash", 12, 0, 0, "")];
@@ -3744,7 +3969,7 @@ mod tests {
     #[test]
     fn files_panel_totals_and_the_diff_view() {
         let s = Session::new("", "medium");
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         v.changed = (0..12).map(|i| Changed { path: format!("shared/src/testing/file{i}.ts"), added: 10 + i, removed: i, diff: None }).collect();
         let text = |v: &View| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 40)).unwrap();
@@ -3766,7 +3991,7 @@ mod tests {
     fn key_hints_fit_whole_and_point_to_the_rest() {
         assert_eq!(fitted_keys("a · bb · cc", 100), "a · bb · cc");
         assert_eq!(fitted_keys("a · bb · cc", 16), "a · /keys all", "never a hint cut in half");
-        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         let line: String = composer_line(&v, Design::Cockpit.theme(), "›", "Message tazuna…", 90).spans.iter().map(|s| s.content.to_string()).collect();
         assert!(line.width() <= 90 && line.ends_with("/keys all"), "{line}");
         let mut v = v;
@@ -3777,7 +4002,7 @@ mod tests {
 
     #[test]
     fn composer_grows_with_lines_and_keeps_the_latest() {
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         let th = Design::Cockpit.theme();
         assert_eq!(composer_height(&v, 40), 3, "empty: one row");
         v.input = "first\nsecond".into();
@@ -3805,7 +4030,7 @@ mod tests {
     fn up_and_down_walk_the_rows_a_long_line_wraps_into() {
         // the user's case: a long last line wrapping past the box's rows, the cursor at a row's end
         let th = Design::Cockpit.theme();
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         let line = "abcdefghij".repeat(20); // 200 chars: 6 rows of 34 at width 38 (room 34)
         v.input = format!("one\ntwo\n{line}");
         v.cursor = 8 + 34; // the end of the long line's first row
@@ -3837,7 +4062,7 @@ mod tests {
 
     #[test]
     fn a_click_lands_where_the_text_is_drawn() {
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: "hello world\nsecond".into(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: "hello world\nsecond".into(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         // cursor at 0 is drawn as a cell before "h": columns 3 (cursor), 4 (h) ...
         assert_eq!(composer_index(&v, 38, 3, 0), Some(0));
         assert_eq!(composer_index(&v, 38, 4 + 6, 0), Some(6), "the w of world");
@@ -3870,7 +4095,7 @@ mod tests {
     fn cockpit_centers_its_reading_lane_and_hit_targets_inside_the_original_frame() {
         let mut s = Session::new("", "medium");
         s.blocks.push(Block::Text { text: "Read [the guide](https://example.com/guide).\n\n```rust\nlet answer = 42;\n```".into(), live: false });
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         for width in [80, 109, 110, 120, 130, 131, 132, 175] {
             for live in [true, false] {
                 v.live = live;
@@ -3903,7 +4128,7 @@ mod tests {
         }
         s.turn_usage = (0..40).map(|i| crate::session::Usage { input: 10, cache_write: 100, cache_read: 50_000, output: 200 + 300 * (i % 7) }).collect();
         s.calls.push(crate::session::CallTime { ttft_ms: Some(1500.0), gen_ms: 10_000.0, out: 12_000, total_ms: 11_500.0 });
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         let render = |s: &Session, v: &View, width: u16, height: u16| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
             let mut areas = Areas::default();
@@ -3966,7 +4191,7 @@ mod tests {
         let mut s = Session::new("", "medium");
         let on = |s: &mut Session, e: serde_json::Value, at: f64| s.apply(&e, at);
         on(&mut s, serde_json::json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "c1", "name": "edit", "input": {"path": "main.rs", "old": "a", "new": "b"}}]}}), 1.0);
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         let render = |s: &Session, v: &View| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
             term.draw(|f| { draw(f, s, v); }).unwrap();
@@ -3995,7 +4220,8 @@ mod tests {
         // the last try fails: the block and the status say failed
         on(&mut s, serde_json::json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "[provider error: HTTP 429: Rate limit reached (rate_limit_error)]"}), 9000.0);
         assert_eq!(activity(&s, &v, th), ("✗", "failed".to_string(), th.err));
-        assert!(render(&s, &v).contains("gave up after 3 tries"));
+        let screen = render(&s, &v);
+        assert!(screen.contains("gave up after 3 tries"), "{screen}");
     }
 
     /// Design review 11: zen asked about an edit without its diff, showed one row of a draft and no completions, called a
@@ -4005,7 +4231,7 @@ mod tests {
         let mut s = Session::new("", "medium");
         let on = |s: &mut Session, e: serde_json::Value, at: f64| s.apply(&e, at);
         on(&mut s, serde_json::json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "c1", "name": "edit", "input": {"path": "main.rs", "old": "old line", "new": "new line"}}]}}), 1.0);
-        let mut v = View { design: Design::Zen, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: Some("edit: main.rs".into()), mode: "ask".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let mut v = View { design: Design::Zen, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: Some("edit: main.rs".into()), mode: "ask".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         let render = |s: &Session, v: &View| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
             term.draw(|f| { draw(f, s, v); }).unwrap();
@@ -4055,7 +4281,7 @@ mod tests {
     #[test]
     fn a_question_marks_its_own_call_and_small_screens_keep_what_matters() {
         let on = |s: &mut Session, e: serde_json::Value, at: f64| s.apply(&e, at);
-        let view = |d: Design| View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "ask".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let view = |d: Design| View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "ask".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         let render = |s: &Session, v: &View, w: u16, h: u16| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
             term.draw(|f| { draw(f, s, v); }).unwrap();
@@ -4158,6 +4384,34 @@ mod tests {
         assert_eq!(wrapped.find(|c: char| c.is_alphanumeric()), first.find("Review"), "the later line under the text, not under 55%");
     }
 
+    /// /usage at 80 columns: the meters' bars shrink before a reset is cut, and a note's wrapped line is inside the panel
+    /// (design review 13).
+    #[test]
+    fn usage_at_80_columns_keeps_resets_and_wraps_its_notes() {
+        let v = serde_json::json!({"plan": [{"label": "Current session", "used": 15.0, "resets": ""}, {"label": "Current week (all models)", "used": 40.0, "resets": ""}],
+            "plan_notes": ["Last 24h · 1179 requests · 7 sessions", "Top MCP servers: lean 22% · playwright 2% · claude.ai Atlassian Rovo 1%"]});
+        let mut rows: Vec<(String, Tone)> = crate::accounts::lines(&v).into_iter().map(|(t, tone, _)| (t, tone)).collect();
+        // claude's resets as the desktop words them (not read from the clock here)
+        for r in rows.iter_mut().filter(|r| r.0.contains('█') || r.0.contains('░')) {
+            r.0.push_str("   resets in 4 h 13 min");
+        }
+        let n = rows.len();
+        let p = ListPanel { title: "usage".into(), head: String::new(), rows, scroll: 0, links: vec![None; n], link_from: 22, hscroll: 0, details: vec![None; n], open: Default::default(), pending: false };
+        // the band at 80 columns, and a narrower one where the note wraps
+        for w in [80u16, 66] {
+            let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, 24)).unwrap();
+            term.draw(|f| { draw_list(f, &p, Design::Cockpit.theme(), 0.0, f.area()); }).unwrap();
+            let screen: Vec<String> = (0..24).map(|y| (0..w).map(|x| term.backend().buffer()[(x, y)].symbol().to_string()).collect()).collect();
+            let shown = screen.join("\n");
+            assert_eq!(shown.matches("resets in 4 h 13 min").count(), 2, "{shown}");
+            let words: String = shown.replace('│', " ").split_whitespace().collect::<Vec<_>>().join(" ");
+            assert!(words.contains("claude.ai Atlassian Rovo 1%"), "the note whole: {shown}");
+            assert!(!shown.contains('…') && !shown.contains("sideways"), "nothing cut: {shown}");
+            let bar = |t: &str| screen.iter().find(|l| l.contains(t)).and_then(|l| l.find('━').or(l.find('─')));
+            assert_eq!(bar("5-hour session"), bar("Week, all models"), "the bars still line up: {shown}");
+        }
+    }
+
     #[test]
     fn fetch_rows_show_a_title_link_and_scroll_sideways() {
         let tool = |result: &str, url: &str| Tool { id: "f".into(), name: "fetch".into(), input: serde_json::json!({"url": url}), result: Some(result.into()), error: false, started_ms: 0.0, done_ms: Some(1.0), sub: None };
@@ -4197,7 +4451,7 @@ mod tests {
         // a notice longer than NOTICE_CHARS: cut and clickable, opened all of it
         let mut s = Session::new("", "medium");
         s.blocks.push(Block::Notice { text: "x".repeat(300), error: false, ended: false });
-        let lines = |open: bool| block_lines(&s.blocks[0], 0, &s, &View { design: Design::Cockpit, expand_all: open, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 }, Design::Cockpit.theme(), &cockpit::OPTS, open, 400).iter().map(|(l, _)| l.to_string()).collect::<String>();
+        let lines = |open: bool| block_lines(&s.blocks[0], 0, &s, &View { design: Design::Cockpit, expand_all: open, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false }, Design::Cockpit.theme(), &cockpit::OPTS, open, 400).iter().map(|(l, _)| l.to_string()).collect::<String>();
         assert!(lines(false).contains("click to show") && !lines(true).contains("click to show"));
     }
 
@@ -4224,14 +4478,29 @@ mod tests {
     #[test]
     fn a_question_shows_its_call_whole() {
         let (tool, note, call) = asking_parts("Bash: echo one; vm_stat | head -12; sysctl vm.swapusage  (always = this command)", 40);
-        assert_eq!((tool.as_str(), note.as_str()), ("Bash", "always = this command"));
+        assert_eq!((tool.as_str(), note), ("Bash", ("always = this command".to_string(), vec![])), "the note beside the question");
         assert_eq!(call.join(" "), "echo one; vm_stat | head -12; sysctl vm.swapusage", "nothing cut at 40 columns: {call:?}");
         let long = format!("bash: {}  (once only: the agent is answering a chat's question)", "word ".repeat(200));
         let (_, note, call) = asking_parts(&long, 40);
-        assert!(call.len() == ASK_ROWS && call.last().unwrap().ends_with('…') && note.starts_with("once only"));
-        let rows = asking_rows(&long, Design::Cockpit.theme(), 40);
-        assert_eq!(rows.len(), ASK_ROWS + 2, "what asks, the call, the answers");
+        assert!(call.len() == ASK_ROWS && call.last().unwrap().ends_with('…') && note.0.is_empty() && note.1[0].starts_with("once only"));
+        let rows = asking_rows(&long, Design::Cockpit.theme(), 40, false, false, false);
+        assert_eq!(rows.len(), 1 + note.1.len() + ASK_ROWS + 1, "what asks, its note under it, the call, the answers");
         assert!(!rows.last().unwrap().spans.iter().any(|s| s.content.contains("always")), "once only: no always");
+        // what is typed while it waits stays in the box under it, and the answers wait for an empty box (design review 13)
+        let v = View { asking: Some(long.clone()), input: "explain closures".into(), cursor: 16, ..live_view() };
+        let rows: Vec<String> = composer_rows(&v, Design::Cockpit.theme(), "›", "", 40).iter().map(|l| l.spans.iter().map(|s| s.content.to_string()).collect()).collect();
+        assert!(rows.iter().any(|r| r.contains("answer with an empty box")) && rows.last().unwrap().contains("explain closures"), "{rows:#?}");
+        assert_eq!(composer_height(&v, 42) as usize, rows.len() + 2, "the box holds the question and the draft");
+        // auto's reason wraps whole at any width: it was cut at the edge at 100 columns (design review 13)
+        let q = "bash: git push --force origin main  (once only · auto asks: git push --force: rewrites the remote's history)";
+        for outer in [100u16, 80, 60] {
+            let v = View { asking: Some(q.into()), ..live_view() };
+            let rows = asking_rows(q, Design::Cockpit.theme(), outer - 2, true, false, false);
+            let text: Vec<String> = rows.iter().map(|l| l.spans.iter().map(|s| s.content.to_string()).collect()).collect();
+            assert!(text.iter().all(|t| t.width() < (outer - 2) as usize), "{outer}: {text:#?}");
+            assert!(text.join(" ").split_whitespace().collect::<Vec<_>>().join(" ").contains("auto asks: git push --force: rewrites the remote's history"), "{outer}: {text:#?}");
+            assert_eq!(composer_height(&v, outer) as usize, rows.len() + 2, "{outer}: the box holds every row");
+        }
     }
 
     #[test]
@@ -4264,7 +4533,7 @@ mod tests {
     #[test]
     fn a_modal_fades_what_is_behind_it() {
         let s = Session::new("", "medium");
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         let th = Design::Cockpit.theme();
         let cell = |v: &View| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();

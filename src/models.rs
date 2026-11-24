@@ -227,11 +227,15 @@ pub fn providers(cs: &[Choice]) -> Vec<(String, Vec<usize>)> {
 
 /// A Claude row when the claude CLI is not signed in (`catalog`).
 pub const CLAUDE_SIGNED_OUT: &str = "not signed in: run `claude auth login` in a terminal";
+/// Claude's rows without the claude CLI, and a message that could not start it (design review 13).
+pub const CLAUDE_NOT_INSTALLED: &str = "claude not installed: Claude Code is at https://claude.com/claude-code";
+pub const CLAUDE_MISSING: &str = "Claude Code (the `claude` command) is not installed or not on PATH. Install it from \
+    https://claude.com/claude-code, or pick another model with /model.";
 
 /// Why a row cannot be picked as it is, in words that say what to do; None when it can.
 pub fn why_not(c: &Choice) -> Option<String> {
     let Some((url, var, _)) = c.route.as_ref() else {
-        return (c.state == State::NoKey).then(|| CLAUDE_SIGNED_OUT.to_string());
+        return (c.state == State::NoKey).then(|| if crate::accounts::claude_installed() { CLAUDE_SIGNED_OUT } else { CLAUDE_NOT_INSTALLED }.to_string());
     };
     let host = host_of(url);
     match c.state {
@@ -335,8 +339,9 @@ fn catalog_rows(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels,
     } else {
         " · your own key decides the providers: tazuna subrouter --apply pins these on it, --manage makes a key with them"
     };
-    // an installed claude that is not signed in: its rows as a sign-in's are when signed out (why_not says what to do)
-    let claude = if crate::accounts::claude_logged_in() == Some(false) { State::NoKey } else { State::Ready };
+    // claude not installed, or installed and not signed in: its rows as a sign-in's are when signed out (why_not says what
+    // to do)
+    let claude = if !crate::accounts::claude_installed() || crate::accounts::claude_logged_in() == Some(false) { State::NoKey } else { State::Ready };
     let mut out: Vec<Choice> = CLAUDE.iter().map(|(m, l)| Choice {
         model: m.to_string(),
         label: l.to_string(),
@@ -1344,7 +1349,7 @@ fn list_choices(l: &Login, list: &Value, md: &str, file: &Value, trusted: &impl 
     list["data"].as_array().into_iter().flatten().filter_map(|m| m["id"].as_str())
         // chat models only: a plan's list also holds image, video and voice models (Qwen Cloud's: wan3.0-video, qwen-audio-…)
         .filter(|id| { let id = id.to_lowercase(); !["claude", "embed", "image", "video", "audio", "tts", "asr", "realtime", "rerank", "t2v", "i2v", "r2v"].iter().any(|w| id.contains(w)) })
-        .map(|id| login_row(l, id, None, levels(id), file, trusted)).collect()
+        .map(|id| login_row(l, id, l.price, levels(id), file, trusted)).collect()
 }
 
 /// The API a provider's models all take ("chat", "responses", "messages"), by its URL; None: by the model's name.
@@ -1677,6 +1682,9 @@ pub struct Login {
     /// whose effort levels its models take, by id; an id that catalog lacks gets every level (the engine steps a refused
     /// one down). Empty: no effort to choose, as before.
     pub levels: &'static str,
+    /// What every model there costs (USD per million: input, output, cached input), for a `Source::List` provider whose
+    /// /models lists none and whose page states one price for all (Caffeine). None: no price, as before.
+    pub price: Option<(f64, f64, Option<f64>)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -1711,7 +1719,7 @@ impl Login {
     }
 }
 
-const P: Login = Login { name: "", vars: &[], url: "", page: "", place: "its dashboard (API keys)", example: "", source: Source::List, api: "chat", note: "", plan: false, levels: "" };
+const P: Login = Login { name: "", vars: &[], url: "", page: "", place: "its dashboard (API keys)", example: "", source: Source::List, api: "chat", note: "", plan: false, levels: "", price: None };
 const OWN: Login = Login { source: Source::Own, api: "", ..P };
 use Source::ModelsDev as Md;
 
@@ -1804,6 +1812,12 @@ pub const LOGINS: &[Login] = &[
             page: "https://home.qwencloud.com/api-keys?region=ap-southeast-1", place: "Qwen Cloud's API keys page (Token Plan, Singapore)",
             example: "sk-sp-...", plan: true, levels: "alibaba-token-plan",
             note: "Qwen Cloud allows the Token Plan only for interactive use in coding tools, not scripts or app backends: the key may be suspended", ..P },
+    // Caffeine Inference (caffeine.ai/inference, 2026-11-24; the user has its credits): a key of its own on
+    // inference.caffeine.ai, Chat Completions, Messages and Responses at the same /v1, one model id (`router`) that picks the
+    // model; $0.2 in, $0.05 cached, $0.5 out per million, one price for all (its page). It may train on anonymised prompts
+    // and sends them on to OpenRouter and Databricks (its privacy policy), so it is not trusted until the user says so.
+    Login { name: "Caffeine", vars: &["CAFFEINE_API_KEY"], url: "https://inference.caffeine.ai/v1", page: "https://caffeine.ai/inference/api-keys",
+            place: "Caffeine Inference's API keys page", price: Some((0.2, 0.5, Some(0.05))), ..P },
     Login { name: "xAI", vars: &["XAI_API_KEY"], url: "https://api.x.ai/v1", page: "https://console.x.ai/team/default/api-keys",
             place: "the xAI console (API keys)", example: "xai-...", api: "responses", source: Md("xai"), ..P },
     Login { name: "OpenAI", vars: &["OPENAI_API_KEY"], url: "https://api.openai.com/v1", page: "https://platform.openai.com/api-keys",
@@ -2502,6 +2516,19 @@ mod tests {
                     api_of("https://opencode.ai/inference/openai/v1"), api_of("http://127.0.0.1:11434/v1"), api_of("https://subrouter.ai/v1")],
                    [Some("responses"), Some("responses"), Some("messages"), Some("chat"), None, Some("chat"), None],
                    "OpenCode, Command Code and tazuna's own providers: by the model's name, as before");
+    }
+
+    #[test]
+    fn caffeines_router_carries_the_price_its_page_states() {
+        let caffeine = LOGINS.iter().find(|l| l.name == "Caffeine").unwrap();
+        assert_eq!((caffeine.url, caffeine.vars[0], api_of(caffeine.url)), ("https://inference.caffeine.ai/v1", "CAFFEINE_API_KEY", Some("chat")));
+        let list = serde_json::json!({"data": [{"id": "router"}]});
+        let rows = list_choices(caffeine, &list, "", &serde_json::json!({}), &|_: &str| false);
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        assert_eq!((r.model.as_str(), r.place.as_str(), r.route.as_ref().unwrap().2.as_str()), ("router", "Caffeine", "0.2,0.05,0.5"));
+        assert!(!r.price.is_empty() && !r.note.contains("no price listed"), "{} · {}", r.price, r.note);
+        assert!(matches!(r.state, State::NoKey | State::Untrusted), "not trusted until the user says so: {:?}", r.state);
     }
 
     #[test]

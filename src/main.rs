@@ -655,7 +655,14 @@ fn main() -> Result<()> {
             live.user_settings = a.user_settings;
             // `/mcp on|off` is remembered for the next live sessions; `--run` keeps only the flag (benches stay as given)
             live.connectors = a.connectors || labels::dir().is_ok_and(|d| d.join("connectors").exists());
-            let (lane, boss) = lane(&a, true)?;
+            let (mut lane, boss) = lane(&a, true)?;
+            // `--model` naming a provider's model, or `-c` of an own-loop conversation: on that provider, as /model and /resume
+            // pick it (`picked_route`); it went to claude, under that model's name (design review 13)
+            let picked = picked_route(&a, &base)?;
+            if let Some((c, effort)) = &picked {
+                // the model asked for, as /model gives it: no hand-over to the router's stronger lane
+                (lane.model, lane.effort, lane.escalate) = (models::resolve(c, effort), effort.clone(), None);
+            }
             let route = live.set_lane(lane);
             live.verify = a.verify.clone();
             live.bash_cap = a.bash_cap;
@@ -670,6 +677,9 @@ fn main() -> Result<()> {
             live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
             live.review_key = a.review_key.clone();
             live.provider = a.provider.clone();
+            if let Some((url, key, price)) = picked.and_then(|(c, _)| c.route) {
+                (live.provider, live.price) = (Some((url, key)), Some(price).filter(|p| !p.is_empty()));
+            }
             live.project_instructions = a.project_instructions;
             live.cache_ttl = a.cache_ttl.clone();
             live.repo_map = a.repo_map;
@@ -712,10 +722,35 @@ fn main() -> Result<()> {
             // the pointer back to normal, in case the window closed over a link
             let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\x1b]22;default\x1b\\");
             ratatui::restore();
-            println!("session saved: {}", live.rec_path.display());
+            let (rec, sid) = (live.rec_path.clone(), live.session_id().map(String::from));
+            let logged = live.logs.last().and_then(|l| l["meta"]["session_id"].as_str()).map(String::from);
+            drop(live); // its recording closed, so Windows can remove it
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let found = |id: &str| previous_session(&base, &cwd, Some(id)).filter(|(p, _)| p == id)
+                .map(|_| previous_session(&base, &cwd, None).is_some_and(|(p, _)| p == id));
+            if let Some(line) = exit_line(&rec, [sid.as_deref(), logged.as_deref()], found) {
+                println!("{line}");
+            }
             r
         }
     }
+}
+
+/// What the terminal says as tazuna ends: how to come back to the conversation, for the first of `ids` (the session's,
+/// then the last one this process logged: a quit mid-run, or after /new) the run log can find (`found`: whether `-c` finds
+/// it, None: not logged). A recording of nothing (its route and mode only) is not kept: quitting at once left such a stub,
+/// and "session saved: …" for it (design review 13). One with a plan reading stays: the meters read it (`last_limits`).
+fn exit_line(rec: &std::path::Path, ids: [Option<&str>; 2], found: impl Fn(&str) -> Option<bool>) -> Option<String> {
+    // (the header line, `{"t":0,"prompt":…}`, holds no event)
+    let empty = std::fs::read_to_string(rec).unwrap_or_default().lines().all(|l| match serde_json::from_str::<serde_json::Value>(l) {
+        Ok(v) if v.get("e").is_none() => true,
+        Ok(v) => matches!(v["e"]["type"].as_str(), Some("harness_route" | "harness_mode")),
+        Err(_) => false,
+    });
+    if empty {
+        let _ = std::fs::remove_file(rec);
+    }
+    ids.into_iter().flatten().find_map(|id| found(id).map(|latest| if latest { "resume with: tazuna -c".to_string() } else { format!("resume with: tazuna --resume {id}") }))
 }
 
 /// The router's lane, unless --model/--effort pin it; then the profile, and trust for repos whose config runs code.
@@ -1494,8 +1529,9 @@ fn app_server(a: &Args) -> Result<()> {
         v["edit_points"] = json!(edit_points(s, live).iter().enumerate().map(|(cp, b)| json!({"cp": cp, "block": b})).collect::<Vec<_>>());
         // the oldest open permission question, as the terminal shows it (text made safe), and how many wait behind it
         v["asking"] = live.pending.front().map_or(json!(null), |req| {
-            let (tool, what, note) = question_parts(req);
-            json!({"tool": tool, "what": what, "once": note.starts_with("once only"), "note": note, "queued": live.pending.len() - 1, "reviewing": live.reviewer && req["request_id"].as_str() == reviewing.borrow().as_deref()})
+            let mut a = asking_view(req);
+            (a["queued"], a["reviewing"]) = (json!(live.pending.len() - 1), json!(live.reviewer && req["request_id"].as_str() == reviewing.borrow().as_deref()));
+            a
         });
         let mut o = out.lock();
         let _ = writeln!(o, "{v}");
@@ -1529,6 +1565,8 @@ fn app_server(a: &Args) -> Result<()> {
                         Some("send") => {
                             // a mode just picked goes first: the message runs in it
                             settle_mode(&mut live, &mut s, &mut pending_mode, true);
+                            // where the send's own notices begin, for a refusal's (`rejected` in the view)
+                            let before = s.blocks.len();
                             let text = cmd["text"].as_str().unwrap_or_default();
                             let (text, forced) = match text.strip_prefix("/agent ") {
                                 Some(rest) => (rest.trim(), true),
@@ -1570,6 +1608,7 @@ fn app_server(a: &Args) -> Result<()> {
                                 let text = model_restore.as_ref().and(cmd["text"].as_str())?;
                                 Some(json!({"type": "send_rejected", "text": text}))
                             }) {
+                                s.mark_rejected(before);
                                 let mut o = out.lock();
                                 let _ = writeln!(o, "{event}");
                                 let _ = o.flush();
@@ -1730,6 +1769,7 @@ fn app_server(a: &Args) -> Result<()> {
                             }
                         }
                         Some("routed") => {
+                            let before = s.blocks.len();
                             let text = cmd["text"].as_str().unwrap_or_default().to_string();
                             // the agent can still refuse it here (claude not found): the draft goes back as from "send"
                             let accepted = if let Some(why) = untrusted_in_use(&live) {
@@ -1744,6 +1784,7 @@ fn app_server(a: &Args) -> Result<()> {
                                 agent_send(&mut live, &mut s, &text, &cwd, &mut turn, &mut undo_note, false)
                             };
                             if !accepted && let Some(event) = send_rejected(&cmd["draft"]) {
+                                s.mark_rejected(before);
                                 let mut o = out.lock();
                                 let _ = writeln!(o, "{event}");
                                 let _ = o.flush();
@@ -1944,7 +1985,7 @@ fn app_server(a: &Args) -> Result<()> {
                                     };
                                     match files_back.and_then(|n| live.rewind(cp, false, true).map(|e| (n, e))) {
                                         Ok((n, (t, e))) => {
-                                            s.blocks.truncate(block);
+                                            s.truncate(block);
                                             s.changes.retain(|t| t.at_block < block);
                                             undo_note = None;
                                             s.apply(&e, t);
@@ -2457,7 +2498,7 @@ impl Fx {
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -2510,6 +2551,38 @@ fn agent_session(s: &Session, t: &live::BgTask, terminal: bool) -> Session {
 
 /// A permission question ignores keys for this long after it appears.
 const ANSWER_DELAY_MS: u64 = 600;
+/// ...and a key that came this soon after the key before it: a typing burst. The "a" of "explain", typed on as the question
+/// appeared, approved `git push --force` with always (design review 13): an answer counts only after a pause.
+const TYPING_GAP_MS: u64 = 800;
+
+/// A key on an open permission question: the answer it gives (allow, always), and whether "allow once" stands chosen after
+/// it. y(es), a(lways), n(o)/esc; `counts`: answer_key_counts. On a destructive command auto asked about (`risky`, live.rs)
+/// y only chooses "allow once", whatever came before it, and enter confirms it; any other key lets the choice go, n and esc
+/// still say no at once. A message typed into the question can start with "y" (design review 13).
+///
+/// Asked only while the box is empty (with a draft every key types). The third value: the key is typing, and goes on to the
+/// box as any key does, after what goes in first: the "y" a chosen "allow once" was, so "yes but…" keeps its y (text typed
+/// while a question waited was thrown away, design review 13). Esc in a typing burst neither says no nor stops the run.
+fn question_key(code: KeyCode, risky: bool, chosen: bool, counts: bool) -> (Option<(bool, bool)>, bool, Option<&'static str>) {
+    let typed = Some(if chosen { "y" } else { "" });
+    match code {
+        // the confirmation may follow the y at once
+        KeyCode::Enter if risky && chosen => (Some((true, false)), false, None),
+        KeyCode::Esc if !counts => (None, false, None),
+        _ if !counts => (None, false, typed),
+        KeyCode::Char('y') if risky => (None, true, None),
+        KeyCode::Char('n') | KeyCode::Esc => (Some((false, false)), false, None),
+        KeyCode::Char('y') if !risky => (Some((true, false)), false, None),
+        KeyCode::Char('a') if !risky => (Some((true, true)), false, None),
+        _ => (None, false, typed),
+    }
+}
+
+/// Whether a key may answer a question (or act on a sign-in's page): it has been up ANSWER_DELAY_MS, and the key is not part
+/// of a typing burst (`since_last`: the time since the key before it).
+fn answer_key_counts(shown_for: Duration, since_last: Option<Duration>) -> bool {
+    shown_for >= Duration::from_millis(ANSWER_DELAY_MS) && since_last.is_none_or(|d| d >= Duration::from_millis(TYPING_GAP_MS))
+}
 const QUIT_MS: u128 = 0; // the quit dissolve went in design review 10: tazuna ends at once
 
 fn run_replay(term: &mut ratatui::DefaultTerminal, mut replay: Replay, a: &Args) -> Result<()> {
@@ -2665,6 +2738,19 @@ fn question(req: &serde_json::Value) -> String {
     format!("{tool}: {what}  ({note})")
 }
 
+/// A permission question as the window's `asking` has it (its place in the queue added by the caller): `risky` where auto
+/// asks because the command is destructive (live.rs), whichever note won; the window read that from the note, and a
+/// hand-off's "once only: the agent is answering a chat's question" hid it (design review 13).
+fn asking_view(req: &serde_json::Value) -> serde_json::Value {
+    let (tool, what, note) = question_parts(req);
+    let mut a = json!({"tool": tool, "what": what, "once": note.starts_with("once only"), "note": note});
+    // and the rule it met, as the terminal says it after "auto asks:" (made safe to show)
+    if let Some(why) = req["request"]["risky"].as_str() {
+        (a["risky"], a["risky_why"]) = (json!(true), json!(session::shown(why, 120)));
+    }
+    a
+}
+
 /// A permission question's parts, each made safe to show: the tool, what it would do, and the note on "always". The app
 /// gets them apart, so it never has to cut the model's text out of the line.
 fn question_parts(req: &serde_json::Value) -> (String, String, String) {
@@ -2686,11 +2772,11 @@ fn question_parts(req: &serde_json::Value) -> (String, String, String) {
     } else if r["handoff"] == true {
         live::HANDOFF_ONCE.to_string()
     } else {
-        let always = format!("always = {}", if matches!(tool.as_str(), "Bash" | "bash" | "PowerShell") { "this command" } else { "this tool" });
-        // auto asks only about a destructive command: say which rule it met
+        // auto asks only about a destructive command: say which rule it met. Once only: "a" approved a force push for the
+        // whole session, defeating auto's guard (design review 13); the window hides Always for it (`once` in its asking)
         match r["risky"].as_str() {
-            Some(why) => format!("auto asks: {} · {always}", session::shown(why, 120)),
-            None => always,
+            Some(why) => format!("once only · auto asks: {}", session::shown(why, 120)),
+            None => format!("always = {}", if matches!(tool.as_str(), "Bash" | "bash" | "PowerShell") { "this command" } else { "this tool" }),
         }
     };
     (tool, what, note)
@@ -3294,7 +3380,8 @@ fn resume_choice(live: &live::Live, e: &Earlier) -> Option<models::Choice> {
 
 fn resume_in(cs: &[models::Choice], e: &Earlier) -> Option<models::Choice> {
     let own = e.id.starts_with("own-");
-    let fits = |c: &&models::Choice| c.route.is_some() == own && c.state == models::State::Ready;
+    // an unchecked route as /model and --model take it
+    let fits = |c: &&models::Choice| c.route.is_some() == own && matches!(c.state, models::State::Ready | models::State::Unchecked);
     // the own loop's on the provider it ran on: another provider listing the same model id is another account, price and
     // history format (with models.dev's providers many list one id, review 11); gone, it is shown, not continued
     // a sign-in's row only for a run that named that provider: a run logged before providers were (0.1.182) never moves
@@ -3504,8 +3591,11 @@ fn run_live(
     // mouse capture scrolls the transcript but keeps the terminal from selecting text; ctrl-s hands the mouse back
     let mut mouse = true;
     let mut ed = editor::Editor::with_history(labels::dir()?.join("history.jsonl"));
-    // when the current permission question first got a key
-    let mut asked_at: Option<Instant> = None;
+    // the question in front (its request id) and when it appeared; when the last key came, and whether it answered one;
+    // the question "allow once" was chosen on
+    let (mut asked_at, mut asked_id): (Option<Instant>, Option<serde_json::Value>) = (None, None);
+    let (mut last_key, mut answered): (Option<Instant>, bool) = (None, false);
+    let mut chosen: Option<serde_json::Value> = None;
     // mouse selection in the transcript: drag selects, release copies (on Windows ctrl+c does)
     let mut transcript = ratatui::layout::Rect::default();
     // the block on each transcript row, from the last frame: a click there opens or closes it, hovering shades it
@@ -3586,11 +3676,18 @@ fn run_live(
         .map(|o| String::from_utf8_lossy(&o.stdout).lines().take(50_000).map(String::from).collect())
         .unwrap_or_default();
     loop {
-        if live.pending.is_empty() {
-            asked_at = None;
-        } else if asked_at.is_none() {
-            asked_at = Some(Instant::now());
+        // the question in front, by its id: another one (answered, cleared, the next behind it) starts its own clock
+        let front_id = live.pending.front().map(|r| r["request_id"].clone());
+        if front_id != asked_id {
+            (asked_id, asked_at) = (front_id.clone(), front_id.as_ref().map(|_| Instant::now()));
         }
+        // "allow once" holds for its own question while the box stays empty: typing or a paste lets it go, so a later enter
+        // in an empty box approves nothing (design review 13)
+        if chosen.is_some() && (chosen != front_id || !ed.text.is_empty()) {
+            chosen = None;
+        }
+        v.confirm = chosen.is_some();
+        v.ask_risky = live.pending.front().is_some_and(|r| r["request"]["risky"].is_string());
         // /create: when the agent's turn on it has ended, what it made is checked (a problem goes back to it)
         if let Some((dir, _)) = creation_step(live, &mut s, &mut creating) {
             made = Some(dir);
@@ -3675,6 +3772,10 @@ fn run_live(
         last = Instant::now();
         for (t, e) in live.poll() {
             s.apply(&e, t);
+            // a queued message the stop gave back (live.rs stop): into the box, after what is typed there
+            if e["type"] == "harness_unqueued" && let Some(text) = e["draft"].as_str().or(e["text"].as_str()) {
+                ed.set(if ed.text.is_empty() { text.to_string() } else { format!("{}\n{text}", ed.text) });
+            }
             if e["type"] == "result" && let Some(r) = e["result"].as_str() {
                 last_reply = r.to_string();
                 // the agent answered: a follow-up continues its work, unless it answered a chat's question (live.rs handed)
@@ -3878,6 +3979,7 @@ fn run_live(
                 continue;
             }
             Event::Paste(text) => {
+                chosen = None;
                 match login.as_mut().and_then(|l| l.form.as_mut()) {
                     Some(typed) => typed.push_str(text.trim()),
                     None => ed.insert(&paste_text(&text, || paste_image().ok(), platform::clipboard_file)),
@@ -4035,6 +4137,9 @@ fn run_live(
             Event::Key(k) if k.kind == KeyEventKind::Press => k,
             _ => continue,
         };
+        // the time since the key before this one: a key in a typing burst answers no question (answer_key_counts)
+        let since_key = last_key.replace(Instant::now()).map(|t| t.elapsed());
+        let after_answer = std::mem::take(&mut answered);
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         // text selected in the composer: ctrl-c (cmd-c) copies it, typing replaces it, backspace and delete remove it
@@ -4056,7 +4161,8 @@ fn run_live(
         }
         sel = None;
         // an open permission question owns the keyboard: only y(es), a(lways), n(o)/esc answer it, every other key is
-        // ignored, and keys in the first moment after it appears count for nothing (typing must not approve by accident)
+        // ignored, and keys in the first moment after it appears or in a typing burst count for nothing (typing must not
+        // approve by accident: answer_key_counts)
         // ctrl-c and ctrl-d still stop or quit: stopping answers every open question with no
         let stop_key = ctrl && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'));
         // /login owns the keyboard while open: the providers, then a provider's page with its key being typed
@@ -4065,7 +4171,7 @@ fn run_live(
                 (Some(_), KeyCode::Esc) => lp.form = None,
                 // a sign-in's page (oauth.rs): enter signs in, s signs out
                 (Some(_), code) if !models::LOGINS[lp.sel - 1].sign_in().is_empty() => {
-                    let early = lp.shown.is_some_and(|t| t.elapsed() < Duration::from_millis(ANSWER_DELAY_MS));
+                    let early = lp.shown.is_some_and(|t| !answer_key_counts(t.elapsed(), since_key));
                     if let Some(text) = (!early).then(|| sign_in_key(&models::LOGINS[lp.sel - 1], code, &status_tx)).flatten() {
                         s.apply(&json!({"type": "harness_info", "text": text}), live.elapsed_ms());
                         login = None;
@@ -4114,8 +4220,9 @@ fn run_live(
                 (None, KeyCode::Esc) => login = None,
                 (None, KeyCode::Enter) if !login_shown(&lp.filter).contains(&lp.sel) => {}
                 (None, KeyCode::Enter) if lp.sel == 0 => {
-                    s.apply(&json!({"type": "harness_info", "text": "Claude runs on the claude CLI's own login (your subscription): if \
-                        it is not signed in, run `claude auth login` in a terminal"}), live.elapsed_ms());
+                    let text = if accounts::claude_installed() { "Claude runs on the claude CLI's own login (your subscription): if it \
+                        is not signed in, run `claude auth login` in a terminal" } else { models::CLAUDE_MISSING };
+                    s.apply(&json!({"type": "harness_info", "text": text}), live.elapsed_ms());
                     login = None;
                 }
                 (None, KeyCode::Enter) => {
@@ -4361,24 +4468,27 @@ fn run_live(
             }
             continue;
         }
-        if !live.pending.is_empty() && !stop_key {
+        // an open question takes its answers from an empty box only, never with ctrl, alt or cmd held (those keep their own
+        // bindings); any other key is typing (question_key). After a key that answered the question before, the pause counts
+        // from this one's appearing
+        let plain = !ctrl && !alt && !key.modifiers.contains(KeyModifiers::SUPER);
+        if !live.pending.is_empty() && !stop_key && plain && ed.text.is_empty() {
             let shown_for = asked_at.get_or_insert_with(Instant::now).elapsed();
-            let answer = match key.code {
-                _ if shown_for < Duration::from_millis(ANSWER_DELAY_MS) => None,
-                KeyCode::Char('y') => Some((true, false)),
-                KeyCode::Char('a') => Some((true, true)),
-                KeyCode::Char('n') | KeyCode::Esc => Some((false, false)),
-                _ => None,
-            };
+            let gap = if after_answer { Some(shown_for) } else { since_key };
+            let (answer, pick, typing) = question_key(key.code, v.ask_risky, chosen.is_some(), answer_key_counts(shown_for, gap));
+            chosen = pick.then(|| live.pending.front().map(|r| r["request_id"].clone())).flatten();
+            v.confirm = chosen.is_some();
             if let Some((allow, always)) = answer {
-                asked_at = None;
+                answered = true;
                 if let Some((t, e)) = live.answer(allow, always) {
                     s.apply(&e, t);
                 }
             }
-            continue;
+            match typing {
+                Some(first) => ed.insert(first),
+                None => continue,
+            }
         }
-        asked_at = None;
         // vim mode: esc leaves insert mode; normal mode takes plain keys (enter still sends, ctrl keys work as always)
         if vim && !ctrl && !alt {
             if !normal && key.code == KeyCode::Esc {
@@ -4397,7 +4507,7 @@ fn run_live(
                     // esc in normal mode: stop the run when nothing is typed (never clears the text)
                     KeyCode::Esc => {
                         if ed.text.is_empty() {
-                            if let Some((t, e)) = busy(&s).then(|| live.interrupt()).flatten() {
+                            if let Some((t, e)) = busy(&s).then(|| live.stop()).flatten() {
                                 s.apply(&e, t);
                             }
                         }
@@ -4413,7 +4523,7 @@ fn run_live(
                 choose_mode(&live, &mut s, &mut pending_mode, next_mode(&cur));
             }
             // ctrl-c stops a run in progress; when idle it quits
-            KeyCode::Char('c') if ctrl => match busy(&s).then(|| live.interrupt()).flatten() {
+            KeyCode::Char('c') if ctrl => match busy(&s).then(|| live.stop()).flatten() {
                 Some((t, e)) => s.apply(&e, t),
                 None => {
                     quit_at = Some(Instant::now());
@@ -5098,7 +5208,7 @@ fn run_live(
             KeyCode::Down => composer_row(&mut ed, &mut v, composer_area, true),
             // esc: clear what is typed; with nothing typed, stop the run like ctrl-c
             KeyCode::Esc if ed.text.is_empty() => {
-                if let Some((t, e)) = busy(&s).then(|| live.interrupt()).flatten() {
+                if let Some((t, e)) = busy(&s).then(|| live.stop()).flatten() {
                     s.apply(&e, t);
                 }
             }
@@ -5318,7 +5428,10 @@ fn app_models(cs: &[models::Choice], live: &live::Live, has_model: bool) -> (Vec
             });
         };
         let mut row = json!({"model": c.model, "provider": provider, "price": c.price});
-        if c.state == models::State::NoKey {
+        if c.route.is_none() && c.state == models::State::NoKey && !accounts::claude_installed() {
+            // no claude to start: nothing Settings can add (design review 13)
+            row["why_not"] = json!(models::CLAUDE_NOT_INSTALLED);
+        } else if c.state == models::State::NoKey {
             // a sign-in's provider (oauth.rs) is signed in to, not given a key
             row["why_not"] = json!(match models::login_of(c).filter(|l| !l.sign_in().is_empty()) {
                 Some(l) if !oauth::signed_in(l) => "not signed in",
@@ -5342,6 +5455,71 @@ fn app_models(cs: &[models::Choice], live: &live::Live, has_model: bool) -> (Vec
         row
     }).collect();
     (rows, cautions)
+}
+
+/// The provider a terminal session starts on where the command line implies one (design review 13), with the effort /model
+/// would give it: `--model` naming a provider's model (`model_route`), else `-c`/`--resume` of an own-loop conversation, on
+/// the model and provider it ran on (`resume_in`, as /resume); None: claude, or `--provider` given.
+fn picked_route(a: &Args, base: &Path) -> Result<Option<(models::Choice, String)>> {
+    if a.provider.is_some() {
+        return Ok(None);
+    }
+    let c = match (&a.model, &a.resume) {
+        (Some(m), _) => model_route(m, a.data_any, app_catalog)?,
+        (None, Some(id)) => own_resume(base, id.as_deref())?,
+        _ => None,
+    };
+    // its levels as /model offers them: the one asked for, else the picker's start; none where it has none
+    Ok(c.map(|c| {
+        let effort = a.effort.clone().filter(|e| c.efforts.contains(e)).or_else(|| c.efforts.get(models::start_effort(&c, "", "")).cloned()).unwrap_or_default();
+        (c, effort)
+    }))
+}
+
+/// `--model` naming a model the list runs on a provider (a local server's, one with a key): that row, as /model would pick
+/// it. None: one of claude's (an alias, a dated id: no local server is asked), or none in the list. A row it cannot use
+/// (no key, not trusted) ends the start with its reason, as /model says it. The local servers are asked first where their
+/// list is not in yet (a first start).
+fn model_route(model: &str, data_any: bool, catalog: impl Fn() -> Result<Vec<models::Choice>>) -> Result<Option<models::Choice>> {
+    let base = model.split('[').next().unwrap_or(model);
+    if models::known_claude(model) || base.starts_with("claude") || matches!(base, "opus" | "sonnet" | "haiku" | "fable" | "opusplan" | "default") {
+        return Ok(None);
+    }
+    let rows = |cs: Vec<models::Choice>| -> Vec<models::Choice> { cs.into_iter().filter(|c| c.model == model).collect() };
+    let mut found = rows(catalog()?);
+    if found.is_empty() {
+        models::refresh_local();
+        found = rows(catalog()?);
+    }
+    let usable = |c: &&models::Choice| matches!(c.state, models::State::Ready | models::State::Unchecked) || (c.state == models::State::Untrusted && data_any);
+    match (found.iter().find(|c| c.route.is_none()), found.iter().find(usable), found.first()) {
+        (Some(_), ..) | (None, None, None) => Ok(None),
+        (None, Some(c), _) => Ok(Some(c.clone())),
+        (None, None, Some(c)) => bail!("{}: {}", c.label, models::why_not(c).unwrap_or_default()),
+    }
+}
+
+/// `-c`/`--resume` of an own-loop conversation in this folder: the row of the model and provider it ran on (`resume_on`),
+/// whose API its saved history is in. None: claude's.
+fn own_resume(base: &Path, id: Option<&str>) -> Result<Option<models::Choice>> {
+    let cwd = std::env::current_dir()?;
+    let Some((sid, _)) = previous_session(base, &cwd, id) else { return Ok(None) };
+    let Some(e) = sessions_of(base, &cwd).into_iter().find(|e| e.ids.contains(&sid)) else { return Ok(None) };
+    resume_on(&sid, &e, &app_catalog()?)
+}
+
+/// The session `sid` (of conversation `e`) resumed: the own loop's on its own provider, by the id being resumed (a claude
+/// session of a conversation that moved to the own loop later stays on claude). One that cannot go back on its provider
+/// stops the start with why: claude knows no own-loop session (`claude --resume own-…` fails).
+fn resume_on(sid: &str, e: &Earlier, cs: &[models::Choice]) -> Result<Option<models::Choice>> {
+    if !sid.starts_with("own-") {
+        return Ok(None);
+    }
+    match resume_in(cs, &Earlier { id: sid.to_string(), ids: e.ids.clone(), model: e.model.clone(), provider: e.provider.clone(), key_env: e.key_env.clone(),
+        first: String::new(), last_at: 0, messages: 0, recordings: vec![], named: false }) {
+        Some(c) => Ok(Some(c)),
+        None => bail!("this conversation ran on {} ({}): /resume shows it, and /model picks a model to go on with", ui::model_short(&e.model), unavailable_because(&e.model)),
+    }
 }
 
 /// The model catalog for the app's picker (the terminal's /model list, without a SubRouter key's model list: those rows
@@ -5559,7 +5737,8 @@ fn login_panel(lp: &LoginPick) -> ui::LoginPanel {
     let shown = login_shown(&lp.filter);
     ui::LoginPanel {
         filter: lp.filter.clone(),
-        rows: std::iter::once(("Claude".to_string(), if accounts::claude_logged_in() == Some(false) { "not signed in · `claude auth login` in a terminal" }
+        rows: std::iter::once(("Claude".to_string(), if !accounts::claude_installed() { "not installed · Claude Code is at claude.com/claude-code" }
+                else if accounts::claude_logged_in() == Some(false) { "not signed in · `claude auth login` in a terminal" }
                 else { "subscription · the claude CLI's own login" }.to_string(), String::new()))
             .chain(models::LOGINS.iter().map(|l| {
                 let src = models::key_source(l.vars);
@@ -5831,6 +6010,19 @@ mod tests {
         assert!(super::chat_shows(&json!({"type": "system", "subtype": "call_waiting", "message": "the provider is still processing"})));
         assert!(!super::chat_shows(&json!({"type": "system", "subtype": "init", "model": "x"})));
         assert!(super::chat_shows(&json!({"type": "result", "result": "hi"})));
+    }
+
+    /// `-c` and `--resume`: by the session being resumed, an own-loop one back on its provider (an unchecked route too), a
+    /// claude one of a conversation that moved to the own loop later on claude, and one that cannot go back says why.
+    #[test]
+    fn a_resumed_session_goes_on_where_that_session_ran() {
+        let row = |state| models::Choice { model: "glm-5".into(), label: "glm-5".into(), route: Some(("https://api.z.ai/api/paas/v4".into(), "ZAI_API_KEY".into(), "1,0.1,3".into())),
+            place: String::new(), efforts: vec![], price: String::new(), note: String::new(), stale: false, state, bench: String::new(), aa: String::new(), pins: vec![] };
+        let e = super::Earlier { id: "own-1-b".into(), ids: vec!["5f0c-claude".into(), "own-1-b".into()], model: "glm-5".into(), provider: "Z.ai".into(), key_env: String::new(),
+            first: String::new(), last_at: 0, messages: 1, recordings: vec![], named: false };
+        assert!(super::resume_on("5f0c-claude", &e, &[row(models::State::Ready)]).unwrap().is_none(), "its claude session stays on claude");
+        assert!(super::resume_on("own-1-b", &e, &[row(models::State::Unchecked)]).unwrap().is_some(), "an unchecked route as /model takes it");
+        assert!(super::resume_on("own-1-b", &e, &[row(models::State::NoKey)]).is_err(), "no way back: the start says why, not claude --resume own-…");
     }
 
     #[test]
@@ -6461,6 +6653,95 @@ not json"#;
     }
 
     #[test]
+    fn a_key_in_a_typing_burst_answers_no_question() {
+        let ms = Duration::from_millis;
+        assert!(super::answer_key_counts(ms(2000), None) && super::answer_key_counts(ms(2000), Some(ms(900))), "after a pause it answers");
+        assert!(!super::answer_key_counts(ms(2000), Some(ms(120))), "the 'a' of \"explain\" typed on: not always");
+        assert!(!super::answer_key_counts(ms(300), Some(ms(5000))), "the first moment after it appears still counts for nothing");
+    }
+
+    #[test]
+    fn quitting_without_a_message_keeps_no_session_and_a_conversation_says_how_to_come_back() {
+        let dir = std::env::temp_dir().join(format!("tazuna-exit-line-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rec = dir.join("1-proj-1.jsonl");
+        let stub = "{\"t\":0,\"prompt\":\"\",\"effort\":\"\",\"model\":\"\",\"cwd\":\"/tmp/p\"}\n{\"t\":72,\"e\":{\"type\":\"harness_route\"}}\n{\"t\":90,\"e\":{\"mode\":\"auto\",\"type\":\"harness_mode\"}}\n";
+        std::fs::write(&rec, stub).unwrap();
+        assert_eq!(super::exit_line(&rec, [None, None], |_| Some(true)), None);
+        assert!(!rec.exists(), "nothing done: no file left");
+        // a plan reading stays for the meters (session::last_limits), though nothing was sent
+        std::fs::write(&rec, format!("{stub}{{\"e\":{{\"type\":\"rate_limit_event\"}},\"t\":2}}\n")).unwrap();
+        assert_eq!(super::exit_line(&rec, [None, None], |_| Some(true)), None);
+        assert!(rec.exists(), "a reading kept");
+        std::fs::write(&rec, format!("{stub}{{\"e\":{{\"text\":\"hi\",\"type\":\"harness_user\"}},\"t\":3}}\n")).unwrap();
+        let logged = |id: &str| match id { "abc-123" => Some(true), "old-1" => Some(false), "own-77-ab" => Some(true), _ => None };
+        assert_eq!(super::exit_line(&rec, [Some("abc-123"), None], logged).as_deref(), Some("resume with: tazuna -c"));
+        assert_eq!(super::exit_line(&rec, [Some("old-1"), None], logged).as_deref(), Some("resume with: tazuna --resume old-1"), "not the folder's latest");
+        // a quit mid-way through the first run: claude's id is not in the run log yet, so nothing that would not work
+        assert_eq!(super::exit_line(&rec, [Some("new-9"), None], logged), None);
+        // mid-run or after /new, with earlier work logged in this process: that one
+        assert_eq!(super::exit_line(&rec, [Some("new-9"), Some("old-1")], logged).as_deref(), Some("resume with: tazuna --resume old-1"));
+        assert_eq!(super::exit_line(&rec, [None, Some("abc-123")], logged).as_deref(), Some("resume with: tazuna -c"));
+        // the own loop's: -c goes on on its provider (own_resume)
+        assert_eq!(super::exit_line(&rec, [Some("own-77-ab"), None], logged).as_deref(), Some("resume with: tazuna -c"));
+        assert!(rec.exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// No claude on PATH (the test seam): its rows say so in the terminal and the window, and /login's Claude row too.
+    #[test]
+    fn without_claude_its_rows_say_it_is_not_installed() {
+        crate::accounts::NO_CLAUDE.set(true);
+        let live = crate::live::Live::new("claude-opus-5-5", "medium").unwrap();
+        let opus = models::Choice { model: "claude-opus-5-5".into(), label: "Opus 5.5".into(), route: None, place: "Claude · subscription".into(),
+            efforts: vec!["high".into()], price: "plan".into(), note: String::new(), stale: false, state: models::State::NoKey, bench: String::new(), aa: String::new(), pins: vec![] };
+        assert_eq!(models::why_not(&opus).as_deref(), Some(models::CLAUDE_NOT_INSTALLED));
+        let (rows, _) = super::app_models(std::slice::from_ref(&opus), &live, true);
+        assert_eq!((rows[0]["why_not"].as_str(), rows[0].get("no_key")), (Some(models::CLAUDE_NOT_INSTALLED), None), "nothing Settings can add: {}", rows[0]);
+        let lp = super::LoginPick { filter: String::new(), sel: 0, form: None, opened: false, shown: None };
+        assert!(super::login_panel(&lp).rows[0].1.starts_with("not installed"));
+        crate::accounts::NO_CLAUDE.set(false);
+        assert_eq!(models::why_not(&opus).as_deref(), Some(models::CLAUDE_SIGNED_OUT), "installed: signed out");
+        std::fs::remove_file(&live.rec_path).ok();
+    }
+
+    #[test]
+    fn a_claude_model_on_the_command_line_stays_on_claude() {
+        let none = || -> anyhow::Result<Vec<models::Choice>> { panic!("no list read, no local server asked for claude's names") };
+        for m in ["claude-opus-5-5", "opus", "sonnet[1m]", "claude-haiku-5-5-20261001", "fable"] {
+            assert!(super::model_route(m, false, none).unwrap().is_none(), "{m}");
+        }
+        let row = |state| models::Choice { model: "mock-coder-7b".into(), label: "Mock Coder 7B".into(), route: Some(("http://127.0.0.1:1234/v1".into(), "LM_STUDIO_API_KEY".into(), "0,0,0".into())),
+            place: "LM Studio".into(), efforts: vec![], price: "free".into(), note: String::new(), stale: false, state, bench: String::new(), aa: String::new(), pins: vec![] };
+        let on = |state| move || Ok(vec![row(state)]);
+        let got = super::model_route("mock-coder-7b", false, on(models::State::Ready)).unwrap();
+        assert_eq!(got.and_then(|c| c.route).map(|r| r.0).as_deref(), Some("http://127.0.0.1:1234/v1"), "the provider the list has it on");
+        assert!(super::model_route("mock-coder-7b", false, on(models::State::Unchecked)).unwrap().is_some(), "an unchecked route as /model takes it");
+        assert!(super::model_route("mock-coder-7b", false, on(models::State::NoKey)).is_err(), "no key: the start says why, not claude");
+        assert!(super::model_route("mock-coder-7b", true, on(models::State::Untrusted)).unwrap().is_some(), "--data any lets an untrusted one run");
+    }
+
+    #[test]
+    fn a_destructive_question_takes_y_then_enter() {
+        use KeyCode::{Char, Enter, Esc};
+        // a plain question: y after a pause answers
+        assert_eq!(super::question_key(Char('y'), false, false, true), (Some((true, false)), false, None));
+        assert_eq!(super::question_key(Char('a'), false, false, true), (Some((true, true)), false, None));
+        assert_eq!(super::question_key(Char('e'), false, false, true), (None, false, Some("")), "any other key types");
+        // a destructive one: y only chooses "allow once", enter confirms it
+        assert_eq!(super::question_key(Char('y'), true, false, true), (None, true, None), "a message can start with y");
+        assert_eq!(super::question_key(Enter, true, true, false), (Some((true, false)), false, None), "enter right after the y confirms");
+        assert_eq!(super::question_key(Char('e'), true, true, true), (None, false, Some("y")), "any other key lets the choice go, its y typed first");
+        assert_eq!(super::question_key(Char('e'), true, true, false), (None, false, Some("y")), "\"yes but…\" typed fast keeps its y");
+        assert_eq!(super::question_key(Enter, true, false, true), (None, false, Some("")), "enter alone approves nothing");
+        assert_eq!(super::question_key(Char('a'), true, false, true), (None, false, Some("")), "no always for it: an a is typed");
+        assert_eq!(super::question_key(Char('n'), true, true, true), (Some((false, false)), false, None), "n says no at once");
+        assert_eq!(super::question_key(Esc, true, false, true), (Some((false, false)), false, None));
+        assert_eq!(super::question_key(Char('y'), true, false, false), (None, false, Some("")), "a y in a typing burst is typed");
+        assert_eq!(super::question_key(Esc, false, false, false), (None, false, None), "esc in a burst neither says no nor stops");
+    }
+
+    #[test]
     fn a_paste_takes_the_image_or_the_copied_files_whole_path() {
         use std::path::PathBuf;
         let shot = || Some(PathBuf::from("/tmp/paste-1.png"));
@@ -6478,9 +6759,17 @@ not json"#;
         let mut req = json!({"request_id": "p", "request": {"subtype": "can_use_tool", "tool_name": "mcp__lean__bash", "input": {"command": "df -h"}}});
         assert_eq!(question(&req), "bash: df -h  (always = this command)");
         req["request"]["risky"] = json!("rm outside the project: ~/x");
-        assert_eq!(question(&req), "bash: df -h  (auto asks: rm outside the project: ~/x · always = this command)", "why auto asks");
+        assert_eq!(question(&req), "bash: df -h  (once only · auto asks: rm outside the project: ~/x)", "why auto asks, and no always for it");
+        assert!(question_parts(&req).2.starts_with("once only"), "the window's asking gets once: true");
+        assert_eq!(super::asking_view(&req)["risky"], true, "the window knows a destructive command from the field");
+        assert_eq!(super::asking_view(&req)["risky_why"], "rm outside the project: ~/x", "and the rule it met");
         req["request"]["handoff"] = json!(true);
         assert_eq!(question(&req), format!("bash: df -h  ({})", live::HANDOFF_ONCE));
+        let a = super::asking_view(&req);
+        assert_eq!((a["risky"].as_bool(), a["once"].as_bool(), a["risky_why"].as_str()), (Some(true), Some(true), Some("rm outside the project: ~/x")),
+            "a hand-off's note wins, risky and its reason still say it: {a}");
+        req["request"]["risky"] = json!(null);
+        assert!(super::asking_view(&req).get("risky").is_none() && super::asking_view(&req).get("risky_why").is_none(), "only where it is");
         // auto runs claude as acceptEdits: claude's report of that leaves the mode's name as it is
         let mut s = Session::new("", "high");
         s.apply(&json!({"type": "harness_mode", "mode": "auto"}), 0.0);

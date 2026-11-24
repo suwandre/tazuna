@@ -144,6 +144,8 @@ pub const HANDOFF_NEEDS: &str = "answered by the agent: needs live data or this 
 pub const HANDOFF_SENT: &str = "answered by the agent";
 /// A question in a turn a chat handed over: allowed once or not, never "always" (that turn's process is gone after it).
 pub const HANDOFF_ONCE: &str = "once only: the agent is answering a chat's question";
+/// The scope of a destructive command auto asks about (risky.rs): yes or no, never always (design review 13).
+pub const RISKY_ONCE: &str = "once only: auto asks before a destructive command";
 
 /// The chat profile's system prompt (both paths, and the router's chat answers): the one line, the date, the hand-off line.
 pub fn chat_prompt(today: &str) -> String {
@@ -529,6 +531,12 @@ pub struct Live {
     generation: u64,
     /// When an interrupt was requested and its run has not ended yet.
     interrupting: Option<Instant>,
+    /// claude takes `cancel_queued` on an interrupt (its init's `interrupt_cancel_queued_v1`): the user's stop can give back
+    /// the messages queued behind the run (`stop`). Older ones run them after the stop, as before.
+    cancel_queued: bool,
+    /// The prompt of the run in front when the user's stop went out with `cancel_queued`, until that stop has ended a run:
+    /// one that ended on its own just then leaves the next one to be stopped instead (`poll`).
+    stop_wait: Option<String>,
     interrupts_sent: u64,
     rec: File,
     pub rec_path: PathBuf,
@@ -722,6 +730,8 @@ impl Live {
             opened: std::time::SystemTime::now(),
             generation: 0,
             interrupting: None,
+            cancel_queued: false,
+            stop_wait: None,
             interrupts_sent: 0,
             rec,
             rec_path,
@@ -939,6 +949,11 @@ impl Live {
         let text = e["text"].as_str().unwrap_or_default();
         match e["type"].as_str() {
             Some("harness_user") => self.conv.push((text.to_string(), String::new())),
+            Some("harness_unqueued") => {
+                if let Some(i) = self.conv.iter().rposition(|c| c.0 == text && c.1.is_empty()) {
+                    self.conv.remove(i);
+                }
+            }
             Some("harness_notice") if text.starts_with("── new conversation") || text.starts_with("── resumed session") => self.conv.clear(),
             Some("result") => {
                 let Some(a) = e["result"].as_str().filter(|a| e["subtype"] == "success" && e["is_error"] != true && !a.trim().is_empty() && !hands_off(a)) else { return };
@@ -1044,7 +1059,10 @@ impl Live {
         // held while the tests run, and while a turn a chat handed over runs: it goes to the session's own conversation after
         // that turn (`hand_back`), not into the one thrown away; and behind anything held before it
         // behind a hand-off that waits only for background commands, it starts now (send_held lets it pass)
-        let behind = self.held.iter().any(|h| h.2.is_none()) || (!self.held.is_empty() && !self.runs.is_empty());
+        let behind = self.held.iter().any(|h| h.2.is_none()) || (!self.held.is_empty() && !self.runs.is_empty())
+            // the own loop takes a message only when the run before it has ended (it folds none into a running turn as
+            // claude does): it waits here meanwhile, so the user's stop can give it back (`stop`, design review 13)
+            || (self.provider.is_some() && !self.runs.is_empty());
         if self.verifying || self.handoff.is_some() || behind {
             self.held.push_back((text.to_string(), attach, None));
         } else {
@@ -1399,7 +1417,11 @@ impl Live {
     pub fn answer(&mut self, allow: bool, always: bool) -> Option<(f64, Value)> {
         let req = self.pending.pop_front()?;
         let tool = req["request"]["tool_name"].as_str().unwrap_or_default().to_string();
-        if allow && always && req["request"]["from_text"] != true && req["request"]["outside"] != true && req["request"]["handoff"] != true {
+        // nor a destructive command auto asked about (`risky` set in `poll`): always for a force push would have let every
+        // later one past auto's guard for the session (design review 13)
+        let always = allow && always && req["request"]["from_text"] != true && req["request"]["outside"] != true && req["request"]["handoff"] != true
+            && req["request"]["risky"].is_null();
+        if always {
             self.allowed.insert(always_key(&req));
         }
         // an approved plan leaves plan mode: edits go ahead, commands still ask
@@ -1675,7 +1697,62 @@ impl Live {
         Some(self.record(json!({"type": "harness_info", "text": format!("stopping background task {id}")})))
     }
 
+    /// The user's stop (esc, ctrl-c in the terminal): `interrupt`, and the messages typed behind the run that the agent has
+    /// not taken yet come back (`harness_unqueued`, into the box) instead of each starting a turn once the stop ends the
+    /// run, as the window's Stop gives back its queue (design review 13). The own loop's wait here (`send_message`); claude's
+    /// are in its queue, cancelled with the stop (`cancel_queued`) and given back by its answer (`poll`). One claude has
+    /// folded into the running turn already (`isReplay`) is no longer queued: it stays with that turn.
+    pub fn stop(&mut self) -> Option<(f64, Value)> {
+        // the own loop's waiting messages, and the hand-offs the user typed (/agent); one a chat asked for stays
+        let mut back: Vec<(String, String)> = vec![];
+        self.held.retain(|h| match &h.2 {
+            None => !{ back.push((h.0.clone(), h.0.clone())); true },
+            Some((_, line)) if *line == HANDOFF_SENT => !{ back.push((h.0.clone(), format!("/agent {}", h.0))); true },
+            Some(_) => true,
+        });
+        // a second stop kills the process (`interrupt`), and claude's queue goes with it
+        if self.interrupting.is_some() {
+            back.extend(self.drop_queued().into_iter().map(|t| (t.clone(), t)));
+        }
+        for (text, draft) in back {
+            self.give_back(&text, draft);
+        }
+        // claude without cancel_queued runs its queue after the stop, as before (nothing is said to come back)
+        let cancel = self.cancel_queued && self.provider.is_none();
+        if cancel && self.interrupting.is_none() {
+            self.stop_wait = self.runs.front().map(|r| r.prompt.clone());
+        }
+        self.interrupt_with(cancel)
+    }
+
+    /// The messages queued behind the run in front, taken out before a restart drops claude's queue: never run, so not
+    /// logged as runs, and not points to go back to.
+    fn drop_queued(&mut self) -> Vec<String> {
+        let gone: Vec<String> = self.runs.drain(1.min(self.runs.len())..).map(|r| r.prompt).collect();
+        for text in &gone {
+            if let Some(i) = self.checkpoints.iter().rposition(|c| c.text == *text) {
+                self.checkpoints.remove(i);
+            }
+        }
+        gone
+    }
+
+    /// A queued message that will not run goes back to the box: `text` as the screen shows it, `draft` as the box takes it
+    /// ("/agent …" for a hand-off).
+    fn give_back(&mut self, text: &str, draft: String) {
+        let mut e = json!({"type": "harness_unqueued", "text": text});
+        if draft != text {
+            e["draft"] = json!(draft);
+        }
+        let e = self.record(e);
+        self.outbox.push(e);
+    }
+
     pub fn interrupt(&mut self) -> Option<(f64, Value)> {
+        self.interrupt_with(false)
+    }
+
+    fn interrupt_with(&mut self, cancel_queued: bool) -> Option<(f64, Value)> {
         // a stop also answers open questions: no
         while let Some(e) = self.answer(false, false) {
             self.outbox.push(e);
@@ -1692,7 +1769,10 @@ impl Live {
         }
         let stdin = self.stdin.as_mut()?;
         self.interrupts_sent += 1;
-        let req = json!({"type": "control_request", "request_id": format!("interrupt-{}", self.interrupts_sent), "request": {"subtype": "interrupt"}});
+        let mut req = json!({"type": "control_request", "request_id": format!("interrupt-{}", self.interrupts_sent), "request": {"subtype": "interrupt"}});
+        if cancel_queued {
+            req["request"]["cancel_queued"] = json!(true);
+        }
         if writeln!(stdin, "{req}").and_then(|_| stdin.flush()).is_err() {
             return Some(self.kill("stopped"));
         }
@@ -1712,7 +1792,7 @@ impl Live {
         }
         self.stdin = None;
         self.generation += 1;
-        self.interrupting = None;
+        (self.interrupting, self.stop_wait) = (None, None);
         // its background commands went with it, and their end will never be reported (the old generation's messages are
         // dropped): a held hand-off waiting for them would wait forever
         self.tasks.clear();
@@ -1741,6 +1821,7 @@ impl Live {
                         }
                         self.session_id = e["session_id"].as_str().map(String::from);
                         self.claude_version = e["claude_code_version"].as_str().map(String::from);
+                        self.cancel_queued = e["capabilities"].as_array().is_some_and(|c| c.iter().any(|x| x == "interrupt_cancel_queued_v1"));
                         if self.mode != "headless" {
                             // claude's commands and skills here, for the menu of the next conversation in this folder
                             // before its first turn (the own loop's list is empty: nothing to keep)
@@ -1795,19 +1876,23 @@ impl Live {
                             self.respond(&e, false, None);
                         } else {
                             let tool = e["request"]["tool_name"].as_str().unwrap_or_default().to_string();
+                            // why auto asks this one, for the question's note ("auto asks: rm outside the project"); it is
+                            // asked once only (`answer`)
+                            let risky = risky.filter(|_| self.permission_mode == "auto");
+                            if let Some(why) = &risky {
+                                e["request"]["risky"] = json!(why);
+                            }
                             let scope = if from_text {
                                 "once only: the model wrote this call as text"
                             } else if outside {
                                 "once only: outside the project"
                             } else if self.handoff.is_some() {
                                 HANDOFF_ONCE
+                            } else if risky.is_some() {
+                                RISKY_ONCE
                             } else {
                                 always_scope(&tool)
                             };
-                            // why auto asks this one, for the question's note ("auto asks: rm outside the project")
-                            if self.permission_mode == "auto" && let Some(why) = risky {
-                                e["request"]["risky"] = json!(why);
-                            }
                             out.push(self.record(json!({"type": "harness_permission", "tool": tool, "input": e["request"]["input"], "scope": scope})));
                             self.pending.push_back(e);
                         }
@@ -1822,6 +1907,27 @@ impl Live {
                     if e["type"] == "control_response" {
                         let rid = e["response"]["request_id"].as_str().unwrap_or_default();
                         let r = &e["response"]["response"];
+                        // the user's stop cancelled the messages queued behind the run (`stop`; claude 2.1.330 and later,
+                        // older ones leave them queued): each back to the box and its run gone, as no result comes for it.
+                        // The stopped run itself stays until its result, or the restart 3 s on, ends it.
+                        if rid.starts_with("interrupt-") {
+                            let cancelled: Vec<String> = r["cancelled"].as_array().into_iter().flatten().filter_map(Value::as_str).map(String::from).collect();
+                            for u in cancelled {
+                                let Some(c) = self.checkpoints.iter().position(|c| c.uuid == u) else { continue };
+                                let text = self.checkpoints.remove(c).text;
+                                let stopped = usize::from(self.interrupting.is_some());
+                                if let Some(i) = self.runs.iter().skip(stopped).rposition(|r| r.prompt == text) {
+                                    self.runs.remove(i + stopped);
+                                }
+                                self.give_back(&text, text.clone());
+                            }
+                            // no run behind the stopped one (or none at all): nothing else it may stop
+                            if self.runs.len() < 2 && self.runs.front().is_none_or(|r| self.stop_wait.as_ref() == Some(&r.prompt)) {
+                                self.stop_wait = None;
+                            }
+                            out.append(&mut self.outbox);
+                            continue;
+                        }
                         if rid.starts_with("rewind-dry-") {
                             let files: Vec<String> = r["filesChanged"].as_array().into_iter().flatten()
                                 .filter_map(|f| f.as_str()).map(|f| f.rsplit('/').next().unwrap_or(f).to_string()).collect();
@@ -1916,6 +2022,22 @@ impl Live {
                     if is_result && self.provider.is_some() {
                         e["tazuna_paid"] = json!(true); // the own loop spends money; claude's cost is on the plan
                     }
+                    // the user's stop (`stop_wait`) ends the run it was sent to; that run ending on its own just then, claude
+                    // stops the next one instead, already taken from its queue: that one comes back to the box too
+                    if is_result && let Some(stopped) = self.stop_wait.clone() {
+                        let front = self.runs.front().map(|r| r.prompt.clone());
+                        let cut = e["subtype"] == "error_during_execution";
+                        if front.as_deref() != Some(stopped.as_str()) && cut && let Some(text) = front.clone() {
+                            if let Some(i) = self.checkpoints.iter().rposition(|c| c.text == text) {
+                                self.checkpoints.remove(i);
+                            }
+                            self.give_back(&text, text.clone());
+                            out.append(&mut self.outbox);
+                        }
+                        if front.as_deref() != Some(stopped.as_str()) || cut || self.runs.len() < 2 {
+                            self.stop_wait = None;
+                        }
+                    }
                     if is_result {
                         self.interrupting = None;
                         let total = e["total_cost_usd"].as_f64().unwrap_or(self.proc_cost);
@@ -1973,6 +2095,11 @@ impl Live {
             }
         }
         if self.interrupting.is_some_and(|t| t.elapsed().as_secs() >= 3) {
+            // the restart drops claude's queue: what waited in it comes back to the box first (design review 13)
+            for text in self.drop_queued() {
+                self.give_back(&text, text.clone());
+            }
+            out.append(&mut self.outbox);
             let who = if self.provider.is_some() { "the model" } else { "claude" };
             out.push(self.kill(&format!("stopped ({who} did not respond, process restarted)")));
         }
@@ -2182,6 +2309,10 @@ impl Live {
         if let Some(run) = self.runs.pop_front() {
             let line = run.finish(self.last_result.as_ref(), self.elapsed_ms(), &self.meta(), &self.cwd);
             self.log(line);
+        }
+        // nothing left for a stop to have stopped instead: a later run's failure is no stop's
+        if self.runs.is_empty() {
+            self.stop_wait = None;
         }
         self.send_held()
     }
@@ -2672,13 +2803,18 @@ impl Live {
     /// Starts the agent process and the threads that read its output.
     fn start(&mut self, mut cmd: Command) -> Result<()> {
         // without the terminal, so nothing the agent's commands start prints over the screen (platform::detach)
+        let claude = cmd.get_program() == "claude";
         let mut child = crate::platform::detach(&mut cmd)
             .current_dir(&self.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .context("starting claude (is it installed and on PATH?)")?;
+            .map_err(|e| match e.kind() {
+                // what to do, not the OS's "No such file or directory (os error 2)" (design review 13)
+                std::io::ErrorKind::NotFound if claude => anyhow::anyhow!(crate::models::CLAUDE_MISSING),
+                _ => anyhow::Error::new(e).context(if claude { "starting claude" } else { "starting the model's process" }),
+            })?;
         let (stdout, mut stderr) = (child.stdout.take().context("stdout")?, child.stderr.take().context("stderr")?);
         let g = self.generation;
         let tx = self.tx.clone();
@@ -3269,6 +3405,152 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// No claude on PATH: the message says what to do, and its rows in the model list cannot be picked (design review 13).
+    #[cfg(unix)]
+    #[test]
+    fn without_claude_the_error_says_how_to_get_it() {
+        let (mut live, dir) = stub::live("no-claude");
+        let mut cmd = Command::new("claude");
+        cmd.env("PATH", &dir); // a folder without claude in it
+        let e = live.start(cmd).unwrap_err();
+        assert_eq!(format!("{e:#}"), crate::models::CLAUDE_MISSING);
+        assert!(!crate::platform::on_path("claude", dir.as_os_str()));
+        std::fs::write(dir.join("claude"), "").unwrap();
+        assert!(crate::platform::on_path("claude", dir.as_os_str()));
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The user's stop gives the messages queued behind the run that the agent has not taken back to the box (design review
+    /// 13): claude's are cancelled with the stop and come back by its answer, one it folded into the turn stays with it; the
+    /// own loop's wait in tazuna until the run before them ends, so they come back at once.
+    #[cfg(unix)]
+    #[test]
+    fn the_users_stop_gives_back_the_messages_queued_behind_the_run() {
+        let echo = |live: &Live, text: &str| stub::feed(live, json!({"type": "user", "isReplay": true, "message": {"role": "user", "content": text}}));
+        let back = |live: &mut Live| live.poll().into_iter().filter(|(_, e)| e["type"] == "harness_unqueued").map(|(_, e)| e["text"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        let (mut live, dir) = stub::live("stop-queue");
+        live.send_typed("run the tests").unwrap();
+        stub::started(&dir);
+        stub::feed(&live, json!({"type": "system", "subtype": "init", "session_id": "s-1", "capabilities": ["interrupt_receipt_v1", "interrupt_cancel_queued_v1"]}));
+        echo(&live, "run the tests");
+        live.send_typed("and the linter too").unwrap();
+        echo(&live, "and the linter too");
+        live.send_typed("then commit").unwrap();
+        live.poll();
+        assert_eq!(live.runs.len(), 2, "the linter folded into the turn, the commit queued");
+        live.stop().unwrap();
+        assert!(stub::sent(&dir, "cancel_queued"), "claude cancels its queue with the stop");
+        let u = live.checkpoints.iter().find(|c| c.text == "then commit").unwrap().uuid.clone();
+        stub::feed(&live, json!({"type": "control_response", "response": {"subtype": "success", "request_id": "interrupt-1", "response": {"still_queued": [], "cancelled": [u]}}}));
+        assert_eq!(back(&mut live), ["then commit"]);
+        assert!(live.runs.len() == 1 && !live.checkpoints.iter().any(|c| c.text == "then commit"), "the stopped run waits for its result; the commit was never a point to go back to");
+        stub::feed(&live, json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "[interrupted]"}));
+        live.poll();
+        assert!(live.runs.is_empty() && live.idle(), "nothing starts after the stop");
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+        // the own loop: a message typed while a run works waits here, and the stop gives it back
+        let (mut live, dir) = stub::live("stop-queue-own");
+        live.provider = Some(("https://api.example".into(), "KEY".into()));
+        live.runs.push_back(Run::new("slow one", 0.0, &live.cwd));
+        live.send_typed("a follow up").unwrap();
+        assert_eq!((live.runs.len(), live.held.len()), (1, 1), "held, not sent to the loop");
+        live.hand_off("weather?", "weather?", HANDOFF_SENT).unwrap();
+        live.hand_off("prices?", "prices?", HANDOFF_NEEDS).unwrap();
+        live.stop();
+        let given: Vec<(String, Option<String>)> = live.poll().into_iter().filter(|(_, e)| e["type"] == "harness_unqueued")
+            .map(|(_, e)| (e["text"].as_str().unwrap().to_string(), e["draft"].as_str().map(String::from))).collect();
+        assert_eq!(given, [("a follow up".to_string(), None), ("weather?".to_string(), Some("/agent weather?".to_string()))], "the user's /agent comes back as typed");
+        assert_eq!(live.held.len(), 1, "the chat's own hand-off stays");
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Without claude's reply in 3 s the restart drops its queue: what waited comes back first, never logged as a run. A
+    /// claude without cancel_queued gets none, and its queue runs after the stop as before. A run that ends on its own as
+    /// the stop goes out leaves the next one to be stopped: that one comes back too (design review 13).
+    #[cfg(unix)]
+    #[test]
+    fn a_stop_gives_back_on_a_restart_keeps_the_old_way_without_cancel_and_follows_a_race() {
+        let back = |live: &mut Live| live.poll().into_iter().filter(|(_, e)| e["type"] == "harness_unqueued").map(|(_, e)| e["text"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        let init = |live: &Live, cancel: bool| stub::feed(live, json!({"type": "system", "subtype": "init", "session_id": "s-1",
+            "capabilities": if cancel { json!(["interrupt_cancel_queued_v1"]) } else { json!([]) }}));
+        let echo = |live: &Live, text: &str| stub::feed(live, json!({"type": "user", "isReplay": true, "message": {"role": "user", "content": text}}));
+        // the restart
+        let (mut live, dir) = stub::live("stop-restart");
+        live.send_typed("one").unwrap();
+        stub::started(&dir);
+        init(&live, true);
+        echo(&live, "one");
+        live.send_typed("two").unwrap();
+        live.poll();
+        live.stop().unwrap();
+        live.interrupting = Some(Instant::now() - Duration::from_secs(4));
+        let out = live.poll();
+        let given: Vec<&str> = out.iter().filter(|(_, e)| e["type"] == "harness_unqueued").filter_map(|(_, e)| e["text"].as_str()).collect();
+        assert_eq!(given, ["two"]);
+        assert!(out.iter().any(|(_, e)| e["text"].as_str().is_some_and(|t| t.contains("process restarted"))) && live.runs.is_empty());
+        let log = std::fs::read_to_string(dir.join("runs.jsonl")).unwrap_or_default();
+        assert!(log.contains(r#""prompt":"one""#) && !log.contains(r#""prompt":"two""#), "never run, never logged: {log}");
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+        // no cancel_queued: none sent, nothing said to come back, and the queue goes on after the stop
+        let (mut live, dir) = stub::live("stop-old");
+        live.send_typed("one").unwrap();
+        stub::started(&dir);
+        init(&live, false);
+        echo(&live, "one");
+        live.send_typed("two").unwrap();
+        live.poll();
+        live.stop().unwrap();
+        stub::feed(&live, json!({"type": "control_response", "response": {"subtype": "success", "request_id": "interrupt-1", "response": {}}}));
+        assert!(back(&mut live).is_empty() && live.runs.len() == 2);
+        assert!(!stub::sent(&dir, "cancel_queued"));
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+        // the race: "one" ends on its own as the stop goes out; claude stops "two" instead and cancels "three"
+        let (mut live, dir) = stub::live("stop-race");
+        live.send_typed("one").unwrap();
+        stub::started(&dir);
+        init(&live, true);
+        echo(&live, "one");
+        live.send_typed("two").unwrap();
+        live.send_typed("three").unwrap();
+        live.poll();
+        live.stop().unwrap();
+        stub::feed(&live, json!({"type": "result", "subtype": "success", "is_error": false, "result": "done", "total_cost_usd": 0.0}));
+        assert!(back(&mut live).is_empty(), "one's own end gives back nothing yet");
+        let u = live.checkpoints.iter().find(|c| c.text == "three").unwrap().uuid.clone();
+        stub::feed(&live, json!({"type": "control_response", "response": {"subtype": "success", "request_id": "interrupt-1", "response": {"cancelled": [u]}}}));
+        assert_eq!(back(&mut live), ["three"]);
+        stub::feed(&live, json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "", "total_cost_usd": 0.0}));
+        assert_eq!(back(&mut live), ["two"], "the run claude stopped in its place");
+        assert!(live.runs.is_empty() && live.stop_wait.is_none());
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+        // the race where claude cancels the only one behind: the stop is over, and a later run's failure stays its own
+        let (mut live, dir) = stub::live("stop-race-over");
+        live.send_typed("one").unwrap();
+        stub::started(&dir);
+        init(&live, true);
+        echo(&live, "one");
+        live.send_typed("two").unwrap();
+        live.poll();
+        live.stop().unwrap();
+        stub::feed(&live, json!({"type": "result", "subtype": "success", "is_error": false, "result": "done", "total_cost_usd": 0.0}));
+        live.poll();
+        let u = live.checkpoints.iter().find(|c| c.text == "two").unwrap().uuid.clone();
+        stub::feed(&live, json!({"type": "control_response", "response": {"subtype": "success", "request_id": "interrupt-1", "response": {"cancelled": [u]}}}));
+        assert_eq!(back(&mut live), ["two"]);
+        assert!(live.stop_wait.is_none() && live.runs.is_empty());
+        live.send_typed("three").unwrap();
+        stub::feed(&live, json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "", "total_cost_usd": 0.0}));
+        assert!(back(&mut live).is_empty(), "three failed on its own: not given back");
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// After a hand-off the chat's own conversation goes on as it was, the marker in it (no fork, no rewind: one
     /// conversation), and its next message carries the question and the agent's answer, as its own earlier answer.
     #[cfg(unix)]
@@ -3449,6 +3731,11 @@ mod tests {
         ask(&live, "r-2", "Bash", "git push --force");
         assert!(live.poll().iter().any(|(_, e)| e["type"] == "harness_permission"));
         assert_eq!(live.pending.front().unwrap()["request"]["risky"], "git push --force: rewrites the remote's history");
+        // asked once only: "always" for it lets no later force push past auto's guard (design review 13)
+        let done = live.answer(true, true).unwrap().1;
+        assert_eq!((done["allow"].as_bool(), done["always"].as_bool()), (Some(true), Some(false)), "{done}");
+        ask(&live, "r-2b", "Bash", "git push --force");
+        assert!(live.poll().iter().any(|(_, e)| e["type"] == "harness_permission" && e["scope"] == RISKY_ONCE), "asked again");
         ask(&live, "r-3", "AskUserQuestion", "");
         live.poll();
         assert_eq!(live.pending.len(), 2, "the user's own question waits for the user");

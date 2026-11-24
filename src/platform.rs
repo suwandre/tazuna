@@ -215,8 +215,8 @@ pub fn open_in_editor(path: &Path, line: u32) -> std::io::Result<String> {
     } else {
         const KNOWN: [(&str, &str); 9] = [("cursor", "-g {path}:{line}"), ("code", "-g {path}:{line}"), ("zed", "{path}:{line}"), ("windsurf", "-g {path}:{line}"),
             ("subl", "{path}:{line}"), ("idea", "--line {line} {path}"), ("webstorm", "--line {line} {path}"), ("goland", "--line {line} {path}"), ("pycharm", "--line {line} {path}")];
-        let on_path = |name: &str| std::env::var_os("PATH").is_some_and(|ps| std::env::split_paths(&ps).any(|d| d.join(name).is_file() || d.join(format!("{name}.cmd")).is_file()));
-        match KNOWN.iter().find(|(n, _)| on_path(n)) {
+        let paths = std::env::var_os("PATH").unwrap_or_default();
+        match KNOWN.iter().find(|(n, _)| on_path(n, &paths)) {
             Some((n, a)) => (n.to_string(), a.split_whitespace().map(fill).collect()),
             #[cfg(target_os = "macos")]
             None => ("open".into(), vec!["-t".into(), p.clone()]),
@@ -228,6 +228,11 @@ pub fn open_in_editor(path: &Path, line: u32) -> std::io::Result<String> {
     };
     Command::new(&cmd).args(&args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn()?;
     Ok(cmd)
+}
+
+/// Whether the program `name` is in one of `paths` (PATH's value): the file itself, or on Windows name.exe or name.cmd.
+pub fn on_path(name: &str, paths: &std::ffi::OsStr) -> bool {
+    std::env::split_paths(paths).any(|d| ["", ".exe", ".cmd"].iter().any(|x| d.join(format!("{name}{x}")).is_file()))
 }
 
 /// A desktop notification: macOS through osascript; elsewhere none (the session shows the same line). The texts go to the

@@ -69,6 +69,23 @@ pub fn refresh_claude_login() -> Option<bool> {
 
 static CLAUDE_LOGIN: std::sync::Mutex<Option<Option<bool>>> = std::sync::Mutex::new(None);
 
+/// Whether the official CLI is there to start: `claude` on PATH. Without it a new user saw Claude ready in /model, and every
+/// message failed with "No such file or directory" (design review 13). Tests count it there (their stand-in claude is on
+/// PATH only once a test has made it).
+#[inline(never)]
+pub fn claude_installed() -> bool {
+    #[cfg(test)]
+    return !NO_CLAUDE.get();
+    #[cfg(not(test))]
+    crate::platform::on_path("claude", &std::env::var_os("PATH").unwrap_or_default())
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A test's machine without claude (`claude_installed`), on its own thread only.
+    pub static NO_CLAUDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// `refresh_claude_login` as last read in this process; None before the first read. Never read here: a claude that hangs
 /// (a keychain prompt) held the window's server and the terminal's screen up to 5 s each time /model opened (review 12).
 #[inline(never)]
@@ -330,9 +347,17 @@ pub fn lines(v: &Value) -> Vec<(String, crate::ui::Tone, Option<String>)> {
     // a reset as the desktop says it where the time zone is known, else as claude or OmniRoute gave it
     let reset_claude = |text: &str| off.and_then(|o| claude_reset(text, now, o).map(|at| when(at, now, o))).unwrap_or_else(|| text.to_string());
     let reset_iso = |iso: &str| match off { Some(o) => iso_secs(iso).map(|at| when(at, now, o)), None => until(iso, now) };
-    // a meter's row: its name from `indent`, its bar at one column for all (column 35: "Claude & GPT Models, weekly" fits)
+    // the meters' names, for their bars' column: one for all, just past the longest name (a fixed 35 left "5-hour session"
+    // 20 columns of space, and its reset was cut at 80 columns, design review 13)
+    let window = |w: &Value| [w["group"].as_str().unwrap_or_default(), w["window"].as_str().unwrap_or_default()].iter()
+        .filter(|x| !x.is_empty()).copied().collect::<Vec<_>>().join(", ");
+    let col = v["plan"].as_array().into_iter().flatten().map(|r| 2 + window_name(r["label"].as_str().unwrap_or_default()).chars().count())
+        .chain(v["omniroute"].as_array().into_iter().flatten().flat_map(|a| a["windows"].as_array().into_iter().flatten().map(|w| 4 + window(w).chars().count())))
+        .max().unwrap_or(0) + 1;
+    // a meter's row: its name from `indent`, its bar at that column (the panel shrinks the bars where a row is too wide:
+    // ui.rs draw_list)
     let meter = |indent: usize, name: &str, used: f64, resets: &str| {
-        format!("{:indent$}{name:<w$} {} {used:>4.0}%{}", "", bar(used, 20), if resets.is_empty() { String::new() } else { format!("   resets {resets}") }, w = 34 - indent)
+        format!("{:indent$}{name:<w$}{} {used:>4.0}%{}", "", bar(used, 20), if resets.is_empty() { String::new() } else { format!("   resets {resets}") }, w = col - indent)
     };
     push("Claude plan".into(), Head, None);
     push(String::new(), Rule, None);
@@ -392,8 +417,7 @@ pub fn lines(v: &Value) -> Vec<(String, crate::ui::Tone, Option<String>)> {
             let provider = if provider.starts_with("openai-compatible") { "OpenAI-compatible" } else { provider };
             push(format!("  {provider}, {}{plan}{status}", a["name"].as_str().unwrap_or_default()), Plain, None);
             for w in a["windows"].as_array().into_iter().flatten() {
-                let what = [w["group"].as_str().unwrap_or_default(), w["window"].as_str().unwrap_or_default()].iter()
-                    .filter(|x| !x.is_empty()).copied().collect::<Vec<_>>().join(", ");
+                let what = window(w);
                 if w["unlimited"] == true {
                     push(format!("    {what:<30} unlimited"), Plain, None);
                     continue;

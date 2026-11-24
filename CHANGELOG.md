@@ -16,6 +16,25 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.224 (2026-11-25): a typed message no longer answers a question; text that fits; Caffeine
+
+Design review 13 (the user's own use, driven in a pty against a scripted model, plus independent reviews).
+- A permission question took the keys of a message being typed: the "a" of "explain" approved `git push --force` for the
+  whole session. Now a key answers only after a pause and with an empty box; anything else is typed into the box. A
+  command auto asks about as destructive takes `y` then Enter, never offers "always", and a message starting with "y"
+  keeps it. The question's reason wraps instead of being cut ("· al").
+- Esc with messages queued behind the run puts them back in the box (on claude through its `cancel_queued`, where the
+  CLI announces it; a restart gives them back too) instead of sending them.
+- At 80 columns /usage keeps its reset times (the bars shrink), /model never cuts two models into the same row, and lines
+  break between items, the composer between words.
+- Without claude on PATH the error says how to get it or pick another model, and Claude's rows say "not installed".
+- `--model` names a model on another provider (LM Studio, SubRouter…): the run goes there, as /model would; `-c` and
+  `--resume` put an own-loop session back on its provider.
+- Quitting without a message leaves no session file; after a conversation the exit line says how to resume.
+- Caffeine Inference as a provider (`CAFFEINE_API_KEY`, one model, `router`, $0.2 / $0.05 / $0.5 per M): not trusted
+  until the user allows it (its privacy policy allows training on anonymised prompts).
+- For the desktop: `asking.risky` / `risky_why`, and `rejected` on a refused send's notice.
+
 ## 0.1.223 (2026-11-24): 0.1.220 to 0.1.222 for every platform
 
 None of 0.1.220, 0.1.221 and 0.1.222 was published: GitHub had no macOS runner for one of 0.1.220's builds, and a test

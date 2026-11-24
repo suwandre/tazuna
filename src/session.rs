@@ -356,6 +356,8 @@ pub struct Session {
     pub commands: Vec<String>,
     /// Each finished turn's changed files, in order.
     pub changes: Vec<Change>,
+    /// The notices of sends the app refused (`mark_rejected`), by block.
+    rejected: Vec<usize>,
     /// Claude's to-do list (TodoWrite): (status, text).
     pub todos: Vec<(String, String)>,
     /// The last thing the user sent, to tell what a command result belongs to.
@@ -470,6 +472,7 @@ impl Session {
             commands: vec!["agent".into(), "bad".into(), "boss".into(), "changelog".into(), "chat".into(), "create".into(), "data".into(), "diff".into(), "effort".into(), "explorer".into(), "good".into(), "hook".into(), "jira".into(), "keys".into(), "login".into(), "loop".into(), "mcp".into(), "model".into(), "new".into(), "preset".into(), "profile".into(), "resume".into(), "review".into(), "route".into(), "rewind".into(), "update".into(), "usage".into(), "verify".into(), "vim".into()],
             todos: Vec::new(),
             changes: Vec::new(),
+            rejected: Vec::new(),
             last_prompt: String::new(),
             streamed: false,
             streamed_text: false,
@@ -610,11 +613,17 @@ impl Session {
                 v
             }
             // a switch that carries the conversation to another model (live.rs switch): a line where it continues
-            Block::Notice { text, error, ended } => match text.split_once(": the conversation continues on ").filter(|_| text.starts_with("model: ")) {
-                Some((_, model)) => json!({"kind": "notice", "text": format!("── continued on {model} ──"), "error": error}),
-                None if *ended => json!({"kind": "notice", "text": text, "error": error, "ended": true}),
-                None => json!({"kind": "notice", "text": text, "error": error}),
-            },
+            Block::Notice { text, error, ended } => {
+                let mut v = match text.split_once(": the conversation continues on ").filter(|_| text.starts_with("model: ")) {
+                    Some((_, model)) => json!({"kind": "notice", "text": format!("── continued on {model} ──"), "error": error}),
+                    None if *ended => json!({"kind": "notice", "text": text, "error": error, "ended": true}),
+                    None => json!({"kind": "notice", "text": text, "error": error}),
+                };
+                if self.rejected.contains(&i) {
+                    v["rejected"] = json!(true);
+                }
+                v
+            }
             // the app has no block of its own for it: a notice, an error once the run ended on it
             Block::News(n) => json!({"kind": "notice", "error": false, "text": crate::versions::news_text(&n.from, &n.to, &n.items)}),
             Block::Retry(r) => json!({"kind": "notice", "error": r.gave_up, "text": format!("{}: {} {} failed{} ({})", r.why, r.tries,
@@ -806,6 +815,27 @@ impl Session {
         !said("answered by the agent") && (self.profile == "chat" || said("answered as a chat"))
     }
 
+    /// The app's send started nothing (main.rs send_rejected): the notices it left from block `from` on carry `rejected` in
+    /// the view, so the window pairs them with the refusal exactly; by timing, an unrelated error in the same tick passed for
+    /// it (design review 13).
+    pub fn mark_rejected(&mut self, from: usize) {
+        // the refusal's own notice: the last one since the send began
+        if let Some(i) = (from..self.blocks.len()).rev().find(|&i| matches!(self.blocks[i], Block::Notice { .. })) {
+            self.rejected.push(i);
+        }
+    }
+
+    /// Blocks went (`gone`, by index): the refusal marks stay on the blocks they were on.
+    fn unmark(&mut self, gone: impl Fn(usize) -> bool) {
+        self.rejected = self.rejected.iter().filter(|&&i| !gone(i)).map(|&i| i - (0..i).filter(|&j| gone(j)).count()).collect();
+    }
+
+    /// The transcript back to its first `n` blocks (/rewind).
+    pub fn truncate(&mut self, n: usize) {
+        self.blocks.truncate(n);
+        self.unmark(|i| i >= n);
+    }
+
     fn push(&mut self, b: Block) {
         self.end_live();
         self.end_retry();
@@ -953,6 +983,17 @@ impl Session {
                 self.verify_cancelled = false;
             }
             (Some("harness_interrupt"), _) => self.stopping = true,
+            // a queued message the user's stop gave back to the box (live.rs stop): its line says so in its place, so the
+            // blocks after it keep their places (design review 13)
+            (Some("harness_unqueued"), _) => {
+                let text = s(&e["text"]);
+                if let Some(i) = self.blocks.iter().rposition(|b| matches!(b, Block::Prompt(p) if *p == text)) {
+                    let first: String = text.lines().next().unwrap_or_default().chars().take(80).collect();
+                    let more = if first.chars().count() < text.trim_end().chars().count() { "…" } else { "" };
+                    self.blocks[i] = Block::Notice { text: format!("not sent, back in the box: {first}{more}"), error: false, ended: false };
+                    self.last_prompt = self.blocks.iter().rev().find_map(|b| if let Block::Prompt(p) = b { Some(p.clone()) } else { None }).unwrap_or_default();
+                }
+            }
             // the window's Retry (live.rs retry): the last message's failed try goes (its error, its receipt, a card), its
             // calls go under the new reply's receipt, and the work on it begins again under the same message
             // what came after it stays (a switch's "continued on" line: the new reply comes under it)
@@ -961,6 +1002,7 @@ impl Session {
                 let d = p.and_then(|p| self.blocks[p..].iter().rposition(|b| matches!(b, Block::Done(_))).map(|d| p + d));
                 if let (Some(p), Some(d)) = (p, d) {
                     self.blocks.drain(p + 1..=d);
+                    self.unmark(|i| (p + 1..=d).contains(&i));
                     let moved = |i: usize| if i <= p { i } else if i <= d { p + 1 } else { i - (d - p) };
                     self.changes.retain(|c| c.at_block <= p || c.at_block > d);
                     for c in &mut self.changes {
@@ -1124,12 +1166,13 @@ impl Session {
                     let think = self.blocks[..m].iter().rev().take_while(|b| matches!(b, Block::Thinking { .. })).count();
                     let done = self.blocks[m..].iter().position(|b| matches!(b, Block::Done(_))).map(|i| m + i);
                     let chat = self.blocks[from..m].iter().position(|b| matches!(b, Block::Notice { text, .. } if text.starts_with("answered as a chat"))).map(|i| from + i);
+                    let gone = |i: usize| (m - think..=m).contains(&i) || Some(i) == done || Some(i) == chat;
                     let mut i = 0;
                     self.blocks.retain(|_| {
-                        let gone = (m - think..=m).contains(&i) || Some(i) == done || Some(i) == chat;
                         i += 1;
-                        !gone
+                        !gone(i - 1)
                     });
+                    self.unmark(gone);
                     self.call_thinking.clear();
                 }
                 let line = s(&e["text"]);
@@ -2254,6 +2297,52 @@ mod tests {
         let v = s.view();
         let done: Vec<&Value> = v["blocks"].as_array().unwrap().iter().filter(|b| b["kind"] == "done").collect();
         assert_eq!((&done[0]["sub_calls"], done[1].get("sub_calls"), v["calls"].as_array().unwrap().len()), (&json!(2), None, 1));
+    }
+
+    /// A send the app refused: its notice says so in the view (`rejected`), an error before it does not.
+    #[test]
+    fn a_refused_sends_notice_is_marked_in_the_view() {
+        let mut s = Session::new("", "");
+        s.apply(&json!({"type": "harness_info", "text": "the model's process exited", "error": true}), 0.0);
+        let from = s.blocks.len();
+        s.apply(&json!({"type": "harness_user", "text": "hi"}), 1.0);
+        s.apply(&json!({"type": "harness_info", "text": crate::models::CLAUDE_MISSING, "error": true, "ended": true}), 2.0);
+        s.mark_rejected(from);
+        let v = s.view();
+        let notices: Vec<&Value> = v["blocks"].as_array().unwrap().iter().filter(|b| b["kind"] == "notice").collect();
+        assert_eq!(notices.iter().map(|b| b.get("rejected").cloned()).collect::<Vec<_>>(), [None, Some(json!(true))], "{notices:?}");
+        assert_eq!((notices[1]["error"].as_bool(), notices[1]["ended"].as_bool()), (Some(true), Some(true)), "the other fields as they were");
+        // a mode picked just before the send says so first: only the refusal's own notice is marked
+        let mut s = Session::new("", "");
+        s.apply(&json!({"type": "harness_user", "text": "a"}), 0.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "result": "ok", "total_cost_usd": 0.0}), 1.0);
+        let from = s.blocks.len();
+        s.apply(&json!({"type": "harness_info", "text": "mode: ask"}), 2.0);
+        s.apply(&json!({"type": "harness_info", "text": "refused", "error": true, "ended": true}), 3.0);
+        s.mark_rejected(from);
+        let marked = |s: &Session| s.view()["blocks"].as_array().unwrap().iter().filter(|b| b["rejected"] == true).map(|b| b["text"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        assert_eq!(marked(&s), ["refused"]);
+        // blocks before it go (a retry of the message before it): the mark stays on its notice
+        s.apply(&json!({"type": "harness_retry"}), 4.0);
+        assert_eq!(marked(&s), ["refused"], "{:?}", s.rejected);
+        // and goes with it (/rewind)
+        let n = s.blocks.len() - 1;
+        s.truncate(n);
+        assert!(marked(&s).is_empty() && s.rejected.is_empty());
+    }
+
+    /// A queued message the stop gave back to the box says so in its place, and the blocks after it keep theirs.
+    #[test]
+    fn a_queued_message_given_back_says_so_in_its_place() {
+        let mut s = Session::new("", "");
+        s.apply(&json!({"type": "harness_user", "text": "slow one"}), 0.0);
+        s.apply(&json!({"type": "harness_user", "text": "a follow up\nwith a second line"}), 1.0);
+        s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "Thinking slowly."}]}}), 2.0);
+        let n = s.blocks.len();
+        s.apply(&json!({"type": "harness_unqueued", "text": "a follow up\nwith a second line"}), 3.0);
+        assert_eq!(s.blocks.len(), n);
+        assert!(s.blocks.iter().any(|b| matches!(b, Block::Notice { text, .. } if text == "not sent, back in the box: a follow up…")));
+        assert!(!s.blocks.iter().any(|b| matches!(b, Block::Prompt(p) if p.starts_with("a follow up"))) && s.last_prompt == "slow one");
     }
 
     #[test]
