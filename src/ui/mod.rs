@@ -3904,27 +3904,27 @@ mod tests {
         s.turn_usage = (0..40).map(|i| crate::session::Usage { input: 10, cache_write: 100, cache_read: 50_000, output: 200 + 300 * (i % 7) }).collect();
         s.calls.push(crate::session::CallTime { ttft_ms: Some(1500.0), gen_ms: 10_000.0, out: 12_000, total_ms: 11_500.0 });
         let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
-        let render = |v: &View, width: u16, height: u16| {
+        let render = |s: &Session, v: &View, width: u16, height: u16| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
             let mut areas = Areas::default();
-            term.draw(|f| { areas = draw(f, &s, v); }).unwrap();
+            term.draw(|f| { areas = draw(f, s, v); }).unwrap();
             let buf = term.backend().buffer().clone();
             let rows: Vec<String> = (0..buf.area.height).map(|y| (width - 38..width).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect();
             (rows.join("\n"), areas)
         };
-        let (side, areas) = render(&v, 120, 44);
+        let (side, areas) = render(&s, &v, 120, 44);
         assert!(side.contains("×14") && side.contains("30.7m") && side.contains("avg 2.2m"), "{side}");
         assert!(side.contains("2.0k") && side.contains("out per call · #"), "an axis label and the caption: {side}");
         assert_eq!(areas.tool_rows.len(), 1);
         let (rect, first) = areas.bars.unwrap();
         v.hover_call = Some(first + 2);
-        let (side, _) = render(&v, 120, 44);
+        let (side, _) = render(&s, &v, 120, 44);
         assert!(side.contains(&format!("#{}", first + 3)) && rect.width > 10, "{side}");
         v.hover_call = None;
         for (width, height) in [(120, 34), (175, 48)] {
             for live in [true, false] {
                 v.live = live;
-                let (side, areas) = render(&v, width, height);
+                let (side, areas) = render(&s, &v, width, height);
                 let text = side.lines().map(|l| l.trim_matches(['│', ' '])).collect::<Vec<_>>().join(" ");
                 assert!(text.contains("1200 tok/s writing") && text.contains("1043 end to end") && text.contains("1.5s to first token"), "all pace metrics must fit the fixed rail at {width}×{height}, live={live}: {side}");
                 let chart = areas.bars.unwrap().0;
@@ -3932,6 +3932,33 @@ mod tests {
                 assert!(side.contains("out per call · #"), "keep the chart caption: {side}");
             }
         }
+        // The real live case had three tool types. A replay/single-tool fixture left enough rail space and hid the bug.
+        for (i, block) in s.blocks.iter_mut().enumerate() {
+            if let Block::Tool(t) = block { t.name = ["bash", "edit", "write"][i % 3].into(); }
+        }
+        v.live = true;
+        let (side, areas) = render(&s, &v, 120, 34);
+        assert!(areas.bars.unwrap().0.height >= 2, "keep the zero axis with three live tool types: {side}");
+        let text = side.lines().map(|l| l.trim_matches(['│', ' '])).collect::<Vec<_>>().join(" ");
+        assert!(text.contains("1200 tok/s writing") && text.contains("1043 end to end") && text.contains("1.5s to first token"), "complete pace labels in a crowded live rail: {side}");
+        assert_eq!(areas.tool_rows.len(), 3);
+        for label in ["cache read", "cache write", "estimate (list prices)", "no file changed yet", "bash", "edit", "write"] {
+            assert!(side.contains(label), "preserve other panel content ({label}): {side}");
+        }
+        for input in ["!", "first line\nsecond line"] {
+            v.input = input.into();
+            v.cursor = input.len();
+            let (side, areas) = render(&s, &v, 120, 34);
+            let text = side.lines().map(|l| l.trim_matches(['│', ' '])).collect::<Vec<_>>().join(" ");
+            assert!(areas.bars.unwrap().0.height >= 2 && side.contains("out per call · #") && text.contains("1.5s to first token"), "keep both axes, caption and pace with an extra composer row: {side}");
+        }
+        v.input.clear();
+        v.cursor = 0;
+        s.cache_ttl_ms = Some(300_000.0);
+        s.last_call_ms = Some(0.0);
+        s.credits.push(("other".into(), Some("$0.50".into())));
+        let (side, _) = render(&s, &v, 120, 34);
+        assert!(side.contains("cache life") && side.contains("other $0.50"), "populated optional rows must remain: {side}");
     }
 
     #[test]

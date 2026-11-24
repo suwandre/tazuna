@@ -80,15 +80,24 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     }
 
     let tools = tool_tally(s);
+    let tools_height = tools.len().max(1) as u16 + if s.turn_usage.is_empty() { 3 } else { 2 };
+    let accounts = account_rows(s, th);
+    let cache_life = s.cache_left(v.clock_ms).zip(s.cache_ttl_ms);
+    // Reclaim genuinely empty rows before the layout compresses the chart and pace summary. In a live rail with
+    // several tool types, reserving absent cache-life and second-account rows clipped both the zero axis and TTFT.
+    // Keep the usual spacing when there is room, and never remove a populated cache/account row.
+    let crowded = !s.turn_usage.is_empty() && side.height < 5 + 6 + 9 + 5 + tools_height + 3;
+    let context_rows = if crowded && cache_life.is_none() { 3 } else { 4 };
+    let cost_rows = if crowded && accounts.1.width() == 0 { 2 } else { 3 };
     let [p_session, p_context, p_tokens, p_cost, p_tools, p_files] = Layout::vertical([
         Constraint::Length(5),
-        Constraint::Length(6),
+        Constraint::Length(context_rows + 2),
         // the tokens chart once there are calls: before the first, one line (an empty chart with a lone "0" read as broken)
         Constraint::Length(if s.turn_usage.is_empty() { 3 } else { 9 }),
-        Constraint::Length(5),
+        Constraint::Length(cost_rows + 2),
         // Give the pace summary its extra row instead of leaving a blank row below the tools. The chart keeps its
         // height (and zero axis label) even when the rail has to compress at 120×34.
-        Constraint::Length(tools.len().max(1) as u16 + if s.turn_usage.is_empty() { 3 } else { 2 }),
+        Constraint::Length(tools_height),
         Constraint::Min(3),
     ])
     .areas(side);
@@ -114,7 +123,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let b = panel("context", th);
     let a = b.inner(p_context).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(b, p_context);
-    let [g1, g2, g3, g4] = Layout::vertical([Constraint::Length(1); 4]).areas(a);
+    let [g1, g2, g3, g4] = Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(context_rows - 3)]).areas(a);
     // the window as the model reports it: none until claude's first result, none on the own loop, and then the count alone,
     // no gauge (the window stood at "1% of 200k" for a local model, review 12)
     match s.context_window {
@@ -137,7 +146,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     gauge(f, g2, s.usage.cache_hit(), &format!("{:<12}{} {:.0}%{last}", "cache read", human(s.usage.cache_read), s.usage.cache_hit() * 100.0), if misses == 0 { th.accent } else { th.warn }, th);
     f.render_widget(Paragraph::new(Line::from(vec![Span::styled(format!("{:<12}", "cache write"), st(th.text)), Span::styled(human(s.usage.cache_write), st(th.text)), Span::styled(miss, st(th.warn))])), g3);
     // how long the cache stays warm: after that the next call writes the whole context again
-    if let (Some(left), Some(ttl)) = (s.cache_left(v.clock_ms), s.cache_ttl_ms) {
+    if let Some((left, ttl)) = cache_life {
         let life = if ttl >= 3_600_000.0 { "1h" } else { "5m" };
         // expired: what the next message costs, before it is sent (Session::rebuild)
         let cold = s.rebuild().map_or(String::new(), |(t, _)| format!(" · next re-reads {}", human(t)));
@@ -146,16 +155,18 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     }
 
     // tokens per turn
-    let b = hot_panel("tokens", th, under_mouse(v, p_tokens) && !s.turn_usage.is_empty());
+    let mut b = hot_panel("tokens", th, under_mouse(v, p_tokens) && !s.turn_usage.is_empty());
     let a = b.inner(p_tokens).inner(Margin { horizontal: 1, vertical: 0 });
-    f.render_widget(b, p_tokens);
     let mut bars_at = None;
     if s.turn_usage.is_empty() {
         f.render_widget(Paragraph::new(Span::styled("no model calls yet", st(th.faint))), a);
     } else {
         // The fixed-width rail needs two rows for writing rate, end-to-end rate and first-token time. More terminal
         // columns widen the transcript, not this rail, so a single row clipped the last label even in a wide window.
-        let [t1, chart, caption, pace] = Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1), Constraint::Length(2)]).areas(a);
+        // An extra composer row can leave only five content rows. Put the caption on the existing lower border
+        // then, rather than collapsing the chart's zero axis or hiding a pace label.
+        let compact_chart = a.height < 6;
+        let [t1, chart, caption, pace] = Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(u16::from(!compact_chart)), Constraint::Length(2)]).areas(a);
         // a y axis beside the bars: the tallest bar's value on top, 0 at the bottom (a user could not read the bare bars)
         let [axis, spark] = Layout::horizontal([Constraint::Length(5), Constraint::Min(1)]).areas(chart);
         f.render_widget(
@@ -173,7 +184,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         let first = data.len().saturating_sub(spark.width as usize);
         let top = data[first..].iter().copied().max().unwrap_or(0);
         // one bar per model call, the newest on the right; the mouse over a bar names that call, a click lists them all
-        let label = match v.hover_call.filter(|i| *i < data.len()) {
+        let mut label = match v.hover_call.filter(|i| *i < data.len()) {
             Some(i) => {
                 let c = s.calls.get(i);
                 let mut l = vec![Span::styled(format!("#{} ", i + 1), st(th.faint)), Span::styled(human(data[i]), st(th.text)), Span::styled(" out", st(th.faint))];
@@ -188,7 +199,13 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
             None if data.is_empty() => Line::from(Span::styled("output per model call", st(th.faint))),
             None => Line::from(Span::styled(format!("out per call · #{}–{} · click", first + 1, data.len()), st(th.faint))),
         };
-        f.render_widget(Paragraph::new(label), caption);
+        if compact_chart {
+            label.spans.insert(0, Span::raw(" "));
+            label.spans.push(Span::raw(" "));
+            b = b.title_bottom(label);
+        } else {
+            f.render_widget(Paragraph::new(label), caption);
+        }
         let mut ylab = vec![Line::from(Span::styled(format!("{:>4}", human(top)), st(th.faint)))];
         ylab.extend((1..axis.height.saturating_sub(1)).map(|_| Line::default()));
         if axis.height > 1 {
@@ -231,9 +248,9 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         f.render_widget(Sparkline::default().data(bars).max(top.max(1)).style(st(th.dim)), spark);
         bars_at = Some((spark, first));
     }
+    f.render_widget(b, p_tokens);
 
     // cost
-    let accounts = account_rows(s, th);
     let b = hot_panel("cost · click: all accounts", th, under_mouse(v, p_cost));
     let a = b.inner(p_cost).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(b, p_cost);
