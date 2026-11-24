@@ -77,9 +77,11 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         Constraint::Length(5),
         Constraint::Length(6),
         // the tokens chart once there are calls: before the first, one line (an empty chart with a lone "0" read as broken)
-        Constraint::Length(if s.turn_usage.is_empty() { 3 } else { 8 }),
+        Constraint::Length(if s.turn_usage.is_empty() { 3 } else { 9 }),
         Constraint::Length(5),
-        Constraint::Length(tools.len().max(1) as u16 + 3),
+        // Give the pace summary its extra row instead of leaving a blank row below the tools. The chart keeps its
+        // height (and zero axis label) even when the rail has to compress at 120×34.
+        Constraint::Length(tools.len().max(1) as u16 + if s.turn_usage.is_empty() { 3 } else { 2 }),
         Constraint::Min(3),
     ])
     .areas(side);
