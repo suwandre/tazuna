@@ -29,6 +29,8 @@ type Props = {
   jumps?: boolean;
   /** runs the last failed turn again, without a second message (core C11) */
   onRetry?: () => void;
+  /** a message waiting behind the reply: stop the reply and send this one now */
+  onSendNow?: (text: string) => void;
   /** the message whose Retry works: the last reply (set by Transcript) */
   lastReply?: number;
   /** an image file an answer names, as a data URL (it fails for a file that is not there) */
@@ -277,7 +279,7 @@ function Ticking({ since }: { since: number }) {
 // tazuna's own parts of a message, registered in their spots (src/builtins.tsx)
 
 export function UserMessage({ message: m }: { message: Message }) {
-  const { busy, onEdit } = useTranscript();
+  const { busy, onEdit, onSendNow } = useTranscript();
   const [all, setAll] = useState(false);
   if (m.role !== "user") return null;
   // the note tazuna adds after an undo ("[tazuna: ...]") is shown as what it is, apart from the message
@@ -290,7 +292,8 @@ export function UserMessage({ message: m }: { message: Message }) {
       <div className="flex items-start gap-1">
         {/* a long message (a pasted log, eight lines of links) folds to six lines; all of it on a click (design review 5) */}
         <div className="inline-block max-w-full select-text rounded-lg bg-field px-3.5 py-2.5 text-ink">
-          <div className={!all && long ? "line-clamp-6 break-words" : "break-words"}>{inlineCode(text)}</div>
+          {/* as typed or pasted: its line breaks and tabs kept (a pasted table or list ran together into one paragraph) */}
+          <div className={`whitespace-pre-wrap break-words ${!all && long ? "line-clamp-6" : ""}`}>{inlineCode(text)}</div>
           {long && <button onClick={() => setAll(!all)} className="mt-1 text-[12px] text-muted hover:text-ink">{all ? "Show less" : "Show all"}</button>}
         </div>
         {m.edit && onEdit && !busy && (
@@ -298,7 +301,9 @@ export function UserMessage({ message: m }: { message: Message }) {
             className="mt-1.5 flex-none rounded p-1 text-faint opacity-0 hover:bg-hover hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"><Pencil size={13} strokeWidth={1.5} /></button>
         )}
       </div>
-      {m.queued && <div className="mt-1 text-[11.5px] text-faint">Queued: goes after this reply</div>}
+      {m.queued && <div className="mt-1 flex items-center gap-2 text-[11.5px] text-faint">Queued: goes after this reply
+        {m.held && onSendNow && <button onClick={() => onSendNow(m.text)} title="Stop the reply and send this message now (a command still running stops too)"
+          className="rounded px-1 text-muted underline-offset-2 hover:text-ink hover:underline">Send now</button>}</div>}
     </>
   );
 }

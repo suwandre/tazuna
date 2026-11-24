@@ -1,7 +1,7 @@
 import { ArrowUp, Check, ChevronDown, FileText, FolderOpen, Gauge, MessageCircle, Paperclip, Plus, Shield, Square, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { quotePath, type ModelChoice, type Models } from "../lib/tazuna";
-import { modelLabel, type Session } from "../lib/types";
+import { keysOf, modelLabel, type Session } from "../lib/types";
 import { Slot } from "../lib/slots";
 import { EffortMenu, Menu, ModelPicker, usePlace } from "./ModelPicker";
 import { Sep } from "./Sep";
@@ -30,6 +30,8 @@ type Props = {
   /** An editable preview draft, never submitted or cleared by Send/Enter. */
   readOnly?: boolean;
   session: Session; threadCost: number; busy?: boolean; sendBlocked?: boolean; onSend?: (text: string, draft: string) => void; onStop?: () => void;
+  /** ⌘↩ during a reply: stop it and send this message at once, instead of after it */
+  onSendNow?: (text: string, draft: string) => void;
   /** a new conversation: where it runs (a chat or a project), changed from the box */
   where?: Where;
   /** a plain chat (no project) */
@@ -102,7 +104,7 @@ export const MODES: [string, string][] = [
 // one line always (a narrow window wrapped "Opus 5.5" onto two), and readable while a reply runs (faded, they read as broken)
 const pill = "inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink disabled:cursor-default disabled:text-muted";
 
-export function Composer({ session, where, chat, busy, sendBlocked, onSend, onStop, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {}, readOnly = false }: Props) {
+export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSendNow, onStop, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {}, readOnly = false }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   // attachments are chips over the text, with a thumbnail for an image (until desktop 0.1.87 their paths were typed into
   // the message, and a screenshot was a line of path)
@@ -177,11 +179,11 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSt
   const bag: ComposerBag = { readOnly, where, chat, session, busy, sendBlocked, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, attach: (p) => { attach(p); }, picker };
   // a message sent during a reply waits behind it (the core queues it, as the terminal does)
   // attachments go in the message as paths after its text (quoted when they hold a space): the core sends images as images
-  const send = () => {
+  const send = (now = false) => {
     if (readOnly || (!files.length && run(text.trim())) || sendBlocked) return;
     const paths = files.map(quotePath).join(" "), t = [text.trim(), paths].filter(Boolean).join(" ");
     if (!t) return;
-    onSend?.(t, [text, paths].filter(Boolean).join(" ")); setText(""); setFiles([]);
+    (now && onSendNow ? onSendNow : onSend)?.(t, [text, paths].filter(Boolean).join(" ")); setText(""); setFiles([]);
   };
   const ready = !readOnly && !sendBlocked && (!!text.trim() || files.length > 0);
   return (
@@ -213,15 +215,15 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSt
               if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) { e.preventDefault(); take(menu.items[sel] ?? menu.items[0]); return; }
               if (e.key === "Escape") { e.preventDefault(); setShut(true); return; }
             }
-            if (e.key === "Tab" && e.shiftKey && onMode) { e.preventDefault(); nextMode(); } if (e.key === "Escape" && busy) onStop?.(); if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
-          placeholder={readOnly ? "Try writing here. Nothing will be sent." : busy ? "Type your next message: it goes after this reply" : "Ask anything, or describe a change…  / for commands, @ for files"} className="max-h-[40vh] w-full resize-none overflow-y-auto bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
+            if (e.key === "Tab" && e.shiftKey && onMode) { e.preventDefault(); nextMode(); } if (e.key === "Escape" && busy) onStop?.(); if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(busy && (e.metaKey || e.ctrlKey)); } }}
+          placeholder={readOnly ? "Try writing here. Nothing will be sent." : busy ? `Type your next message: it goes after this reply · ${keysOf("⌘↵")} sends it now` : "Ask anything, or describe a change…  / for commands, @ for files"} className="max-h-[40vh] w-full resize-none overflow-y-auto bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
         <div className="flex items-center gap-1.5">
           <Slot name="composer.pills" props={{ composer: bag }} />
           <span className="flex-1" />
           {busy && !ready
             ? <button onClick={onStop} title="Stop (Esc)" className="grid size-[30px] flex-none place-items-center rounded-full bg-ink text-canvas"><Square size={12} strokeWidth={2} fill="currentColor" /></button>
             // solid only when there is something to send (a faded accent read as broken)
-            : <button onClick={send} aria-label="Send" title={readOnly ? "Read-only demo — no agent connected" : busy ? "Send after this reply (Enter)" : "Send (Enter)"} disabled={!ready}
+            : <button onClick={() => send()} aria-label="Send" title={readOnly ? "Read-only demo — no agent connected" : busy ? `Send after this reply (Enter; ${keysOf("⌘↵")} sends now)` : "Send (Enter)"} disabled={!ready}
                 className={`grid size-[30px] flex-none place-items-center rounded-full ${ready ? "bg-accent text-on-accent" : "border border-line bg-field text-faint"}`}><ArrowUp size={16} strokeWidth={1.75} /></button>}
         </div>
       </div>

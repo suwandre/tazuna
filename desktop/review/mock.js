@@ -426,6 +426,12 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
       m({ ...v, from: 0, activity: "Thinking", blocks: [...v.blocks, { kind: "prompt", text: args.text }] });
       return null;
     }
+    // Stop (and Send now, which stops first): the reply ends
+    if (cmd === "interrupt" && window.__DRAFT_SEND_SUCCESS__ && last[tid]) {
+      const v = last[tid];
+      m({ ...v, from: 0, activity: "Done", blocks: [...v.blocks, { kind: "done", ok: false, secs: 1, turns: 0, cost: 0, usage: u(0, 0, 0), stopped: true }] });
+      return null;
+    }
     if (cmd === "op" && msg.op === "resume" && views[msg.id]) { setTimeout(() => T.view(tid, views[msg.id]), 10); return null; }
     // Retry: the failed turn's error makes way for the new reply; no second message of yours
     if (cmd === "op" && msg.op === "retry") {
