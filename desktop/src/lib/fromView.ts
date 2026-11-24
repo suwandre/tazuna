@@ -136,6 +136,8 @@ export function messages(v: View): Message[] {
       // an error the reply went on past (a tool server that failed to start) stays in sight, in words; a provider's retry
       // shows only if the reply then fails
       if (b.error) (current().notes ??= []).push(b.text);
+      // the message could not start (claude not found): its turn is over, so the next is not queued behind it
+      if (b.ended) { open = false; const next = queue.shift(); if (next !== undefined) prompt(next); }
     }
   }
   for (const text of queue) out.push({ role: "user", text, queued: true });
@@ -174,6 +176,9 @@ export function demoView() {
   if (live.role !== "agent" || !live.retrying || ended.role !== "agent" || ended.retrying || !ended.failure?.raw.includes("2 tries")) throw new Error("retry notice");
   const answering = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "x" }, retry, { kind: "text", text: "Here", live: true }] } as View)[1];
   if (answering.role !== "agent" || answering.retrying) throw new Error("retry notice once the text comes");
+  const refused = { kind: "notice", text: "starting claude: program not found", error: true, ended: true } as const;
+  const after = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "a" }, refused, { kind: "prompt", text: "b" }, refused] } as View);
+  if (after.some((m) => m.role === "user" && m.queued) || after.filter((m) => m.role === "user").length !== 2) throw new Error(`a refused message holds up the next: ${JSON.stringify(after)}`);
   // a long answer, then a to-do step, then "Done.": the answer stays the answer
   const long = `${"The cache is keyed on the lock file. ".repeat(4)}\n\n- one\n- two`;
   const kept = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "a" }, { kind: "text", text: long, live: false }, { ...bash, name: "TodoWrite" }, { kind: "text", text: "Done.", live: false }, done] } as View)[1];

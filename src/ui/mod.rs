@@ -2030,7 +2030,7 @@ fn block_lines(b: &Block, i: usize, s: &Session, v: &View, th: &Theme, o: &Opts,
         Block::Verify(x) => verify_lines(x, v, th),
         // a long notice (a provider's error) shows its start until clicked, then all of it
         // a provider's error reads as its message ("provider error: [404] … not found"), the raw reply on a click
-        Block::Notice { text, error } => {
+        Block::Notice { text, error, .. } => {
             // claude not signed in: without the window's Settings and Retry
             let text = if text == crate::session::CLAUDE_NOT_SIGNED_IN { CLAUDE_NOT_SIGNED_IN } else { text.as_str() };
             let shown = if open { text.to_string() } else { readable_notice(text).or_else(|| lane_notice(text)).or_else(|| model_notice(text)).unwrap_or_else(|| text.to_string()) };
@@ -4127,7 +4127,7 @@ mod tests {
         assert_eq!(hits.len(), 2);
         // a notice longer than NOTICE_CHARS: cut and clickable, opened all of it
         let mut s = Session::new("", "medium");
-        s.blocks.push(Block::Notice { text: "x".repeat(300), error: false });
+        s.blocks.push(Block::Notice { text: "x".repeat(300), error: false, ended: false });
         let lines = |open: bool| block_lines(&s.blocks[0], 0, &s, &View { design: Design::Cockpit, expand_all: open, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 }, Design::Cockpit.theme(), &cockpit::OPTS, open, 400).iter().map(|(l, _)| l.to_string()).collect::<String>();
         assert!(lines(false).contains("click to show") && !lines(true).contains("click to show"));
     }

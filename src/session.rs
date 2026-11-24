@@ -11,7 +11,8 @@ pub enum Block {
     Tool(Tool),
     Done(Summary),
     /// Harness messages: stopped runs, process exits.
-    Notice { text: String, error: bool },
+    /// `ended`: the run ended on it (a message that could not start): that message's turn is over.
+    Notice { text: String, error: bool, ended: bool },
     /// tazuna running the tests after claude said it was done.
     Verify(Verify),
     /// A model call the provider refused, tried again by the own loop: one block for all its tries. Each try was a
@@ -609,8 +610,9 @@ impl Session {
                 v
             }
             // a switch that carries the conversation to another model (live.rs switch): a line where it continues
-            Block::Notice { text, error } => match text.split_once(": the conversation continues on ").filter(|_| text.starts_with("model: ")) {
+            Block::Notice { text, error, ended } => match text.split_once(": the conversation continues on ").filter(|_| text.starts_with("model: ")) {
                 Some((_, model)) => json!({"kind": "notice", "text": format!("── continued on {model} ──"), "error": error}),
+                None if *ended => json!({"kind": "notice", "text": text, "error": error, "ended": true}),
                 None => json!({"kind": "notice", "text": text, "error": error}),
             },
             // the app has no block of its own for it: a notice, an error once the run ended on it
@@ -854,7 +856,7 @@ impl Session {
             let name = m["name"].as_str().unwrap_or_default().to_string();
             if ours.contains(&name) {
                 let why = m["error"].as_str().map_or_else(|| format!("did not connect (/mcp login {name} if it needs a login)"), String::from);
-                self.push_aside(Block::Notice { text: format!("MCP {name}: {why}"), error: true });
+                self.push_aside(Block::Notice { text: format!("MCP {name}: {why}"), error: true, ended: false });
             }
         }
     }
@@ -897,7 +899,7 @@ impl Session {
                 self.activity = Activity::Waiting;
             }
             (Some("system"), Some("compact_boundary")) => {
-                self.push(Block::Notice { text: "── context compacted: earlier turns are now a summary ──".into(), error: false });
+                self.push(Block::Notice { text: "── context compacted: earlier turns are now a summary ──".into(), error: false, ended: false });
             }
             // a refused call that is tried again ("HTTP 429: … · trying again in 8s"): the block of the call's earlier
             // tries is updated, a first try starts one
@@ -940,7 +942,7 @@ impl Session {
                 } else {
                     msg
                 };
-                self.push(Block::Notice { text: format!("{what} · {}", shown(&text, 4000)), error: false });
+                self.push(Block::Notice { text: format!("{what} · {}", shown(&text, 4000)), error: false, ended: false });
             }
             (Some("harness_user"), _) => {
                 self.clock_on(at_ms);
@@ -1005,7 +1007,7 @@ impl Session {
             }
             (Some("harness_verify_feedback"), _) => {
                 let text = format!("↻ sent the failing tests back to claude (round {} of {})", e["round"], e["max"]);
-                self.push(Block::Notice { text, error: false });
+                self.push(Block::Notice { text, error: false, ended: false });
                 self.clock_on(at_ms);
                 self.activity = Activity::Waiting;
             }
@@ -1013,11 +1015,11 @@ impl Session {
                 (self.model, self.effort) = (s(&e["model"]), s(&e["effort"]));
                 self.profile = s(&e["profile"]);
                 self.lane = e.clone();
-                self.push(Block::Notice { text: lane_text(e), error: false });
+                self.push(Block::Notice { text: lane_text(e), error: false, ended: false });
             }
             (Some("harness_profile"), _) => {
                 self.profile = s(&e["profile"]);
-                self.push(Block::Notice { text: s(&e["text"]), error: false });
+                self.push(Block::Notice { text: s(&e["text"]), error: false, ended: false });
             }
             (Some("harness_escalate"), _) => {
                 // the old process is gone: its reported cost is final. The hand-over to the stronger model is work ("Working
@@ -1027,16 +1029,16 @@ impl Session {
                 (self.model, self.effort) = (s(&e["model"]), s(&e["effort"]));
                 (self.provider, self.price_m) = (None, None);
                 let text = format!("↑ tests failed on the cheap lane: fixing on {} {}", self.model.trim_start_matches("claude-"), self.effort);
-                self.push(Block::Notice { text, error: false });
+                self.push(Block::Notice { text, error: false, ended: false });
             }
             (Some("harness_verify_cancel"), _) => {
-                self.push(Block::Notice { text: "verification cancelled · the run ends when the tests return".into(), error: false });
+                self.push(Block::Notice { text: "verification cancelled · the run ends when the tests return".into(), error: false, ended: false });
                 self.activity = Activity::Ready;
                 self.verify_cancelled = true;
             }
             // UI-only message (not from the process): no effect on cost or tools
             (Some("harness_review_start"), _) => {
-                self.push(Block::Notice { text: format!("review: {} is checking the change against the task", s(&e["model"])), error: false })
+                self.push(Block::Notice { text: format!("review: {} is checking the change against the task", s(&e["model"])), error: false, ended: false })
             }
             (Some("harness_review_done"), _) => {
                 let n = e["issues"].as_array().map_or(0, Vec::len);
@@ -1045,11 +1047,11 @@ impl Session {
                     (None, true) => "review: no problems found".to_string(),
                     (None, false) => format!("review: {n} problem{} sent back", if n == 1 { "" } else { "s" }),
                 };
-                self.push(Block::Notice { text, error: false })
+                self.push(Block::Notice { text, error: false, ended: false })
             }
             (Some("harness_review"), _) => {
                 self.clock_on(at_ms); // a round of its own, after the result
-                self.push(Block::Notice { text: "self-review: checking the change against the task".into(), error: false })
+                self.push(Block::Notice { text: "self-review: checking the change against the task".into(), error: false, ended: false })
             }
             (Some("harness_permission"), _) => {
                 self.asked.push_back((s(&e["tool"]), e["input"].clone()));
@@ -1062,7 +1064,7 @@ impl Session {
             }
             (Some("harness_permission_cleared"), _) => {
                 self.asked.clear();
-                self.push(Block::Notice { text: "open permission questions dropped: claude stopped".into(), error: false });
+                self.push(Block::Notice { text: "open permission questions dropped: claude stopped".into(), error: false, ended: false });
             }
             (Some("harness_permission_done"), _) => {
                 // the step runs from the answer: the wait for it was the user's ("Ran ls -la 7.7 s" after 7 s of it, review 12).
@@ -1082,14 +1084,14 @@ impl Session {
                 };
                 // the lean tools by their own names ("allowed bash")
                 let tool = s(&e["tool"]);
-                self.push(Block::Notice { text: format!("{verb} {}", tool.strip_prefix("mcp__lean__").unwrap_or(&tool)), error: false });
+                self.push(Block::Notice { text: format!("{verb} {}", tool.strip_prefix("mcp__lean__").unwrap_or(&tool)), error: false, ended: false });
             }
             (Some("harness_mode"), _) => {
                 self.mode = mode_name(e["mode"].as_str().unwrap_or_default()).to_string();
                 // shift-tab through the modes changes one line, not one line a press (design review 4)
                 match self.blocks.last_mut() {
                     Some(Block::Notice { text, .. }) if text.starts_with("mode: ") => *text = format!("mode: {}", self.mode),
-                    _ => self.push(Block::Notice { text: format!("mode: {}", self.mode), error: false }),
+                    _ => self.push(Block::Notice { text: format!("mode: {}", self.mode), error: false, ended: false }),
                 }
             }
             // the first session after an upgrade: its versions as a block of their own (ui news_lines)
@@ -1100,7 +1102,7 @@ impl Session {
             // tazuna's own line (a hook that failed, a setting saved): beside the run, which goes on. `ended`: a message on
             // screen that could not start, so nothing runs for it
             (Some("harness_info"), _) => {
-                self.push_aside(Block::Notice { text: s(&e["text"]), error: e["error"] == true });
+                self.push_aside(Block::Notice { text: s(&e["text"]), error: e["error"] == true, ended: e["ended"] == true });
                 if e["ended"] == true {
                     self.clock_off(at_ms, 0.0);
                     self.activity = Activity::Ready;
@@ -1133,7 +1135,7 @@ impl Session {
                 let line = s(&e["text"]);
                 if !line.is_empty() {
                     let line = if at == last { line } else { format!("{line} · {}", shown(&q, 60)) };
-                    self.push(Block::Notice { text: line, error: false });
+                    self.push(Block::Notice { text: line, error: false, ended: false });
                 }
                 self.clock_on(at_ms);
                 self.ready_at = Some(at_ms);
@@ -1171,7 +1173,7 @@ impl Session {
                 if let Some(m) = e["model"].as_str() {
                     self.model = m.to_string(); // a level that is its own id (OmniRoute's)
                 }
-                self.push(Block::Notice { text: s(&e["text"]), error: false });
+                self.push(Block::Notice { text: s(&e["text"]), error: false, ended: false });
             }
             (Some("harness_switch"), _) => {
                 // /model: the old process is gone
@@ -1189,7 +1191,7 @@ impl Session {
                 (self.provider, self.price_m) = (None, None); // the next process says its own
                 self.context_window = None; // the next model reports its own (the own loop's: none)
                 self.cache_ttl_ms = None;
-                self.push(Block::Notice { text: s(&e["text"]), error: false });
+                self.push(Block::Notice { text: s(&e["text"]), error: false, ended: false });
             }
             (Some("rate_limit_event"), _) => {
                 let w = &e["rate_limit_info"]["unifiedWindows"];
@@ -1209,7 +1211,7 @@ impl Session {
                 // and no result either: its run ends here, or the next reply would count from the killed one's start
                 let secs = self.working_for(at_ms) / 1000.0;
                 self.clock_off(at_ms, 0.0);
-                self.push(Block::Notice { text: s(&e["text"]), error: e["error"].as_bool().unwrap_or(false) });
+                self.push(Block::Notice { text: s(&e["text"]), error: e["error"].as_bool().unwrap_or(false), ended: false });
                 self.close_run(secs, stopped, cut);
                 // the process ended: its reported cost is final, the next one starts from $0
                 self.close_process();
@@ -1293,7 +1295,7 @@ impl Session {
                 if e["num_turns"] == 0 && self.last_prompt.starts_with('/') {
                     if self.last_prompt.trim() == "/clear" {
                         self.todos.clear();
-                        self.push(Block::Notice { text: "── conversation cleared: claude starts fresh from here ──".into(), error: false });
+                        self.push(Block::Notice { text: "── conversation cleared: claude starts fresh from here ──".into(), error: false, ended: false });
                     } else if !text.trim().is_empty() {
                         self.push(Block::Text { text, live: false });
                     }
@@ -1352,7 +1354,7 @@ impl Session {
                         // the call that was being tried again failed for good: its block says so, not a second one
                         match self.retry.and_then(|i| self.blocks.get_mut(i)) {
                             Some(Block::Retry(r)) => (r.why, r.raw, r.tries, r.gave_up) = (said, shown(why, 4000), r.tries + 1, true),
-                            _ => self.push(Block::Notice { text: said, error: true }),
+                            _ => self.push(Block::Notice { text: said, error: true, ended: false }),
                         }
                     }
                 }
@@ -2047,6 +2049,16 @@ mod tests {
     }
 
     #[test]
+    fn a_message_that_could_not_start_says_its_turn_is_over() {
+        let mut s = Session::new("", "high");
+        s.apply(&json!({"type": "harness_user", "text": "keep this draft"}), 0.0);
+        s.apply(&json!({"type": "harness_info", "text": "starting claude: program not found", "error": true, "ended": true}), 1.0);
+        s.apply(&json!({"type": "harness_info", "text": "hook failed", "error": true}), 2.0);
+        let blocks = s.view()["blocks"].clone();
+        assert_eq!((blocks[1]["ended"].clone(), blocks[2]["ended"].clone()), (json!(true), json!(null)));
+    }
+
+    #[test]
     fn claude_not_signed_in_is_one_error_in_tazunas_words_not_also_the_answer() {
         let mut s = Session::new("", "high");
         s.apply(&json!({"type": "harness_user", "text": "what is a haiku?"}), 0.0);
@@ -2055,7 +2067,7 @@ mod tests {
         s.apply(&json!({"type": "result", "subtype": "success", "is_error": true, "result": "Not logged in · Please run /login", "total_cost_usd": 0, "duration_ms": 42}), 20.0);
         let kinds: Vec<String> = s.view()["blocks"].as_array().unwrap().iter().map(|b| b["kind"].as_str().unwrap().to_string()).collect();
         assert_eq!(kinds, ["prompt", "notice", "done"]);
-        assert!(matches!(&s.blocks[1], Block::Notice { text, error: true } if text == CLAUDE_NOT_SIGNED_IN));
+        assert!(matches!(&s.blocks[1], Block::Notice { text, error: true, .. } if text == CLAUDE_NOT_SIGNED_IN));
         assert!(claude_login_error("Login expired · Please run /login") && claude_login_error("Failed to authenticate: OAuth session expired and could not be refreshed"));
         // a gateway on the own loop saying the same words is not claude: no claude advice
         let mut own = Session::new("", "high");
@@ -2564,7 +2576,7 @@ mod tests {
         s.apply(&json!({"type": "harness_handoff", "text": crate::live::HANDOFF_NEEDS}), 10.0);
         // the chat's reply and its receipt are gone; the line stands over what the agent does next
         assert!(!s.blocks.iter().any(|b| matches!(b, Block::Done(_) | Block::Text { .. })));
-        assert!(matches!(s.blocks.last(), Some(Block::Notice { text, error: false }) if text == crate::live::HANDOFF_NEEDS));
+        assert!(matches!(s.blocks.last(), Some(Block::Notice { text, error: false, .. }) if text == crate::live::HANDOFF_NEEDS));
         assert!(s.working_for(11.0) > 0.0 && s.activity == Activity::Waiting, "at work from the hand-off on");
         paid_call(&mut s, 12.0, 3000, 0, 50, 0.02);
         s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "12 °C and rain."}]}}), 13.5);
