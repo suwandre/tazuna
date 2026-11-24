@@ -81,7 +81,25 @@ export function ModelPicker({ models, onPick, onClose, onKey, onRefreshModelList
   const [seenPending, setSeenPending] = useState<Set<string>>(() => new Set());
   const box = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
+  const list = useRef<HTMLDivElement>(null);
   const place = usePlace(box, 420, 460);
+  // the keyboard through the rows (design review 13: only a click picked): Enter in the search takes the first row that
+  // can be taken (a "no key" row opens Settings; nothing typed: the current model stays, the picker shuts), ArrowDown goes
+  // to it, the arrows, Home and End between rows, ArrowUp from the first back to the search; Enter or Space on a row is
+  // its button's own. Not while an input method composes (its Enter takes the word)
+  const keys = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    const rows = [...(list.current?.querySelectorAll<HTMLButtonElement>("button[data-row]:not(:disabled)") ?? [])];
+    const inSearch = e.target === search.current, i = rows.indexOf(e.target as HTMLButtonElement);
+    if (inSearch && e.key === "Enter" && !q.trim()) { e.preventDefault(); onClose(); return; }
+    if (!rows.length || (!inSearch && i < 0)) return;
+    const go = (n: number) => { e.preventDefault(); const to = n < 0 ? search.current : rows[Math.min(n, rows.length - 1)]; to?.focus({ preventScroll: true }); to?.scrollIntoView({ block: "nearest" }); };
+    if (inSearch && e.key === "Enter") { e.preventDefault(); rows[0].click(); }
+    else if (e.key === "ArrowDown") go(inSearch ? 0 : i + 1);
+    else if (e.key === "ArrowUp" && !inSearch) go(i - 1);
+    else if (e.key === "Home" && !inSearch) go(0);
+    else if (e.key === "End" && !inSearch) go(rows.length - 1);
+  };
   useEffect(() => {
     const away = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) onClose(); };
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -106,7 +124,7 @@ export function ModelPicker({ models, onPick, onClose, onKey, onRefreshModelList
   const catalogs = models?.catalogs?.filter(({ provider, state }) =>
     state !== "ready" || seenPending.has(provider) || (!!query && (matchesWords(query, provider) || groups.some(([name]) => name === provider)))) ?? [];
   return (
-    <div ref={box} style={place.style} className={`tz-pop absolute ${place.side} left-0 z-10 flex flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer`}>
+    <div ref={box} style={place.style} onKeyDown={keys} className={`tz-pop absolute ${place.side} left-0 z-10 flex flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer`}>
       <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2 text-muted">
         <Search size={14} strokeWidth={1.5} />
         <input ref={search} autoFocus aria-label="Search models and providers" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search models and providers" className="min-w-0 flex-1 bg-transparent text-ink outline-none placeholder:text-faint" />
@@ -118,7 +136,9 @@ export function ModelPicker({ models, onPick, onClose, onKey, onRefreshModelList
         </div>
       )}
       {models?.rebuild && <div className="border-b border-line-soft px-3 py-1.5 text-[12px] text-warn">Switching between Claude models: {models.rebuild}</div>}
-      <div className="tz-scrollfade overflow-auto">
+      {/* scroll room under the sticky column heads and over the bottom fade (22 px; the last row needs the room under it
+          too): a row reached by the keyboard is not under either */}
+      <div ref={list} className="tz-scrollfade scroll-pb-6 scroll-pt-7 overflow-auto pb-6!">
         {/* what the numbers on the right are (until desktop 0.1.74 only a hover said: "8.4 (12)", "0.14 / 0.56") */}
         {groups.length > 0 && <div className="sticky top-0 z-[1] flex items-center gap-2 bg-[var(--pop)] px-3 pb-0.5 pt-1.5 text-[11px] text-faint">
           <span className="flex-1" />{scored && <span className="w-[64px] text-right" title="tazuna bench: judge score out of 10 (runs)">Score</span>}
@@ -131,9 +151,9 @@ export function ModelPicker({ models, onPick, onClose, onKey, onRefreshModelList
             {/* its terms once, under its name: in the warning colour only where the account may be at risk or it may refuse tazuna */}
             {caution?.note && <div className={`px-3 pb-0.5 text-[11.5px] ${caution.warn ? "text-warn" : "text-faint"}`}>{caution.note}</div>}
             {rows.map((c) => { const toKey = c.no_key && onKey; return (
-              <button key={`${c.model}|${c.url}|${c.key_env}|${c.label}`} disabled={!!c.why_not && !toKey} onClick={() => (toKey ? onKey(c.provider) : onPick(c))}
+              <button key={`${c.model}|${c.url}|${c.key_env}|${c.label}`} data-row disabled={!!c.why_not && !toKey} onClick={() => (toKey ? onKey(c.provider) : onPick(c))}
                 title={toKey ? (c.why_not === "not signed in" ? `Sign in to ${c.provider} in Settings` : `Add a ${c.provider} key in Settings`) : c.why_not ?? c.place}
-                className="flex w-full items-center gap-2 px-3 py-[5px] text-left hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent">
+                className="flex w-full items-center gap-2 px-3 py-[5px] text-left outline-offset-[-2px] hover:bg-hover focus-visible:bg-hover disabled:cursor-default disabled:hover:bg-transparent">
                 <span className="w-3.5 flex-none text-accent">{c.current && <Check size={14} strokeWidth={1.75} />}</span>
                 <span className="min-w-0 flex-1">
                   {/* its name, not its id ("GPT-6.2 Sol", not "gpt-6.2-sol · subrouter"); the group names the provider */}

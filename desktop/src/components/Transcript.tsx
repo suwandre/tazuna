@@ -236,6 +236,9 @@ function WorkFold({ tools, secs, live, asking, since }: { tools: ToolStep[]; sec
   const [open, setOpen] = useState<boolean | null>(null);
   const shown = open ?? live;
   const what = workSummary(tools);
+  // a failed step said folded too, in the result colour, as the terminal has it (design review 13: only the open list showed
+  // the ✗ of a `cat nope.txt`)
+  const failed = tools.filter((t) => t.kind !== "thinking" && t.kind !== "said" && !t.ok && !t.running && !t.stopped && !t.declined).length;
   const took = secs == null ? "" : ` ${dur(secs)}`;
   const [body, toggle] = useFold(shown, setOpen);
   return (
@@ -246,6 +249,7 @@ function WorkFold({ tools, secs, live, asking, since }: { tools: ToolStep[]; sec
         {live && !asking && <LoaderCircle size={13} strokeWidth={1.75} className="flex-none animate-spin text-accent" aria-hidden="true" />}
         <span className={`flex-none ${live && asking ? "font-medium text-warn" : ""}`}>{live ? (asking ? "Waiting for you" : <>Working{since && <> <Ticking since={since} /></>}</>) : `Worked${took}`}</span>
         {what && <span className="flex min-w-0 items-center truncate text-faint"><Sep />{what}</span>}
+        {failed > 0 && <span className="flex flex-none items-center text-bad"><Sep />{failed} failed</span>}
       </button>
       {shown && (
         <div ref={body} className="ml-[5px] mt-1 flex flex-col gap-0.5 border-l border-line pl-3.5">

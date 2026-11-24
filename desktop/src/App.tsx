@@ -31,7 +31,7 @@ import { CoreFailed, Start, type StartItem } from "./components/Start";
 import { StatusBar } from "./components/StatusBar";
 import { getVersion } from "@tauri-apps/api/app";
 import * as demo from "./lib/demo";
-import { askedInput, changedCount, heldTurn, messages as viewMessages, queued, readableError, resetIn, sessionIds, unsaved, usage as viewUsage } from "./lib/fromView";
+import { asked, askedInput, changedCount, heldTurn, messages as viewMessages, queued, readableError, resetIn, sessionIds, standing, unsaved, usage as viewUsage } from "./lib/fromView";
 import { modelLabel, shortTitle, titleFrom, type Usage } from "./lib/types";
 import { items as accountItems, mine as accountOf, withLive } from "./lib/health";
 import { Parts } from "./components/Sep";
@@ -42,7 +42,7 @@ const MENUS = ".tz-pop:not([data-panel]):not(.tz-out), [role=menu], [role=listbo
 
 const NO_USAGE: Usage = { contextPct: 0, contextUsed: "0", contextMax: "", plan5h: null, plan5hReset: "", planWeek: null, threadCost: 0, threadTurns: 0, cachedPct: 0, saved: 0, today: 0, todayTurns: 0, todaySeries: [], balance: null };
 import { THEME, applyLooks, darkNow, look } from "./lib/chrome";
-import { HOTKEY, core, defaultHotkey, inTauri, menuKeys, type Accounts, type ClaudeSetup, type Diff, type ModelChoice, type Models, type SendDraft, type SessionRow, type View } from "./lib/tazuna";
+import { HOTKEY, composed, core, defaultHotkey, inTauri, menuKeys, type Accounts, type ClaudeSetup, type Diff, type ModelChoice, type Models, type SendDraft, type SessionRow, type View } from "./lib/tazuna";
 import { listen } from "@tauri-apps/api/event";
 import { accentButton, quietButton } from "./components/Controls";
 
@@ -108,6 +108,32 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
       if (draft.files?.length) saveDraftFiles(key, [...new Set([...draftFiles(key), ...draft.files])]);
     }
   };
+  // a send the core refused (send_rejected: claude not found, an untrusted folder), its words put back in the box: its
+  // error notice says so (`rejected`); a core before that field sends send_rejected before the view that brings the
+  // notice, so the last error notice that view brings is taken for it. Kept by place and words, so blocks cut by a Retry
+  // do not take another notice for it; the box shows it, the conversation does not (design review 13)
+  const refusals = useRef<Record<string, { at: number; text: string; back: string }[]>>({});
+  // (armed by send_rejected for the next view alone, within a second: a refusal with no notice, a model being restored or
+  // /create, does not take a later error for its own)
+  const rejected = useRef<Record<string, { from: number; back: string; at: number }>>({});
+  const flagged = useRef(false);
+  const refusedIn = (tid: string, v: View | null) => {
+    const m = new Map<number, string>();
+    v?.blocks.forEach((b, k) => { if (b.kind === "notice" && b.rejected) m.set(k, ""); });
+    for (const r of refusals.current[tid] ?? []) { const b = v?.blocks[r.at]; if (b?.kind === "notice" && b.text === r.text) m.set(r.at, r.back); }
+    return m;
+  };
+  const noteRefusal = (tid: string, v: View) => {
+    if (v.blocks.some((b) => b.kind === "notice" && b.rejected !== undefined)) flagged.current = true;
+    const r = rejected.current[tid];
+    if (!r) return;
+    delete rejected.current[tid];
+    if (Date.now() - r.at > 1000) return;
+    let at = v.blocks.length - 1;
+    const is = (b: View["blocks"][number]) => b.kind === "notice" && (flagged.current ? !!b.rejected : b.error);
+    while (at >= r.from && !is(v.blocks[at])) at--;
+    if (at >= r.from) (refusals.current[tid] ??= []).push({ at, text: (v.blocks[at] as { text: string }).text, back: r.back });
+  };
   const patch = (tid: string, p: Partial<Thread>) => setThreads((t) => (t[tid] ? { ...t, [tid]: { ...t[tid], ...p } } : t));
   const show = (tid: string) => { core.use(tid); setActiveTid(tid); setModels(null); patch(tid, { used: Date.now() }); };
   // a conversation out of sight that finishes or asks for an answer says so with a system notification
@@ -117,7 +143,7 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
     const now = v.asking ? "asking" : busyView(v) ? "working" : "idle", before = was.current[tid];
     was.current[tid] = now;
     if (now === before || (tid === activeRef.current && document.hasFocus())) return;
-    const title = shortTitle((v.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text) || "A conversation";
+    const title = shortTitle(asked(v, refusedIn(tid, v))[0]) || "A conversation";
     if (now === "asking") core.notify("tazuna asks", `${title}: ${v.asking!.tool.replace(/^mcp__lean__/, "")} ${v.asking!.what}`).catch(() => {});
     else if (now === "idle" && before === "working") core.notify("tazuna is done", title).catch(() => {});
   };
@@ -166,7 +192,7 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
     setThreads((t) => { const { [tid]: _, ...rest } = t; return rest; });
     // what was kept for it goes with it (its queue stays saved under its id, for when it is opened again)
     setHeld(({ [tid]: _, ...m }) => m);
-    delete earlier.current[tid]; delete sent.current[tid]; clearTimeout(waits.current[tid]); delete waits.current[tid];
+    delete earlier.current[tid]; delete sent.current[tid]; delete refusals.current[tid]; delete rejected.current[tid]; clearTimeout(waits.current[tid]); delete waits.current[tid];
   };
   /** A side chat beside thread `of`: its own core in the same folder, the conversation forked on the same model and
    * provider (its cache is the conversation's; the own loop's saved history is that provider's), in plan mode. */
@@ -199,7 +225,7 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
   const open = (path: string | null, resume?: string, opts: { creator?: "new" | "edit"; then?: (tid: string) => void } = {}) => {
     if (path && !opts.creator) setProjects((p) => { const next = [path, ...p.filter((x) => x !== path)].slice(0, 12); localStorage.setItem(RECENT, JSON.stringify(next)); return next; });
     const already = !opts.creator && Object.values(live.current).find((t) => resume ? idsOf(t).includes(resume)
-      : t.folder === path && !t.creator && !t.resume && !t.view?.blocks.some((b) => b.kind === "prompt") && !t.error);
+      : t.folder === path && !t.creator && !t.resume && !asked(t.view, refusedIn(t.tid, t.view)).length && !t.error);
     // an open one is reused; what was to follow its start (`then`) follows now
     if (already) { show(already.tid); opts.then?.(already.tid); return; }
     // messages it had queued when the window last closed were never sent: they go back in its box
@@ -214,7 +240,7 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
     // the one on screen goes when it is idle: it is in the lists, a click away (until desktop 0.1.77 each conversation opened
     // stayed open with its own core, and four old ones looked through meant four "Open" rows and four processes)
     const was = live.current[activeRef.current];
-    if (was && !was.creator && !was.side && !was.error && !unsaved(was.view) && (!was.view || (["Ready", "Done"].includes(was.view.activity) && !was.view.asking))) close(was.tid);
+    if (was && !was.creator && !was.side && !was.error && !unsaved(was.view, refusedIn(was.tid, was.view)) && (!was.view || (["Ready", "Done"].includes(was.view.activity) && !was.view.asking))) close(was.tid);
     show(tid);
     core.start(tid, path ?? undefined, path ? undefined : "chat", resume ? null : startModel(path))
       .then((dir) => { if (!path) setHome(dir); if (resume) return core.resumeIn(tid, resume); opts.then?.(tid); })
@@ -225,8 +251,10 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
     if (!inTauri) return;
     const offs = [
       core.onExit((tid) => patch(tid, { error: "tazuna stopped. The app needs tazuna 0.1.128 or later (it carries its own; TAZUNA_BIN overrides)." })),
-      core.onSendRejected(({ text, files }, tid) => restoreDraft(tid, { text, files })),
+      // (its words as the box sent them: the text, then the attachments' paths, as its prompt block has them)
+      core.onSendRejected(({ text, files }, tid) => { rejected.current[tid] = { from: live.current[tid]?.view?.blocks.length ?? 0, back: composed({ text: text ?? "", files }), at: Date.now() }; restoreDraft(tid, { text, files }); }),
       core.onView((v, tid) => {
+        noteRefusal(tid, v);
         const was = live.current[tid]?.view?.session_id;
         // (a switch's view has no session until its first turn: the id before it is kept too)
         if (was && was !== v.session_id) earlier.current[tid] = [was, ...(earlier.current[tid] ?? []).filter((x) => x !== was)];
@@ -305,7 +333,7 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
   // a saved one being opened is the row clicked from the start (`resume`): until its messages came it matched no row, and
   // showed for a second or two as a "New conversation" of its own (the user, 2026-11-24)
   const listedId = (t?: Thread) => (t ? idsOf(t).find((id) => listed.has(id)) ?? t.view?.session_id ?? t.resume ?? undefined : undefined);
-  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, restoreDraft, side, openSide, closeSide, forget, resuming, held: (held[active] ?? []).map((w) => w.text), hold, unhold, sendHeldNow, listedId };
+  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, restoreDraft, side, openSide, closeSide, forget, resuming, held: (held[active] ?? []).map((w) => w.text), hold, unhold, sendHeldNow, listedId, refusedIn };
 }
 
 /** Light or dark: the choice in Settings (lib/chrome.ts keeps it; until desktop 0.1.87 a flip lasted until the window
@@ -371,7 +399,7 @@ export default function App() {
     });
     return () => { off.then((f) => f()); };
   }, []);
-  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, restoreDraft, resuming, side, openSide, closeSide, forget, held, hold, unhold, sendHeldNow, listedId } = useCore((draft) => setDraft({ ...draft, n: Date.now(), append: true }));
+  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, restoreDraft, resuming, side, openSide, closeSide, forget, held, hold, unhold, sendHeldNow, listedId, refusedIn } = useCore((draft) => setDraft({ ...draft, n: Date.now(), append: true }));
   useEffect(() => setEditing(null), [active]);
   useEffect(watchUpdates, []);
   // creator mode: the user's panels, read again whenever a conversation finishes a turn (a creator one may have made one)
@@ -717,7 +745,8 @@ export default function App() {
     setEditing(null);
     core.rewind(cp, keep).then(() => send(text)).catch(refused);
   };
-  const messages: Message[] = [...(view ? viewMessages(view) : inTauri ? [] : demo.messages), ...held.map((text) => ({ role: "user" as const, text, queued: true, held: true }))];
+  const refused = refusedIn(active, view);
+  const messages: Message[] = [...(view ? viewMessages(view, refused) : inTauri ? [] : demo.messages), ...held.map((text) => ({ role: "user" as const, text, queued: true, held: true }))];
   /** Stop: the reply ends, and what waited behind it goes back into the box (it went to the agent at once). */
   const stop = () => { core.interrupt().catch(() => {}); const q = unhold(active); if (q.length) setDraft({ text: q.join("\n\n"), n: Date.now(), append: true }); };
   // the core did not start: its reason and a way to try again, no conversation (until desktop 0.1.77 the demo's title,
@@ -834,8 +863,13 @@ export default function App() {
   // prototype mockups/v3.html)
   // Not while a saved conversation's messages are on their way: the start screen showed for a moment before them, each
   // time one was opened (the user, 2026-11-20: "quickly flashes the main new chat page")
-  const fresh = inTauri && !!view && !busy && !view.asking && !editing && !resuming && !view.blocks.some((b) => b.kind === "prompt");
+  // (a message the core refused, gone from the conversation, does not count)
+  const fresh = inTauri && !!view && !busy && !view.asking && !editing && !resuming && !messages.some((m) => m.role === "user");
   const freshError = fresh ? [...view.blocks].reverse().find((b) => b.kind === "notice" && b.error) : undefined;
+  // a send that started nothing (a message claude could not take): its error beside the box, the message back in it (the
+  // core's send_rejected), on the start page and in a conversation alike (design review 13); the start page shows any
+  // other error there too, as before
+  const refusal = (inTauri && view && !busy && !view.asking && !resuming ? standing(view, refused) : undefined) ?? (freshError?.kind === "notice" ? freshError.text : undefined);
   // the start page's ledger reads the run log again when the page shows and when the day turns: yesterday's numbers stood
   // there overnight as "Today", and runs made in the terminal never came (design review 11)
   const [day, setDay] = useState(0);
@@ -867,7 +901,7 @@ export default function App() {
   } : {};
   const modelRestore = view?.model_restore;
   const composer = (
-        <Composer key={active} readOnly={!inTauri} sendBlocked={!!modelRestore} commands={windowCommands} where={fresh ? where : undefined} chat={inTauri && !folder} draftKey={draftKey} session={session} threadCost={usage.threadCost} busy={busy}
+        <Composer key={active} readOnly={!inTauri} asking={!!view?.asking} sendBlocked={!!modelRestore} commands={windowCommands} where={fresh ? where : undefined} chat={inTauri && !folder} draftKey={draftKey} session={session} threadCost={usage.threadCost} busy={busy}
             onSendNow={inTauri ? (text) => { hold(active, text); sendHeldNow(active, text); } : undefined}
             onSend={inTauri ? (text, draft) => {
               if (line?.paid && paidKey && !localStorage.getItem(paidKey)) { setPaidAsk({ text, draft }); return; }
@@ -901,8 +935,8 @@ export default function App() {
                     Also put back the {editing.files} file{editing.files === 1 ? "" : "s"} tazuna changed since</label>}</span>
                 <button onClick={() => { setEditing(null); setDraft({ text: "", n: Date.now() }); }} className={quietButton}>Cancel</button>
               </div>
-            ) : freshError?.kind === "notice" && (
-              <div role="alert" className="mx-auto mb-2 max-w-[700px] text-[12.5px] text-bad">{readableError(freshError.text)}</div>
+            ) : refusal && (
+              <div role="alert" className="mx-auto mb-2 max-w-[700px] text-[12.5px] text-bad">{readableError(refusal)}</div>
             )} onStop={stop}
             models={models} onModels={inTauri ? () => core.models() : undefined}
             onRefreshModelList={inTauri ? (p) => { core.refreshModelList(p).catch(() => {}); } : undefined}
@@ -916,7 +950,8 @@ export default function App() {
   );
   const data = widgetData(view);
   // the header: the short title, then the first message in full where it is longer (variant A of mockups/v6.html)
-  const firstAsked = titleFrom((view?.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text);
+  // (a message the core refused and gave back is no title)
+  const firstAsked = titleFrom(asked(view, refused)[0]);
   const title = view ? shortTitle(firstAsked) || "New chat" : inTauri ? (failed ? "Could not start" : "New chat") : "Retry test fails on CI";
   // after the title, only what it left out: "— Can you find out why and fix it?", not the title's words again; nothing where
   // that cannot be said (a title without the polite opening repeated the whole message, design review 12)
@@ -927,7 +962,7 @@ export default function App() {
     projects={inTauri ? projects.map((p) => ({ name: isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} / ${base(p)}` : base(p), path: p, open: p === folder, threads: rowsOf(sessions[p], isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), p) })) : demo.projects}
     onNewChat={inTauri ? () => open(null) : undefined} onOpenFolder={inTauri ? pick : undefined} onOpenProject={inTauri ? (p) => p.path && open(p.path) : undefined}
     onOpenThread={inTauri ? (t, p) => open(p?.path ?? null, t.id) : undefined} onSearch={() => setOverlay("palette")} onSettings={inTauri ? () => setOverlay("settings") : undefined}
-    open={inTauri ? threads.filter((t) => t.tid === active || t.view?.blocks.some((b) => b.kind === "prompt")).map((t) => ({ tid: t.tid, id: listedId(t), model: t.view?.model, title: titleOf(t), place: t.folder ? base(t.folder) : "chat",
+    open={inTauri ? threads.filter((t) => t.tid === active || asked(t.view, refusedIn(t.tid, t.view)).length).map((t) => ({ tid: t.tid, id: listedId(t), model: t.view?.model, title: titleOf(asked(t.view, refusedIn(t.tid, t.view))[0]), place: t.folder ? base(t.folder) : "chat",
       state: t.error ? "stopped" : t.view?.asking ? "asking" : busyView(t.view) ? "working" : "idle" })) : []}
     activeTid={active} onSwitch={show}
     // the one on screen closed: a new one in its folder takes its place, as when it is removed
@@ -1165,7 +1200,7 @@ const isWorktree = (path: string) => /[\\/]worktrees[\\/][^\\/]+[\\/]wt-[a-z0-9]
 const rowsOf = (rows?: SessionRow[], place = "chat", project?: string) => (rows ?? []).map((r) => ({ id: r.id, title: shortTitle(r.first, r.named) || "(no message)", full: titleFrom(r.first), place, project, at: r.last_at, model: r.model }));
 
 /** An open conversation's name: its first message, else a new one's. */
-const titleOf = (t: Thread) => shortTitle((t.view?.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text) || "New conversation";
+const titleOf = (first?: string) => shortTitle(first) || "New conversation";
 
 /** The header's built-in chips read this (and a plugin replacing one can too). */
 export const HeaderCtx = createContext<{ modelLabel: string; effort: string; branch: string; changed: number; review?: () => void; side?: () => void; sideOpen?: boolean;

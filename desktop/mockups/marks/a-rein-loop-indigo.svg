@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- tazuna's app icon (design review 10, components/Mark.tsx): 手 with the rein's loop, paper on ai-iro indigo, on macOS's
+       icon grid (an 824 px body inside 1024, its shadow below). `npx tauri icon app-icon.png` makes src-tauri/icons from the
+       PNG of this file. -->
+  <defs><filter id="s" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity=".28"/></filter></defs>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="#3d4aa8" filter="url(#s)"/>
+  <g transform="translate(225 222) scale(24.5)" fill="none" stroke="#fbfaf7" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M16.2 4.6Q12.4 6 7.6 6.4"/><path d="M7.2 10.2h9.6M5.4 14.2h13.2"/><path d="M12 6.2v11.3a2 2 0 1 1-2.6-1.9"/>
+  </g>
+</svg>

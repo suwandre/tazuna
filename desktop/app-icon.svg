@@ -1,10 +1,45 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- tazuna's app icon (design review 10, components/Mark.tsx): 手 with the rein's loop, paper on ai-iro indigo, on macOS's
-       icon grid (an 824 px body inside 1024, its shadow below). `npx tauri icon app-icon.png` makes src-tauri/icons from the
-       PNG of this file. -->
-  <defs><filter id="s" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity=".28"/></filter></defs>
-  <rect x="100" y="100" width="824" height="824" rx="186" fill="#3d4aa8" filter="url(#s)"/>
-  <g transform="translate(225 222) scale(24.5)" fill="none" stroke="#fbfaf7" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M16.2 4.6Q12.4 6 7.6 6.4"/><path d="M7.2 10.2h9.6M5.4 14.2h13.2"/><path d="M12 6.2v11.3a2 2 0 1 1-2.6-1.9"/>
+  <!-- tazuna's app icon (design review 13, mockups/logo.html option E): 手 as a 9×9 bitmap, the rein's loop at its foot, paper
+       on ink, on macOS's icon grid (an 824 px body inside 1024, its shadow below). The UI tile's cells (components/Mark.tsx:
+       0.75 wide at a pitch of 1), 80 px a unit here, centred, so every edge is a whole pixel at 1024 and 512. The marks it
+       was chosen from, and the one before it (mockups/marks/a-rein-loop-indigo.svg, desktop 0.1.95 to 0.1.124), stay in
+       mockups/. `npx tauri icon app-icon.png` makes src-tauri/icons from the PNG of this file. -->
+  <defs>
+    <filter id="s" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity=".28"/></filter>
+    <linearGradient id="ink" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2824"/><stop offset="1" stop-color="#1d1c19"/></linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#ink)" filter="url(#s)"/>
+  <rect x="100.5" y="100.5" width="823" height="823" rx="185.5" fill="none" stroke="#ffffff" stroke-opacity=".08"/>
+  <g fill="#ece8df" shape-rendering="crispEdges">
+    <rect x="642" y="162" width="60" height="60"/>
+    <rect x="722" y="162" width="60" height="60"/>
+    <rect x="402" y="242" width="60" height="60"/>
+    <rect x="482" y="242" width="60" height="60"/>
+    <rect x="562" y="242" width="60" height="60"/>
+    <rect x="482" y="322" width="60" height="60"/>
+    <rect x="242" y="402" width="60" height="60"/>
+    <rect x="322" y="402" width="60" height="60"/>
+    <rect x="402" y="402" width="60" height="60"/>
+    <rect x="482" y="402" width="60" height="60"/>
+    <rect x="562" y="402" width="60" height="60"/>
+    <rect x="642" y="402" width="60" height="60"/>
+    <rect x="722" y="402" width="60" height="60"/>
+    <rect x="482" y="482" width="60" height="60"/>
+    <rect x="162" y="562" width="60" height="60"/>
+    <rect x="242" y="562" width="60" height="60"/>
+    <rect x="322" y="562" width="60" height="60"/>
+    <rect x="402" y="562" width="60" height="60"/>
+    <rect x="482" y="562" width="60" height="60"/>
+    <rect x="562" y="562" width="60" height="60"/>
+    <rect x="642" y="562" width="60" height="60"/>
+    <rect x="722" y="562" width="60" height="60"/>
+    <rect x="802" y="562" width="60" height="60"/>
+    <rect x="482" y="642" width="60" height="60"/>
+    <rect x="482" y="722" width="60" height="60"/>
+    <rect x="242" y="722" width="60" height="60"/>
+    <rect x="242" y="802" width="60" height="60"/>
+    <rect x="322" y="802" width="60" height="60"/>
+    <rect x="402" y="802" width="60" height="60"/>
+    <rect x="482" y="802" width="60" height="60"/>
   </g>
 </svg>

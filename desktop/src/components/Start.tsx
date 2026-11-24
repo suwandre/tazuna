@@ -58,7 +58,7 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
       {/* the mark over the question, and under it the day's ledger from your own numbers (design review 11, variant A of
           mockups/v8.html: the page read like every other harness's start). Without a run today, the line that says what
           the box is for, as before: no zeros. */}
-      <div className="mb-5 [@media(max-height:720px)]:mb-2"><Mark size={44} /></div>
+      <div className="mb-5 [@media(max-height:720px)]:mb-2"><Mark size={40} /></div>
       <h2 className="mb-1.5 text-center font-prose text-[27px] font-normal leading-tight tracking-[-0.01em] text-ink">
         {place ? <>What are we working on in {place}?</> : "What are we working on?"}</h2>
       {today ? (

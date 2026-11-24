@@ -4266,7 +4266,7 @@ dependencies = [
 
 [[package]]
 name = "tazuna-desktop"
-version = "0.1.124"
+version = "0.1.125"
 dependencies = [
  "gtk",
  "serde_json",

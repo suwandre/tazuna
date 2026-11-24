@@ -83,9 +83,11 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - The sheet is lifted in dark too (design review 11, `mockups/v8.html`): `main` #211f1b on the desk #121110 is 1.15:1 (it
   was 1.08:1, and the sheet read only in light); card, field, hover and the lines each a step up with it, and `faint` too,
   so it still reads 4.6:1 on a hovered row.
-- One mark: 手 (te, the hand of 手綱) drawn in the icons' round stroke, its last stroke ending in a rein's loop
-  (`components/Mark.tsx`). The app icon (`app-icon.svg`, paper on indigo on macOS's grid), the sidebar (20 px tile) and the
-  terminal's welcome (two cells, `▐手▌`) use it; nothing else stands for tazuna.
+- One mark: 手 (ta, the hand of 手綱) as a 9×9 bitmap, its last stroke ending in a rein's loop, paper on ink
+  (`components/Mark.tsx`, design review 13: the user's pick of six in `mockups/logo.html`, kept there with the stroke mark
+  on indigo it replaced, `mockups/marks/a-rein-loop-indigo.svg`). The app icon (`app-icon.svg`), the sidebar (20 px tile)
+  and the terminal's welcome (two cells, `▐手▌`, in the accent: a terminal draws its own font) use it; nothing else stands
+  for tazuna. A working mark writes its pixels in stroke order.
 - Quiet structure: hairline borders, not shadows, for everything that sits on the page. What floats over it (a menu, a
   popover, a dialog, a tooltip; a toast or a card that opens by itself: `tz-float`) has the `pop` shadow, and in dark a fill one step lighter than a card: a menu over a card
   of the same fill read as part of it (design review 8, desktop 0.1.87). The composer keeps its own soft shadow.
@@ -169,7 +171,7 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   in (`claude auth login` with Copy, and Check again), or its install page; the first-run dialog ticks it only when it is
   signed in.
 - Scrolled up from the end of a conversation, a round button over the message box goes back down.
-- A new conversation before its first message is the start screen (prototype `mockups/v3.html`): the mark (44 px), a serif
+- A new conversation before its first message is the start screen (prototype `mockups/v3.html`): the mark (40 px, so its pixels land on whole screen pixels), a serif
   question, the day's ledger from the run log ("Today 14 runs | $0.41 paid | 94% from the cache"; a click opens the usage
   page; a part with nothing to say is left out, and a day without a run shows the line that says what the box is for), the
   composer in the middle with a "where it runs" pill (a chat or a project), "Pick up where you left off" (the last three

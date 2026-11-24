@@ -97,7 +97,7 @@ export function Slip({ title, right, float, children }: { title: string; right?:
     <div className={`tz-slip-wrap ${float ? "float" : ""}`}>
       <div className="tz-slip text-[12.5px] tabular-nums text-ink-2">
         <div className="flex items-center justify-between text-[12px] text-faint">
-          <span className="inline-flex items-center gap-[7px] text-[12.5px] font-medium text-ink"><Mark size={16} />{title}</span>{right != null && <span>{right}</span>}</div>
+          <span className="inline-flex items-center gap-[7px] text-[12.5px] font-medium text-ink"><Mark size={20} />{title}</span>{right != null && <span>{right}</span>}</div>
         {children}
       </div>
     </div>

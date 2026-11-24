@@ -147,7 +147,7 @@ const log = [];
     rows.push(`fixes page errors: ${JSON.stringify(p.errs.slice(0, 5))}`);
     await ctx.close(); }
   log.push(...rows);
-  if (process.env.ONLY === "rows") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n")); await browser.close(); return; }
+  if (process.env.ONLY === "rows") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n")); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
   for (const theme of ["dark", "light"]) {
     const [ctx, p] = await ctxOf({ theme }), T = theme[0];
     await step(p, `${T}-start`, async () => {});
@@ -385,22 +385,26 @@ const log = [];
     });
     await step(p, "d-queue-clears-draft", async () => {
       await box.fill("Second message");
-      await p.getByTitle("Send after this reply (Enter)").click();
+      // its title names ⌘↵ too since desktop 0.1.115 ("Send after this reply (Enter; Ctrl+Enter sends now)")
+      await p.getByTitle(/^Send after this reply \(Enter/).click();
       await p.getByText("Second message", { exact: true }).waitFor({ state: "visible", timeout: 4000 });
       if (await box.inputValue()) throw new Error("a queued send left its draft in the box");
     });
-    // Send now on a queued message: the reply stops and that message goes at once, no longer queued
+    // Send now on a queued message: the reply stops and that message goes at once, no longer queued. A held message is a
+    // row of the transcript while it waits (desktop 0.1.12x): its words show at once, so what is waited for is the queued
+    // line going (read at once, it was still there for the few ms the stop takes)
+    const sentNow = (why) => p.getByText("Queued: goes after this reply").waitFor({ state: "detached", timeout: 2000 }).catch(() => { throw new Error(why); });
     await step(p, "d-send-now", async () => {
       await p.getByRole("button", { name: "Send now" }).first().click();
+      await sentNow("the message sent now still reads as queued");
       await p.locator("[data-msg]").getByText("Second message", { exact: true }).waitFor({ state: "visible", timeout: 4000 });
-      if (await p.getByText("Queued: goes after this reply").count()) throw new Error("the message sent now still reads as queued");
     });
     // ⌘↩ (Ctrl+Enter here) during a reply: the same, from the box
     await step(p, "d-send-now-key", async () => {
       await box.fill("Third message");
       await box.press("Control+Enter");
+      await sentNow("Ctrl+Enter left the message queued");
       await p.locator("[data-msg]").getByText("Third message", { exact: true }).waitFor({ state: "visible", timeout: 4000 });
-      if (await p.getByText("Queued: goes after this reply").count()) throw new Error("Ctrl+Enter left the message queued");
     });
     await ctx.close(); }
   // Cmd-V of an image (a screenshot, or an image file copied in Finder, which brings its name as text too): an attachment
@@ -508,8 +512,278 @@ const log = [];
       }, null, { timeout: 4000 });
     });
     await ctx.close(); }
+  // design review 13: the permission card, the work fold, the model picker's keys and a send the core refused; every check
+  // a step's own failure. `must`: fail the step with what was seen
+  const must = (ok, what) => { if (!ok) throw new Error(what); };
+  const answersOf = (p) => p.evaluate(() => window.__SENT__.filter(([c, a]) => c === "op" && a?.msg?.op === "answer").map(([, a]) => `${a.msg.allow ? "allow" : "deny"}${a.msg.always ? "+always" : ""}`));
+  // the last view emitted, and a way to emit another (a second question, a mode's notice)
+  const LAST = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { if (p?.msg?.type === "view") window.__lastView = p; return emit(e, p); };
+    window.__again = (f) => { const { tid, msg } = window.__lastView; T.view(tid, f({ ...msg, from: 0 })); }; })();`;
+  // A force push auto asks about, its note as the core writes it (no `risky` field: the note says so): why under the title,
+  // Allow as plain as Decline; no key typed in the box answers, not even a first one after a pause; Shift+Tab from the box
+  // reaches the buttons; a key outside it after a pause does
+  { const risky = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { const m = p?.msg; if (m?.type === "view" && m.session_id === "p2" && m.asking) { m.asking = { ...m.asking, what: "git push --force origin main", once: true, note: "once only · auto asks: git push --force: rewrites the remote's history" }; } return emit(e, p); }; })();`;
+    const [ctx, p] = await ctxOf({ extra: risky + LAST });
+    const box = p.getByRole("textbox", { name: "Message" });
+    await step(p, "d-asks-risky", async () => {
+      await open(p, "Bump the TLS library"); await p.getByText("rewrites the remote's history").waitFor({ timeout: 4000 }); await p.waitForTimeout(700);
+      must(!(await p.getByRole("button", { name: /^Always/ }).count()), "a once-only question offers Always");
+      must(!/bg-accent/.test(await p.getByRole("button", { name: /^Allow/ }).getAttribute("class")), "Allow is the filled accent button");
+    });
+    await step(p, "d-asks-typing", async () => {
+      await box.click(); await p.waitForTimeout(900); await box.pressSequentially("explain why", { delay: 60 });
+      must((await box.inputValue()) === "explain why", `the box holds "${await box.inputValue()}"`);
+      must(!(await answersOf(p)).length, `typing answered: ${await answersOf(p)}`);
+    });
+    await step(p, "d-asks-first-key", async () => {
+      for (const k of ["n", "y"]) {
+        await box.fill(""); await p.waitForTimeout(900); await box.press(k);
+        must((await box.inputValue()) === k, `a first ${k} did not reach the box: "${await box.inputValue()}"`);
+      }
+      must(!(await answersOf(p)).length, `a first key in the empty box answered: ${await answersOf(p)}`);
+    });
+    await step(p, "d-asks-shift-tab", async () => {
+      await box.fill(""); await box.focus(); await p.keyboard.press("Shift+Tab");
+      const at = await p.evaluate(() => document.activeElement?.textContent?.trim());
+      must(/^Decline/.test(at ?? ""), `Shift+Tab from the box went to "${at}"`);
+      must(!!(await p.getByText(/click, or Shift\+Tab to the buttons/).count()), "no hint on the card");
+    });
+    // Enter on Decline reached by Shift+Tab answers, and the focus goes back to the box, not the page
+    await step(p, "d-asks-key-after-pause", async () => {
+      await p.keyboard.press("Enter"); await p.waitForTimeout(200);
+      must((await answersOf(p)).join() === "deny", `Enter on Decline: ${await answersOf(p)} (one deny wanted)`);
+      must(await p.evaluate(() => document.activeElement?.matches("[data-composer] textarea:not([aria-hidden])")), `after the answer the focus is on ${await p.evaluate(() => document.activeElement?.tagName)}`);
+    });
+    // the same question once more (answered by a click, asked again): its 600 ms again, the buttons off at once, and a key
+    // after a pause but within them answers nothing
+    await step(p, "d-asks-again", async () => {
+      await p.waitForTimeout(900); await p.getByRole("button", { name: /^Decline/ }).click();
+      await p.evaluate(() => window.__again((v) => ({ ...v, asking: { ...v.asking } })));
+      must(await p.getByRole("button", { name: /^Decline/ }).isDisabled(), "the buttons stay enabled after an answer");
+      await p.waitForTimeout(250); await p.keyboard.press("n"); await p.waitForTimeout(600);
+      must(!(await p.getByRole("button", { name: /^Decline/ }).isDisabled()), "the buttons never came back");
+      must((await answersOf(p)).join() === "deny,deny", `a key in the second question's first 600 ms answered: ${await answersOf(p)} (deny,deny wanted)`);
+    });
+    await ctx.close(); }
+  // keys something else takes: the palette (typing "auto" there), an input method composing, the window coming back
+  { const [ctx, p] = await ctxOf({});
+    await step(p, "d-asks-palette", async () => {
+      await open(p, "Bump the TLS library"); await p.waitForTimeout(700);
+      await p.locator("body").click({ position: { x: 640, y: 120 } }); await p.waitForTimeout(900);
+      await p.keyboard.press("Control+k"); await p.waitForTimeout(900);
+      for (const k of "auto") { await p.keyboard.press(k); await p.waitForTimeout(900); }
+      must(!(await answersOf(p)).length, `typing in the palette answered: ${await answersOf(p)}`);
+    });
+    await esc(p); await p.locator("body").click({ position: { x: 640, y: 120 } });
+    // a key on a dialog (the shortcuts) or on a menu's item (the permission mode's, a .tz-pop too) is theirs (the model
+    // picker cannot open while a question waits: a reply runs)
+    await step(p, "d-asks-dialog-button", async () => {
+      await p.keyboard.press("Control+/"); await p.getByRole("dialog", { name: "Keyboard shortcuts" }).waitFor(); await p.waitForTimeout(900); await p.keyboard.press("n");
+      await esc(p); await p.getByTitle(/^Permission mode/).click(); await p.waitForTimeout(900);
+      must(await p.evaluate(() => !!document.activeElement?.closest("[role=menu]") && document.activeElement.tagName === "BUTTON"), "the menu's item has no focus");
+      await p.keyboard.press("n"); await esc(p);
+      must(!(await answersOf(p)).length, `a key in a dialog or a menu answered: ${await answersOf(p)}`);
+    });
+    await p.locator("body").click({ position: { x: 640, y: 120 } });
+    await step(p, "d-asks-ime", async () => {
+      await p.waitForTimeout(900);
+      await p.evaluate(() => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "y", isComposing: true, bubbles: true, cancelable: true })); });
+      await p.waitForTimeout(900);
+      await p.evaluate(() => { const e = new KeyboardEvent("keydown", { key: "y", bubbles: true, cancelable: true }); Object.defineProperty(e, "keyCode", { get: () => 229 }); document.body.dispatchEvent(e); });
+      must(!(await answersOf(p)).length, `a composing key answered: ${await answersOf(p)}`);
+    });
+    await step(p, "d-asks-focus-back", async () => {
+      await p.waitForTimeout(900); await p.evaluate(() => window.dispatchEvent(new Event("focus"))); await p.keyboard.press("y");
+      must(!(await answersOf(p)).length, `a key as the window came back answered: ${await answersOf(p)}`);
+      await p.waitForTimeout(900); await p.keyboard.press("y"); await p.waitForTimeout(200);
+      must((await answersOf(p)).join() === "allow", `y after a pause, outside the box: ${await answersOf(p)} (one allow wanted)`);
+      must(await p.evaluate(() => document.activeElement?.matches("[data-composer] textarea:not([aria-hidden])")), "a key's answer left the focus on the page");
+    });
+    await ctx.close(); }
+  // Shift+Tab onto the card, then n at once: a key on its own buttons needs no pause (it did nothing for 800 ms)
+  { const [ctx, p] = await ctxOf({});
+    await step(p, "d-asks-on-card", async () => {
+      await open(p, "Bump the TLS library"); await p.waitForTimeout(700);
+      await p.getByRole("textbox", { name: "Message" }).focus(); await p.keyboard.press("Shift+Tab"); await p.keyboard.press("n"); await p.waitForTimeout(200);
+      must((await answersOf(p)).join() === "deny", `n on the card right after Shift+Tab: ${await answersOf(p)} (one deny wanted)`);
+    });
+    await ctx.close(); }
+  // the narrow window's sidebar (a native dialog): Escape in it shuts it and answers nothing
+  { const [ctx, p] = await ctxOf({ w: 900, h: 700 });
+    await step(p, "d-asks-drawer", async () => {
+      await open(p, "Bump the TLS library").catch(() => {});
+      if (!(await p.getByText("tazuna asks to use").count())) { await p.getByRole("button", { name: "Conversations" }).first().click(); await p.locator("dialog[open]").locator('a[title^="Bump the TLS"]').first().click(); await p.waitForTimeout(900); }
+      await p.waitForTimeout(700); await p.getByRole("button", { name: "Conversations" }).first().click(); await p.locator("dialog[open]").waitFor(); await p.waitForTimeout(900);
+      await p.keyboard.press("Escape"); await p.waitForTimeout(300);
+      must(!(await answersOf(p)).length, `Escape in the sidebar answered: ${await answersOf(p)}`);
+      must(!(await p.locator("dialog[open]").count()), "the sidebar stayed open");
+    });
+    await ctx.close(); }
+  // what makes a question destructive: the core's `risky` (with its `risky_why`), an older core's note with "always =",
+  // risky with a note that is no reason (a chat's hand-off): never Always, `a` allows nothing, the reason or else the note
+  for (const [name, asking, reason] of [
+    ["d-asks-risky-field", { risky: true, risky_why: "git reset --hard: drops uncommitted changes", once: true, note: "once only" }, "git reset --hard: drops uncommitted changes"],
+    ["d-asks-risky-old-note", { once: false, note: "auto asks: git push --force: rewrites the remote's history · always = this command" }, "git push --force: rewrites the remote's history"],
+    ["d-asks-risky-handoff", { risky: true, once: true, note: "once only: the agent is answering a chat's question" }, "once only: the agent is answering a chat's question"],
+  ]) {
+    const [ctx, p] = await ctxOf({ extra: `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { const m = p?.msg; if (m?.type === "view" && m.session_id === "p2" && m.asking) m.asking = { ...m.asking, what: "git push --force origin main", ...${JSON.stringify(asking)} }; return emit(e, p); }; })();` });
+    await step(p, name, async () => {
+      await open(p, "Bump the TLS library"); await p.getByText("tazuna asks to use").waitFor(); await p.waitForTimeout(700);
+      must(!!(await p.getByText(reason, { exact: true }).count()), `"${reason}" not on the card`);
+      must(!(await p.getByRole("button", { name: /^Always/ }).count()), "a destructive question offers Always");
+      must(!/bg-accent/.test(await p.getByRole("button", { name: /^Allow/ }).getAttribute("class")), "Allow is the filled accent button");
+      await p.locator("body").click({ position: { x: 640, y: 120 } }); await p.waitForTimeout(900); await p.keyboard.press("a"); await p.waitForTimeout(200);
+      must(!(await answersOf(p)).length, `a answered a destructive question: ${await answersOf(p)}`);
+    });
+    await ctx.close();
+  }
+  // a failed step said folded too, in the result colour ("1 failed"); a stopped, declined or running one is no failure
+  { const fail = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { const m = p?.msg; if (m?.type === "view" && m.session_id === "p1") m.blocks = m.blocks.map((b) => b.id === "t3" ? { ...b, error: true, result: "cat: nope.txt: No such file or directory" } : b.id === "t2" ? { ...b, error: true, stopped: true } : b.id === "t4" ? { ...b, error: true, declined: true } : b.id === "t7" ? { ...b, error: true } : b); return emit(e, p); }; })();`;
+    const [ctx, p] = await ctxOf({ extra: fail });
+    await step(p, "d-workfold-failed", async () => {
+      await open(p, "Fix the flaky retry test"); await p.getByText(/^Worked \d+ s/).first().waitFor({ timeout: 4000 });
+      const folds = await p.locator("main button[aria-expanded]").filter({ hasText: /^(Worked|Working)/ }).allInnerTexts();
+      must(/\b1 failed$/.test(folds[0]?.replace(/\n/g, " ") ?? ""), `the done fold: "${folds[0]}" (… 1 failed wanted)`);
+      must(!/failed/.test(folds[1] ?? ""), `the running fold counts a failure: "${folds[1]}"`);
+    });
+    await ctx.close(); }
+  // the model picker from the keyboard: the arrows through the rows and back up, Home and End, never a disabled row, the
+  // row reached never under the sticky heads; Enter takes the one match, a "no key" row opens Settings on its key, an
+  // empty search only shuts it, an input method's Enter picks nothing (the mock keeps a pick to itself: it is caught)
+  { const [ctx, p] = await ctxOf({ extra: `(() => { const T = window.__TAURI_INTERNALS__, inv = T.invoke.bind(T); T.invoke = async (c, a) => { if (c === "op" && a?.msg?.op === "model") window.__picked = a.msg.model; return inv(c, a); }; })();` });
+    const search = p.getByLabel("Search models and providers");
+    const row = () => p.evaluate(() => [...document.querySelectorAll("button[data-row]:not(:disabled)")].indexOf(document.activeElement));
+    // (the pill by its role: a title is the tooltip's once the pointer has been on it)
+    const pick = async () => { await p.locator("[data-composer] button[aria-haspopup=dialog]").first().click(); await search.waitFor(); };
+    await step(p, "d-picker-arrows", async () => {
+      await pick(); await p.keyboard.press("ArrowDown"); await p.keyboard.press("ArrowDown");
+      must((await row()) === 1, `down twice: row ${await row()} (1 wanted)`);
+      await p.keyboard.press("End"); const n = await p.evaluate(() => document.querySelectorAll("button[data-row]:not(:disabled)").length);
+      must((await row()) === n - 1, `End: row ${await row()} of ${n}`);
+      await p.keyboard.press("Home"); must((await row()) === 0, `Home: row ${await row()}`);
+      await p.keyboard.press("ArrowUp");
+      must((await p.evaluate(() => document.activeElement?.getAttribute("aria-label"))) === "Search models and providers", "ArrowUp from the first row left the search");
+    });
+    // a long list down row by row, End, then up row by row: each row reached shows whole, below the sticky heads and
+    // above the bottom fade (22 px)
+    await step(p, "d-picker-scroll", async () => {
+      const hidden = () => p.evaluate(() => { const r = document.activeElement.getBoundingClientRect(), list = document.activeElement.closest(".tz-scrollfade").getBoundingClientRect(), head = document.querySelector(".tz-pop .sticky")?.getBoundingClientRect();
+        return [head ? Math.round(head.bottom - r.top) : 0, Math.round(r.bottom - (list.bottom - 22))]; });
+      await search.fill("a"); await p.waitForTimeout(200); await search.focus();
+      for (const [key, n] of [["ArrowDown", 16], ["End", 1], ["ArrowUp", 16]]) for (let i = 0; i < n; i++) {
+        await p.keyboard.press(key); const [top, bottom] = await hidden();
+        must(top <= 0 && bottom <= 0, `after ${key}: a row ${top > 0 ? `${top} px under the sticky heads` : `${bottom} px into the bottom fade`}`);
+      }
+      await search.focus();
+    });
+    await step(p, "d-picker-disabled", async () => {
+      await search.fill("glm 5.3"); await p.waitForTimeout(200);
+      const [all, on] = await p.evaluate(() => [document.querySelectorAll("button[data-row]").length, document.querySelectorAll("button[data-row]:not(:disabled)").length]);
+      must(all > on, `no disabled row to skip (${all} rows, ${on} enabled)`);
+      const seen = [];
+      for (let i = 0; i < on + 1; i++) { await p.keyboard.press("ArrowDown"); seen.push(await p.evaluate(() => document.activeElement?.disabled ? "disabled" : document.activeElement?.hasAttribute("data-row") ? "row" : "other")); }
+      must(seen.every((x) => x === "row"), `the arrows reached: ${seen}`);
+    });
+    await step(p, "d-picker-ime", async () => {
+      await search.focus(); await search.fill("mock coder");
+      await p.evaluate(() => document.querySelector('[aria-label="Search models and providers"]').dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true, cancelable: true })));
+      await p.waitForTimeout(300);
+      must(!!(await search.count()) && !(await p.evaluate(() => window.__picked)), "an input method's Enter picked");
+    });
+    await step(p, "d-picker-enter", async () => {
+      await p.keyboard.press("Enter"); await p.waitForTimeout(300);
+      must(!(await search.count()), "Enter left the picker open");
+      must((await p.evaluate(() => window.__picked)) === "mock-coder-7b", `Enter picked ${await p.evaluate(() => window.__picked)}`);
+    });
+    await step(p, "d-picker-enter-empty", async () => {
+      await p.evaluate(() => { window.__picked = undefined; }); await pick(); await p.keyboard.press("Enter"); await p.waitForTimeout(300);
+      must(!(await search.count()) && !(await p.evaluate(() => window.__picked)), `an empty search's Enter: open ${await search.count()}, picked ${await p.evaluate(() => window.__picked)}`);
+    });
+    await step(p, "d-picker-enter-no-key", async () => {
+      await pick(); await search.fill("cerebras"); await p.keyboard.press("Enter"); await p.waitForTimeout(700);
+      const at = await p.evaluate(() => document.activeElement?.getAttribute("aria-label"));
+      must(at === "Cerebras key", `Enter on a no-key row: focus on ${at} (Cerebras key wanted)`);
+    });
+    await ctx.close(); }
+  // a message claude cannot take, in a conversation: back in the box, the error beside it, no row; a mode's notice leaves
+  // it; after a message that goes, nothing of it at the top either; an error of the core's that is no refused send (a
+  // command's reply) stays a row, as before
+  { const [ctx, p] = await ctxOf({ extra: "window.__NO_CLAUDE__ = true;" + LAST });
+    const box = p.getByRole("textbox", { name: "Message" }), alert = () => p.getByRole("alert").filter({ hasText: "starting claude" });
+    await step(p, "d-send-refused-conversation", async () => {
+      await open(p, "Names for a grey cat"); await box.fill("write me a haiku about rain"); await p.getByTitle("Send (Enter)").click();
+      await alert().waitFor({ state: "visible", timeout: 4000 });
+      await p.waitForFunction(() => document.querySelector('textarea[aria-label="Message"]')?.value === "write me a haiku about rain", null, { timeout: 4000 });
+      must(!(await p.locator("[data-msg]").getByText(/starting claude/).count()), "the error is a row of the conversation");
+      await p.evaluate(() => window.__again((v) => ({ ...v, mode: "plan", blocks: [...v.blocks, { kind: "notice", text: "mode: plan", error: false }] })));
+      await p.waitForTimeout(200); must(!!(await alert().count()), "a mode's notice took the error away");
+    });
+    await step(p, "d-send-after-refused", async () => {
+      await p.evaluate(() => { window.__NO_CLAUDE__ = false; window.__DRAFT_SEND_SUCCESS__ = true; });
+      await p.getByTitle("Send (Enter)").click();
+      await p.locator("[data-msg]").getByText("write me a haiku about rain", { exact: true }).waitFor({ state: "visible", timeout: 4000 });
+      must(!(await p.locator("[data-msg]").getByText(/starting claude/).count()) && !(await alert().count()), "the refused send's error is still on screen");
+    });
+    await step(p, "d-command-error-row", async () => {
+      await p.evaluate(() => window.__again((v) => ({ ...v, activity: "Done", blocks: [...v.blocks, { kind: "done", ok: true, secs: 1, turns: 1, cost: 0, usage: v.usage, stopped: false }, { kind: "notice", text: "github: removed", error: true }] })));
+      await p.locator("[data-msg]").getByText("github: removed").waitFor({ state: "visible", timeout: 4000 });
+      must(!(await p.getByRole("alert").count()), "a command's error stood over the box");
+    });
+    // a refusal that brought no notice (a model being restored, /create): an error more than a second later is not its own
+    await step(p, "d-refused-without-notice", async () => {
+      await p.evaluate(() => { const { tid } = window.__lastView; window.__TAURI_INTERNALS__.emit("tazuna-view", { tid, msg: { type: "send_rejected", text: "kept" } }); });
+      await p.waitForTimeout(1300);
+      await p.evaluate(() => window.__again((v) => ({ ...v, blocks: [...v.blocks, { kind: "notice", text: "linear: added, connecting…", error: true }] })));
+      await p.locator("[data-msg]").getByText("linear: added, connecting…").waitFor({ state: "visible", timeout: 4000 });
+      must(!(await p.getByRole("alert").count()), "a later error was taken for the refusal");
+    });
+    await ctx.close(); }
+  // the core's word for it (`rejected` on the notice) where the message showed first (the router's check, then the
+  // refusal): message and error leave the conversation, the words are back in the box once, the error over it
+  { const routed = `(() => { const T = window.__TAURI_INTERNALS__, inv = T.invoke.bind(T); T.invoke = async (c, a) => { if (c === "send" && window.__lastView) { const { tid, msg } = window.__lastView;
+      T.view(tid, { ...msg, from: 0, blocks: [...msg.blocks, { kind: "prompt", text: a.text }, ...(window.__modeBetween ? [{ kind: "notice", text: "mode: plan", error: false }] : [])] });
+      setTimeout(() => { T.emit("tazuna-view", { tid, msg: { type: "send_rejected", ...a.draft } }); T.view(tid, { ...window.__lastView.msg, from: 0, blocks: [...window.__lastView.msg.blocks, { kind: "notice", text: "starting claude (is it installed and on PATH?): No such file or directory (os error 2)", error: true, ended: true, rejected: true }] }); }, 60); return null; } return inv(c, a); }; })();`;
+    const [ctx, p] = await ctxOf({ extra: LAST + routed });
+    const box = p.getByRole("textbox", { name: "Message" });
+    // a new chat: the start page stays, its title and the sidebar do not take the refused words
+    await step(p, "d-send-refused-fresh", async () => {
+      await box.fill("write me a haiku about rain"); await p.getByTitle("Send (Enter)").click();
+      await p.getByRole("alert").filter({ hasText: "starting claude" }).waitFor({ state: "visible", timeout: 4000 }); await p.waitForTimeout(300);
+      must((await box.inputValue()) === "write me a haiku about rain", `the box holds "${await box.inputValue()}"`);
+      must(!!(await p.getByText("What are we working on?").count()), "the start page went");
+      must((await p.locator("main > header").innerText()).includes("New chat"), `the header reads "${await p.locator("main > header").innerText()}"`);
+      must(!(await side(p).getByText(/haiku about rain/i).count()), "the sidebar took the refused words");
+    });
+    // with attachments: its prompt holds the paths after the text (as the box sends it), and still leaves with its refusal
+    await step(p, "d-send-refused-attachments", async () => {
+      await box.fill("look at this"); await p.getByTitle("Attach files or images (or drop them on the window)").click();
+      await p.getByRole("button", { name: /Remove Screenshot/ }).waitFor({ state: "visible" }); await p.getByTitle("Send (Enter)").click(); await p.waitForTimeout(600);
+      must(await p.getByRole("button", { name: /Remove Screenshot/ }).isVisible(), "the attachments did not come back");
+      must(!(await p.locator("[data-msg]").count()), `the refused message is a row: ${JSON.stringify(await p.locator("[data-msg]").allInnerTexts())}`);
+      const chip = p.getByRole("button", { name: /^Remove (Screenshot|retry-policy)/ });
+      await box.fill(""); while (await chip.count()) await chip.first().click();
+    });
+    // a mode picked during the router's check: its notice between the message and the refusal; the message still leaves
+    await step(p, "d-send-refused-mode-between", async () => {
+      await p.evaluate(() => { window.__modeBetween = true; });
+      await box.fill("draw a cat"); await p.getByTitle("Send (Enter)").click(); await p.waitForTimeout(600);
+      must((await box.inputValue()) === "draw a cat", `the box holds "${await box.inputValue()}"`);
+      must(!(await p.locator("[data-msg]").getByText("draw a cat", { exact: true }).count()), "the refused message stayed a row past the mode's notice");
+      await box.fill(""); await p.evaluate(() => { window.__modeBetween = false; });
+    });
+    await step(p, "d-send-refused-routed", async () => {
+      await open(p, "Names for a grey cat"); await box.fill("write me a haiku about rain"); await p.getByTitle("Send (Enter)").click();
+      await p.getByRole("alert").filter({ hasText: "starting claude" }).waitFor({ state: "visible", timeout: 4000 });
+      await p.waitForTimeout(300);
+      must((await box.inputValue()) === "write me a haiku about rain", `the box holds "${await box.inputValue()}"`);
+      must(!(await p.locator("[data-msg]").getByText("write me a haiku about rain", { exact: true }).count()), "the refused message is still a row");
+      must(!(await p.locator("[data-msg]").getByText(/starting claude/).count()), "the error is a row");
+    });
+    await ctx.close(); }
   { const [ctx, p] = await ctxOf({ setup: false }); await step(p, "first-run-setup", async () => { await p.waitForTimeout(600); }); await ctx.close(); }
   fs.writeFileSync(`${OUT}/log.txt`, log.join("\n"));
   console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok", `· ${log.length} steps in ${OUT}`);
   await browser.close();
+  // a failed step fails the run (design review 13: failures were only lines in the log)
+  if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1;
 })();

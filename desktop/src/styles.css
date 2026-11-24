@@ -211,5 +211,13 @@ input[type=radio], input[type=checkbox] { accent-color: var(--accent); cursor: d
 .tok-keyword { color: var(--code-keyword); } .tok-string { color: var(--code-string); }
 .tok-number { color: var(--code-number); } .tok-comment { color: var(--code-comment); font-style: italic; }
 code { font-family: var(--font-mono); font-size: 0.92em; }
+/* the mark (components/Mark.tsx): paper on ink in both themes; in dark a hairline keeps the tile off the desk. `tz-px`: the
+   working mark writes its pixels in stroke order: one cycle shared by all, each pixel dim until its turn (`--at`, set per
+   pixel), then drawn to the cycle's end, the whole mark held for its last third (no dim band travelling round it; reduced
+   motion leaves them all drawn, the rule below) */
+.tz-mark { background: linear-gradient(#2a2824, #1d1c19); color: #ece8df; }
+.dark .tz-mark { box-shadow: inset 0 0 0 1px #ffffff1f; }
+@keyframes tz-px { from { opacity: .2; } to { opacity: 1; } }
+.tz-px { animation: tz-px 3s infinite linear(0, 0 var(--at), 1 var(--at), 1); }
 /* a spinner still turns (slower): standing still it said "stuck", and it is the only sign that a reply runs */
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } .animate-spin { animation: spin 1.6s linear infinite !important; } }

@@ -1,6 +1,6 @@
 import { ArrowUp, Check, ChevronDown, FileText, FolderOpen, Gauge, MessageCircle, Paperclip, Plus, Shield, Square, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { quotePath, type ModelChoice, type Models, type SendDraft } from "../lib/tazuna";
+import { composed, type ModelChoice, type Models, type SendDraft } from "../lib/tazuna";
 import { IMAGE_FILE, keysOf, modelLabel, type Session } from "../lib/types";
 import { Slot } from "../lib/slots";
 import { EffortMenu, Menu, ModelPicker, usePlace } from "./ModelPicker";
@@ -29,6 +29,9 @@ export type ComposerBag = {
 type Props = {
   /** An editable preview draft, never submitted or cleared by Send/Enter. */
   readOnly?: boolean;
+  /** a permission question waits over the box: Shift+Tab goes to its buttons, not to the next mode (keys typed in the box
+   * never answer it, design review 13) */
+  asking?: boolean;
   session: Session; threadCost: number; busy?: boolean; sendBlocked?: boolean; onSend?: (text: string, draft: SendDraft) => void; onStop?: () => void;
   /** ⌘↩ during a reply: stop it and send this message at once, instead of after it */
   onSendNow?: (text: string, draft: SendDraft) => void;
@@ -110,7 +113,7 @@ export const MODES: [string, string][] = [
 // one line always (a narrow window wrapped "Opus 5.5" onto two), and readable while a reply runs (faded, they read as broken)
 const pill = "inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink disabled:cursor-default disabled:text-muted";
 
-export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSendNow, onStop, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onPasteClipboardImage, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {}, readOnly = false }: Props) {
+export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSendNow, onStop, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onPasteClipboardImage, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {}, readOnly = false, asking = false }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   // attachments are chips over the text, with a thumbnail for an image (until desktop 0.1.87 their paths were typed into
   // the message, and a screenshot was a line of path)
@@ -204,7 +207,7 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSe
   // attachments go in the message as paths after its text (quoted when they hold a space): the core sends images as images
   const send = (now = false) => {
     if (readOnly || (!files.length && run(text.trim())) || sendBlocked) return;
-    const paths = files.map(quotePath).join(" "), t = [text.trim(), paths].filter(Boolean).join(" ");
+    const t = composed({ text, files });
     if (!t) return;
     (now && onSendNow ? onSendNow : onSend)?.(t, { text, files }); setText(""); setFiles([]);
   };
@@ -246,7 +249,8 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSe
               if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) { e.preventDefault(); take(menu.items[sel] ?? menu.items[0]); return; }
               if (e.key === "Escape") { e.preventDefault(); setShut(true); return; }
             }
-            if (e.key === "Tab" && e.shiftKey && onMode) { e.preventDefault(); nextMode(); } if (e.key === "Escape" && busy) onStop?.(); if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(busy && (e.metaKey || e.ctrlKey)); } }}
+            if (e.key === "Tab" && e.shiftKey && asking) { e.preventDefault(); [...document.querySelectorAll<HTMLButtonElement>("[data-asking] button:not(:disabled)")].pop()?.focus(); }
+            else if (e.key === "Tab" && e.shiftKey && onMode) { e.preventDefault(); nextMode(); } if (e.key === "Escape" && busy) onStop?.(); if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(busy && (e.metaKey || e.ctrlKey)); } }}
           placeholder={readOnly ? "Try writing here. Nothing will be sent." : busy ? `Type your next message: it goes after this reply · ${keysOf("⌘↵")} sends it now` : "Ask anything, or describe a change…  / for commands, @ for files"} className="max-h-[40vh] w-full resize-none overflow-y-auto bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
         <div className="flex items-center gap-1.5">
           <Slot name="composer.pills" props={{ composer: bag }} />

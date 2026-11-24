@@ -35,7 +35,8 @@ export type ViewBlock =
        * to more than one (the own loop changed route inside it), in order; `provider` and `price_m` are then null.
        * `sub_calls`: its subagents' model calls, which are in its cost and not among `calls`. */
       model?: string; plan?: boolean; provider?: string | null; price_m?: [number, number, number] | null; providers?: string[]; sub_calls?: number }
-  | { kind: "notice"; text: string; error: boolean; ended?: boolean }
+  /** `rejected`: the error of a send the core refused, its text sent back to the box (send_rejected; newer cores) */
+  | { kind: "notice"; text: string; error: boolean; ended?: boolean; rejected?: boolean }
   | { kind: "verify"; cmd: string; ok?: boolean; secs: number; timed_out?: boolean; cannot_run?: boolean; no_tests?: boolean };
 type Usage = { input: number; cache_write: number; cache_read: number; output: number };
 export type View = {
@@ -51,7 +52,9 @@ export type View = {
   /** every earlier session this conversation goes on from (a change of model, a Retry), oldest first */
   earlier_sessions?: string[];
   /** the oldest open permission question (text made safe by the core) */
-  asking?: { tool: string; what: string; note: string; once: boolean; queued: number; reviewing?: boolean } | null;
+  /** `risky`: one auto asks about because the command is destructive, `risky_why` why (newer cores; the note says so
+   * before them) */
+  asking?: { tool: string; what: string; note: string; once: boolean; queued: number; reviewing?: boolean; risky?: boolean; risky_why?: string } | null;
   /** the turns that changed files: where their card goes (`at_block`, a done block) and what they changed */
   changes?: { turn: number; at_block: number; undone: boolean; can_undo: boolean; files: { path: string; added: number | null; removed: number | null; status: string }[] }[];
   /** the messages "edit from here" can go back to: checkpoint and the message's block */
@@ -293,6 +296,9 @@ export const core = {
 
 /** A path as the core reads it in a message: quoted when it has a space (src/live.rs words). */
 export const quotePath = (p: string) => (/\s/.test(p) ? `"${p}"` : p);
+/** A message as the box sends it: its text, then its attachments' paths (quoted when they hold a space; the core sends
+ * images as images). App compares a refused send's prompt with it. */
+export const composed = (d: SendDraft) => [d.text.trim(), (d.files ?? []).map(quotePath).join(" ")].filter(Boolean).join(" ");
 
 /** The quick-chat shortcut from anywhere, as Settings saved it (empty: none). */
 export const HOTKEY = "tazuna.hotkey";

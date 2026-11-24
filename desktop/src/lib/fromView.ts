@@ -41,7 +41,29 @@ function calls(v: View): (Call & { block: number })[] {
   });
 }
 
-export function messages(v: View): Message[] {
+/** The prompts shown before the core refused them (the router's check, then the refusal) whose words are what went back
+ * into the box: left out with their refusal, so a send again does not show it twice (`refused` as messages() has it). The
+ * prompt is the nearest before the refusal past notices that are no error (a mode picked during the router's check). */
+export function orphans(v: View | null | undefined, refused: ReadonlyMap<number, string>): Set<number> {
+  const out = new Set<number>(), blocks = v?.blocks ?? [];
+  for (const [k, back] of refused) {
+    let i = k - 1;
+    while (i >= 0 && blocks[i].kind === "notice" && !(blocks[i] as { error: boolean }).error) i--;
+    const p = blocks[i];
+    if (back.trim() && p?.kind === "prompt" && p.text.trim() === back.trim()) out.add(i);
+  }
+  return out;
+}
+
+/** The prompts messages() shows: the conversation's title, whether it is saved or empty, read from these. */
+export const asked = (v: View | null | undefined, refused: ReadonlyMap<number, string> = new Map()) => {
+  const gone = orphans(v, refused);
+  return (v?.blocks ?? []).flatMap((b, k) => (b.kind === "prompt" && !gone.has(k) ? [b.text] : []));
+};
+
+/** `refused` (App's alone): the error notices of sends the core refused whose words went back into the box, each with
+ * those words as the box sent them ("" not known); a side chat or a subagent keeps every error a row */
+export function messages(v: View, refused: ReadonlyMap<number, string> = new Map()): Message[] {
   const out: Message[] = [];
   // the calls not yet given to a reply: each done block takes those that began before it
   const pending = calls(v);
@@ -53,6 +75,7 @@ export function messages(v: View): Message[] {
   const queue: string[] = [];
   const edits = new Map((v.edit_points ?? []).map((e) => [e.block, e]));
   let at = 0;
+  const gone = orphans(v, refused);
   const prompt = (text: string, block = at) => { out.push({ role: "user", text, edit: edits.get(block) }); agent = null; ask = text; open = true; lastError = ""; };
   const current = () => (agent ??= (out.push({ role: "agent", prose: [], tools: [] }), out[out.length - 1] as Extract<Message, { role: "agent" }>));
   // a short word the model wrote before a later step is no answer: it goes into the fold, in its place among the steps, as a
@@ -68,7 +91,7 @@ export function messages(v: View): Message[] {
   const changeAt = new Map((v.changes ?? []).map((c) => [c.at_block, c]));
   for (const [k, b] of v.blocks.entries()) {
     at = k;
-    if (b.kind === "prompt") { if (open) queue.push(b.text); else prompt(b.text); }
+    if (b.kind === "prompt") { if (gone.has(k)) { /* refused: its words are back in the box */ } else if (open) queue.push(b.text); else prompt(b.text); }
     // the router answered it as a chat (app server, 0.1.127's router): the reply carries the tag and the ask, for "send to agent"
     else if (b.kind === "notice" && b.text.startsWith("answered as a chat")) { Object.assign(current(), { routedChat: true, ask }); }
     // the agent answered in a chat's place (the chat replied [[agent]], or you sent it there)
@@ -132,16 +155,35 @@ export function messages(v: View): Message[] {
     // (past it, or into the error card). In a plain chat it showed only once the reply had failed, 55 s later
     else if (b.kind === "notice" && !b.error && /: \d+ (?:try|tries) failed/.test(b.text)) { lastError = b.text; current().retrying = b.text; }
     else if (b.kind === "notice" && (b.error || /provider error|HTTP \d{3}/.test(b.text))) {
-      lastError = b.text;
-      // an error the reply went on past (a tool server that failed to start) stays in sight, in words; a provider's retry
-      // shows only if the reply then fails
-      if (b.error) (current().notes ??= []).push(b.text);
+      // a send the core refused, its words back in the box (`refused`): said beside the box until a message goes
+      // (`standing`), not a row; they piled up at the top with nothing of what was sent (design review 13). Its message,
+      // shown before the refusal, is left out too (`orphans`). Every other error stays a row (a run that could not start
+      // and gave nothing back, a command's reply)
+      if (!refused.has(k)) {
+        lastError = b.text;
+        // an error the reply went on past (a tool server that failed to start) stays in sight, in words; a provider's retry
+        // shows only if the reply then fails
+        if (b.error) (current().notes ??= []).push(b.text);
+      }
       // the message could not start (claude not found): its turn is over, so the next is not queued behind it
       if (b.ended) { open = false; const next = queue.shift(); if (next !== undefined) prompt(next); }
     }
   }
   for (const text of queue) out.push({ role: "user", text, queued: true });
   return out;
+}
+
+/** The error shown beside the box: the last refused send's (`refused`, as messages() has it), until a message goes; a
+ * change of mode or of model, or any other notice, leaves it. */
+export function standing(v: View, refused: ReadonlyMap<number, string> = new Map()): string | undefined {
+  let open = false, waiting = 0, error: string | undefined;
+  for (const [k, b] of v.blocks.entries()) {
+    if (b.kind === "prompt") { if (open) waiting++; else { open = true; error = undefined; } }
+    else if (b.kind === "notice" && refused.has(k)) error = b.text;
+    // the turns as messages() has them: a message waiting in the core's queue goes when one ends
+    if (b.kind === "done" || (b.kind === "notice" && b.error && b.ended)) { if (waiting) { waiting--; error = undefined; } else open = false; }
+  }
+  return error;
 }
 
 /** A check of the receipt's data: `npx tsx -e 'import("./src/lib/fromView.ts").then(m => m.demoView())'`. A field the core
@@ -179,6 +221,19 @@ export function demoView() {
   const refused = { kind: "notice", text: "starting claude: program not found", error: true, ended: true } as const;
   const after = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "a" }, refused, { kind: "prompt", text: "b" }, refused] } as View);
   if (after.some((m) => m.role === "user" && m.queued) || after.filter((m) => m.role === "user").length !== 2) throw new Error(`a refused message holds up the next: ${JSON.stringify(after)}`);
+  // a send the core refused (claude not found; send_rejected named block 2): beside the box, no row, gone once a message
+  // goes, not when a mode changes; without App's word (a side chat), a row. Shown before the refusal (the router's check),
+  // its message goes too when it is what came back. A run that could not start and gave nothing back stays a row
+  const lost = { kind: "notice", text: "starting claude: program not found", error: true } as const, was = [{ kind: "prompt", text: "a" }, done, lost];
+  const mode = { kind: "notice", text: "mode: plan", error: false } as const, back = new Map([[2, "write a haiku"]]);
+  const see = (blocks: unknown[], r?: Map<number, string>) => [messages({ ...v, calls: [], blocks } as View, r).map((m) => m.role[0]).join(""), standing({ ...v, blocks } as View, r) ?? ""].join();
+  const between = [{ kind: "prompt", text: "a" }, done, { kind: "prompt", text: "write a haiku" }, mode, { ...lost, ended: true }];
+  if (see(between, new Map([[4, "write a haiku"]])) !== `ua,${lost.text}`) throw new Error(`a refused message after a mode's notice: ${see(between, new Map([[4, "write a haiku"]]))}`);
+  const seen = [see(was, new Map([[2, ""]])), see([...was, mode], new Map([[2, ""]])), see([...was, { kind: "prompt", text: "b" }], new Map([[2, ""]])), see(was),
+    see([{ kind: "prompt", text: "a" }, done, { kind: "prompt", text: "write a haiku" }, { ...lost, ended: true }], new Map([[3, "write a haiku"]])),
+    see([{ kind: "prompt", text: "a" }, { ...lost, ended: true }]), see([{ kind: "prompt", text: "a" }, done, lost], back)];
+  const want = [`ua,${lost.text}`, `ua,${lost.text}`, "uau,", "uaa,", `ua,${lost.text}`, "ua,", `ua,${lost.text}`];
+  if (seen.join(" / ") !== want.join(" / ")) throw new Error(`a refused message's error: ${seen.join(" / ")}`);
   // a long answer, then a to-do step, then "Done.": the answer stays the answer
   const long = `${"The cache is keyed on the lock file. ".repeat(4)}\n\n- one\n- two`;
   const kept = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "a" }, { kind: "text", text: long, live: false }, { ...bash, name: "TodoWrite" }, { kind: "text", text: "Done.", live: false }, done] } as View)[1];
@@ -237,7 +292,7 @@ export const sessionIds = (v: View | null, seen: string[] = []) =>
 
 /** A conversation whose change of model lives only in its core: messages, and no session yet (its first turn on the new
  * model has not run). */
-export const unsaved = (v: View | null) => !!v && !v.session_id && v.blocks.some((b) => b.kind === "prompt");
+export const unsaved = (v: View | null, refused?: ReadonlyMap<number, string>) => !!v && !v.session_id && asked(v, refused).length > 0;
 
 /** When the next message waiting in the window may go: -1 not now (no view, a reply running, a question open), else the ms
  * still to wait for the last one sent to be taken (one more message of yours in the view; a command that adds none counts

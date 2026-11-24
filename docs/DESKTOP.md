@@ -683,6 +683,19 @@ line, and the next key pinned it to the bottom again. The box is now measured on
 In Chromium the scroll went back and forth while typing before, and moves once now, as the box grows a line. The design
 sweep checks it (d-typing-keeps-scroll).
 
+0.1.125 (with tazuna 0.1.224), design review 13: the user's own use against the real core, plus independent reviews.
+- A permission question no longer takes the keys of a message being typed: the 'a' of "explain" had approved a force push
+  for the whole session. Keys typed into the message box (empty or not), the palette, a dialog, a menu or the side chat
+  never answer; a y / n on the card itself counts after the question has shown for 600 ms, Shift+Tab from the box reaches
+  its buttons, and focus goes back to the box after an answer. A command auto asks about as destructive shows why
+  (`risky_why`), offers no Always, and gives Allow and Decline the same weight.
+- A send the core refuses puts its text back in the box with the error above it, in a conversation as on the start page;
+  the refused message leaves the conversation, its title and the sidebar (the core marks the notice `rejected`).
+- The model picker works from the keyboard (arrows, Home, End, Enter); Enter on an empty search only closes it.
+- A run's folded line says how many steps failed.
+- The mark is new: 手 as a 9×9 bitmap, paper on ink (the user's pick of six, kept in mockups/logo.html with the stroke mark
+  it replaced). The app icon, the sidebar, the start screen and receipts use it.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

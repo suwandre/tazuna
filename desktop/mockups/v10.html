@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>tazuna · design review 13 prototype (v10): polish for the terminal and the window</title>
+<!-- Design review 13 (2026-11-24). Each row puts the app as it is today beside a proposal. Terminal rows are drawn cell by
+     cell in the terminal's own palette (src/ui/mod.rs DARK / LIGHT) at 72 columns; animations step the way a terminal can
+     (one colour per cell per frame). Desktop rows use DESIGN.md's tokens and the bundled fonts. The panel at the bottom
+     right switches theme, accent and motion. Not the app. -->
+<style>
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Regular.woff2") format("woff2"); font-weight: 400; }
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Medium.woff2") format("woff2"); font-weight: 500; }
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-SemiBold.woff2") format("woff2"); font-weight: 600; }
+@font-face { font-family: "Geist Mono"; src: url("../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2") format("woff2"); font-weight: 100 900; }
+@font-face { font-family: "Source Serif 4"; src: url("../node_modules/@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-normal.woff2") format("woff2"); font-weight: 200 900; }
+:root {
+  --main:#fbfaf7; --card:#fffefb; --field:#efebe3; --hover:#e7e3db; --selected:#e6e1f2;
+  --ink:#23221e; --ink-2:#3f3c35; --muted:#5b574f; --faint:#69655d; --line:#e3ded3; --line-soft:#ece8df; --line-strong:#d8d2c5;
+  --accent:#3d4aa8; --accent-ink:#2f3a8f; --on-accent:#fff; --ok:#3b7d4f; --bad:#b4473a; --warn:#a76a14; --desk:#efebe3;
+  --sheet:0 0 0 1px #2321190a, 0 1px 2px #2321190f, 0 8px 28px #2321190d; --pop:0 2px 6px #2321190f, 0 14px 36px #23211924;
+  --ui:"Geist", system-ui, sans-serif; --mono:"Geist Mono", ui-monospace, monospace; --prose:"Source Serif 4", Georgia, serif;
+  --term:ui-monospace, "SF Mono", Menlo, "Hiragino Sans", monospace;
+}
+.dark {
+  --main:#211f1b; --card:#282622; --field:#302e29; --hover:#37342e; --selected:#2b2c45;
+  --ink:#ece8df; --ink-2:#d2cdc2; --muted:#afaa9e; --faint:#a29d95; --line:#35322c; --line-soft:#2b2925; --line-strong:#423e37;
+  --accent:#8f9bf0; --accent-ink:#aab3f5; --on-accent:#14152a; --ok:#7cc08f; --bad:#e08b7f; --warn:#e0b46a; --desk:#121110;
+  --sheet:0 0 0 1px #ffffff14, 0 1px 2px #00000080, 0 12px 34px #00000066; --pop:0 0 0 1px #ffffff0a, 0 16px 40px #000000a0;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--desk); color: var(--ink); font: 14px/1.5 var(--ui); }
+main { max-width: 1240px; margin: 0 auto; padding: 36px 28px 140px; }
+h1 { font: 500 26px/1.2 var(--prose); margin: 0 0 6px; }
+h2 { font: 600 13px/1 var(--ui); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); margin: 44px 0 10px; }
+.lede { color: var(--muted); max-width: 820px; margin: 0 0 8px; }
+.row { background: var(--main); border-radius: 14px; box-shadow: var(--sheet); padding: 18px 20px 20px; margin: 14px 0; }
+.row > h3 { margin: 0 0 2px; font: 600 15px/1.3 var(--ui); }
+.row > h3 b { color: var(--accent-ink); font-weight: 600; margin-right: 6px; }
+.row > p { margin: 0 0 14px; color: var(--muted); font-size: 13px; max-width: 900px; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+.pair > div > .tag { font: 500 11px/1 var(--ui); text-transform: uppercase; letter-spacing: .07em; color: var(--faint); margin: 0 0 7px; }
+.pair > div:last-child > .tag { color: var(--accent-ink); }
+/* a terminal window: its own padding in the terminal's colour, then tazuna's cells */
+.tw { border-radius: 9px; overflow: hidden; box-shadow: 0 0 0 1px #0000002e, 0 8px 22px #0000002a; display: inline-block; max-width: 100%; }
+.tw .bar { height: 22px; background: #2b2b2b; display: flex; gap: 6px; align-items: center; padding: 0 9px; }
+.tw .bar i { width: 9px; height: 9px; border-radius: 50%; background: #ff5f57; } .tw .bar i:nth-child(2) { background: #febc2e; } .tw .bar i:nth-child(3) { background: #28c840; }
+.tw .bar span { color: #999; font: 11px var(--ui); margin-left: 8px; }
+.tw .pad { padding: 10px 12px; }
+.t { font: 11.5px/1.38 var(--term); white-space: pre; width: 72ch; overflow: hidden; }
+.t .l { height: 1.38em; display: flex; }
+.t .l > span { white-space: pre; }
+.t .w2 { display: inline-block; width: 2ch; text-align: center; }
+@keyframes tzsh { 0%, 100% { color: var(--sh-base); } 12% { color: var(--sh-hi); } 24% { color: var(--sh-base); } }
+.sh > span { animation: tzsh 1.7s steps(1, end) infinite; }
+@keyframes tzmark { 0%, 100% { color: var(--sh-hi); } 50% { color: var(--sh-base); } }
+.markpulse { animation: tzmark 1.7s steps(6, end) infinite; }
+.nomotion .sh > span, .nomotion .markpulse, .nomotion .dshimmer, .nomotion .rein path:last-child { animation: none !important; }
+/* desktop bits */
+.sheet { background: var(--main); border: 1px solid var(--line-soft); border-radius: 12px; padding: 16px 18px; font-size: 13.5px; }
+.msg { display: inline-block; background: var(--field); border-radius: 10px; padding: 7px 12px; font-size: 13.5px; }
+.prose { font: 16px/1.6 var(--prose); margin: 10px 0 6px; }
+.meta { display: flex; align-items: center; gap: 7px; color: var(--faint); font-size: 12px; }
+.meta .sep { width: 1px; height: 11px; background: var(--line-strong); }
+.spin { width: 12px; height: 12px; border-radius: 50%; border: 1.6px solid var(--accent); border-right-color: transparent; animation: rot 0.9s linear infinite; }
+@keyframes rot { to { transform: rotate(360deg); } }
+.dshimmer { background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 40%, var(--accent-ink) 50%, var(--muted) 60%, var(--muted) 100%); background-size: 250% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; animation: shim 1.8s linear infinite; }
+@keyframes shim { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+.rein path:last-child { stroke-dasharray: 26; animation: draw 1.8s ease-in-out infinite; }
+@keyframes draw { 0% { stroke-dashoffset: 26; } 55%, 100% { stroke-dashoffset: 0; } }
+.tile { display: inline-grid; place-items: center; border-radius: 22%; background: var(--accent); color: var(--on-accent); }
+.pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; border: 1px solid var(--line); padding: 3px 10px; font-size: 12px; color: var(--ink-2); background: transparent; }
+.pill svg { width: 13px; height: 13px; }
+.pill.full { border-color: color-mix(in srgb, var(--warn) 55%, var(--line-strong)); background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); }
+.pill.plan { border-color: color-mix(in srgb, var(--accent) 45%, var(--line-strong)); color: var(--accent-ink); }
+.pill.ask { color: var(--ink-2); }
+.btn { border-radius: 7px; padding: 4px 10px; font: 500 12px var(--ui); border: 1px solid var(--line); background: transparent; color: var(--ink); }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+.btn kbd { font: 11px var(--mono); opacity: .65; margin-left: 5px; }
+.card { border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: 11px 13px; }
+.card.warn { border-color: color-mix(in srgb, var(--warn) 55%, var(--line-strong)); }
+.code { font: 12px var(--mono); background: var(--field); border-radius: 6px; padding: 6px 9px; margin: 7px 0 9px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; padding: 2px; gap: 2px; }
+.seg span { padding: 3px 9px; border-radius: 6px; font-size: 12px; color: var(--muted); }
+.seg span.on { background: var(--card); color: var(--ink); box-shadow: 0 0 0 1px var(--line-strong); }
+.sw { width: 20px; height: 20px; border-radius: 50%; cursor: pointer; box-shadow: 0 0 0 1px #0002 inset; display: inline-block; }
+.sw.on { outline: 2px solid var(--ink); outline-offset: 2px; }
+.set { display: grid; grid-template-columns: 1fr auto; gap: 4px 18px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line-soft); }
+.set:first-child { border-top: 0; }
+.set small { display: block; color: var(--faint); font-size: 12px; }
+.foot { display: flex; align-items: center; gap: 8px; color: var(--faint); font-size: 12px; margin-top: 4px; min-height: 22px; }
+.foot .r { margin-left: auto; display: flex; gap: 12px; }
+.hoverdemo .foot { opacity: 0; transition: opacity 140ms; } .hoverdemo:hover .foot, .hoverdemo.last .foot { opacity: 1; }
+.hoverdemo.last .foot .r { opacity: 0; transition: opacity 140ms; } .hoverdemo.last:hover .foot .r { opacity: 1; }
+#panel { position: fixed; right: 18px; bottom: 18px; opacity: .97; background: var(--card); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--pop);
+  padding: 12px 14px; font-size: 12px; display: grid; gap: 9px; z-index: 9; width: 250px; }
+#panel b { font-weight: 600; } #panel .lab { color: var(--faint); margin-bottom: 4px; }
+#panel .seg span { cursor: pointer; }
+</style>
+</head>
+<body class="dark">
+<main>
+  <h1>Design review 13 · polish proposals</h1>
+  <p class="lede">Each row shows the app as it is today next to a proposal. Terminal rows are drawn cell by cell in tazuna's own terminal palette at 72 columns. Desktop rows use DESIGN.md's tokens. Use the panel at the bottom right to switch theme, accent and motion.</p>
+
+  <h2>Terminal</h2>
+  <section class="row"><h3><b>T1</b>A working indicator people recognise</h3>
+    <p>Today the run shows a braille spinner with "Working 2 s" at the right edge of the status line. Proposed: the live end of the transcript carries the 手 mark and a shimmer over "Working", stepped one cell per frame on the same clock as the spinner, with elapsed time and live output tokens. Claude Code has ✻ and Codex a shimmer; this would be tazuna's.</p>
+    <div class="pair"><div><div class="tag">Today</div><div id="t1a"></div></div><div><div class="tag">Proposed</div><div id="t1b"></div></div></div></section>
+
+  <section class="row"><h3><b>T2</b>Your messages stand out when you scroll</h3>
+    <p>Today your message is only italic text and reads like a note from the model. Proposed: an accent ▎ gutter, a faint band the width of the column, upright text. The same in zen and cockpit (cockpit's "│ you" label goes).</p>
+    <div class="pair"><div><div class="tag">Today</div><div id="t2a"></div></div><div><div class="tag">Proposed</div><div id="t2b"></div></div></div></section>
+
+  <section class="row"><h3><b>T3</b>What changed, without Ctrl-O</h3>
+    <p>Today a finished run folds everything into "ran 4 tools …", and the edits stay hidden until Ctrl-O. Proposed: one change line under each run (files, +/−, a hint). Expanded diffs get tinted bands, a line-number gutter and word-level marks. No syntax highlighting: that would mean a grammar engine in a 6 MB binary, against the small-footprint goal.</p>
+    <div class="pair"><div><div class="tag">Today (Ctrl-O open)</div><div id="t3a"></div></div><div><div class="tag">Proposed (folded, then open)</div><div id="t3b"></div></div></div></section>
+
+  <section class="row"><h3><b>T4</b>The permission mode as a coloured pill, auto included</h3>
+    <p>Today the status line shows <code>[ask]</code> or <code>[full]</code>, and auto shows nothing, so you can't tell auto from a missing label. Proposed: a pill with a dot, warn-coloured for full. The question bar names the rule it hit and wraps instead of cutting off "· al".</p>
+    <div class="pair"><div><div class="tag">Today</div><div id="t4a"></div></div><div><div class="tag">Proposed</div><div id="t4b"></div></div></div></section>
+
+  <section class="row"><h3><b>T5</b>Long answers: air above headings, simple maths as text</h3>
+    <p>Today headings sit straight under the paragraph above, and maths prints raw. Proposed: a blank line above each heading, headings in ink with an accent mark, and simple TeX without its $$ fences: Greek letters and symbols as Unicode, in italics.</p>
+    <div class="pair"><div><div class="tag">Today</div><div id="t5a"></div></div><div><div class="tag">Proposed</div><div id="t5b"></div></div></div></section>
+
+  <section class="row"><h3><b>T6</b>Leaving: a recap and the way back</h3>
+    <p>Today the last line is a session file path. Proposed: one recap line (turns, files changed, cost, time) and the command that resumes it.</p>
+    <div class="pair"><div><div class="tag">Today</div><div id="t6a"></div></div><div><div class="tag">Proposed</div><div id="t6b"></div></div></div></section>
+
+  <section class="row"><h3><b>T7</b>The terminal's own background</h3>
+    <p>Today tazuna paints its own warm black over every cell, so a terminal with its own colour and padding shows a frame around it, shown here in a Catppuccin-like terminal. Proposed: tazuna reads the terminal's background (OSC 11), picks light or dark from it, and a "terminal" theme leaves the background alone, keeping the surface colour only for panels and bands.</p>
+    <div class="pair"><div><div class="tag">Today</div><div id="t7a"></div></div><div><div class="tag">Proposed</div><div id="t7b"></div></div></div></section>
+
+  <h2>Desktop</h2>
+  <section class="row"><h3><b>D1</b>The mark at work</h3>
+    <p>Today a generic spinning ring shows next to "Working 1 s". Proposed: the 手 tile draws its rein loop while the run works, and a slow shimmer runs over "Working" with live tokens. Motion stays at 200 ms or less per step, and with reduced motion it stands still.</p>
+    <div class="pair">
+      <div><div class="tag">Today</div><div class="sheet"><span class="msg">change the greeting to hello tazuna</span>
+        <div class="meta" style="margin-top:14px"><span>⌄</span><span class="spin"></span><span>Working 1 s</span><span class="sep"></span><span>thought it through</span></div>
+        <div class="prose">I'll look at the folder</div></div></div>
+      <div><div class="tag">Proposed</div><div class="sheet"><span class="msg">change the greeting to hello tazuna</span>
+        <div class="meta" style="margin-top:14px"><span>⌄</span><span class="tile rein" style="width:16px;height:16px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M16.2 4.6Q12.4 6 7.6 6.4"/><path d="M7.2 10.2h9.6M5.4 14.2h13.2"/><path d="M12 6.2v11.3a2 2 0 1 1-2.6-1.9"/></svg></span>
+          <span class="dshimmer" style="font-weight:500">Working</span><span>12 s</span><span class="sep"></span><span>↓ 1.2k tokens</span><span class="sep"></span><span>ran ls -la</span></div>
+        <div class="prose">I'll look at the folder</div></div></div>
+    </div></section>
+
+  <section class="row"><h3><b>D2</b>An accent of your own</h3>
+    <p>Today Settings › Appearance has theme, text size and serif or sans. Proposed: an accent row with five accents drawn for both themes, so the mark, focus ring, selection and buttons follow it. Codex and Claude both let you colour the window. Click a swatch here: the whole page follows.</p>
+    <div class="pair">
+      <div><div class="tag">Today</div><div class="sheet" style="padding:6px 16px">
+        <div class="set"><div>Theme<small>System follows your computer's light and dark.</small></div><div class="seg"><span>System</span><span>Light</span><span class="on">Dark</span></div></div>
+        <div class="set"><div>Text size<small>Everything in the window, larger or smaller.</small></div><div class="seg"><span>Small</span><span class="on">Default</span><span>Large</span></div></div>
+        <div class="set"><div>Answers<small>The type an answer is set in.</small></div><div class="seg"><span class="on">Serif</span><span>Sans</span></div></div></div></div>
+      <div><div class="tag">Proposed</div><div class="sheet" style="padding:6px 16px">
+        <div class="set"><div>Theme<small>System follows your computer's light and dark.</small></div><div class="seg"><span>System</span><span>Light</span><span class="on">Dark</span></div></div>
+        <div class="set"><div>Accent<small>The mark, buttons, focus and selection.</small></div><div id="swatches" style="display:flex;gap:9px"></div></div>
+        <div class="set"><div>Text size<small>Everything in the window, larger or smaller.</small></div><div class="seg"><span>Small</span><span class="on">Default</span><span>Large</span></div></div>
+        <div class="set"><div>Answers<small>The type an answer is set in.</small></div><div class="seg"><span class="on">Serif</span><span>Sans</span></div></div></div></div>
+    </div></section>
+
+  <section class="row"><h3><b>D3</b>Numbers on hover in chats</h3>
+    <p>Today every chat answer carries "$0 · 1.8k in (0% cached) · 80 out · &lt;1 s", Send to agent and Copy, all the time. Proposed: in chats, the last answer keeps its cost line and older answers show theirs on hover. Actions appear on hover. Agent runs keep everything visible, since the cost of work matters there.</p>
+    <div class="pair">
+      <div><div class="tag">Today</div><div class="sheet">
+        <div class="prose" style="margin-top:0">Sure. A <b>haiku</b> is a three-line poem of 5, 7 and 5 syllables.</div>
+        <div class="foot">› $0 <span class="sep" style="width:1px;height:11px;background:var(--line-strong)"></span> 1.8k in (0% cached) · 80 out · &lt;1 s<span class="r"><span>Send to agent</span><span>Copy</span></span></div>
+        <div class="prose">Rain on the tin roof, the kettle hums a low note…</div>
+        <div class="foot">› $0 <span class="sep" style="width:1px;height:11px;background:var(--line-strong)"></span> 1.7k in (0% cached) · 60 out · &lt;1 s<span class="r"><span>Send to agent</span><span>Copy</span></span></div></div></div>
+      <div><div class="tag">Proposed (hover an answer)</div><div class="sheet">
+        <div class="hoverdemo"><div class="prose" style="margin-top:0">Sure. A <b>haiku</b> is a three-line poem of 5, 7 and 5 syllables.</div>
+          <div class="foot">$0 · 80 out · &lt;1 s<span class="r"><span>Send to agent</span><span>Copy</span></span></div></div>
+        <div class="hoverdemo last"><div class="prose">Rain on the tin roof, the kettle hums a low note…</div>
+          <div class="foot">$0 · 60 out · &lt;1 s<span class="r"><span>Send to agent</span><span>Copy</span></span></div></div></div></div>
+    </div></section>
+
+  <section class="row"><h3><b>D4</b>The mode pill says how much freedom it gives</h3>
+    <p>Today every mode looks the same, a grey shield. Proposed: full is warn-tinted, plan is accent-tinted, and the rest stay neutral. You can tell at a glance that a conversation runs with no questions.</p>
+    <div class="pair">
+      <div><div class="tag">Today</div><div class="sheet" style="display:flex;gap:8px;flex-wrap:wrap">
+        <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/></svg>auto ⌄</span><span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/></svg>ask ⌄</span><span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/></svg>plan ⌄</span><span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/></svg>full ⌄</span></div></div>
+      <div><div class="tag">Proposed</div><div class="sheet" style="display:flex;gap:8px;flex-wrap:wrap">
+        <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/></svg>auto</span>
+        <span class="pill ask"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.3 2.4c-.5.2-.8.6-.8 1.1v.5M12 16.5v.01"/></svg>ask</span>
+        <span class="pill plan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h16M4 12h10M4 18h7"/></svg>plan</span>
+        <span class="pill full"><svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/></svg>full · never asks</span></div></div>
+    </div></section>
+
+  <section class="row"><h3><b>D5</b>A destructive question reads as one</h3>
+    <p>Today the card says "tazuna asks to use bash", and Allow is the filled button. Proposed: the card names the rule auto hit, Allow and Decline carry equal weight, and there is no Always for a destructive command. This one is already in the bug-fix round; it's here so the set reads as one.</p>
+    <div class="pair">
+      <div><div class="tag">Today</div><div class="card warn"><div style="font-weight:500;font-size:12.5px">⛉ tazuna asks to use bash</div><div class="code">git push --force origin main</div>
+        <button class="btn primary">Allow<kbd>y</kbd></button> <button class="btn">Always<kbd>a</kbd></button> <button class="btn" style="color:var(--muted)">Decline<kbd>n</kbd></button></div></div>
+      <div><div class="tag">Proposed</div><div class="card warn"><div style="font-weight:500;font-size:12.5px">⛉ tazuna asks before a destructive command</div>
+        <div style="color:var(--warn);font-size:12px;margin-top:3px">git push --force rewrites the remote's history</div><div class="code">git push --force origin main</div>
+        <button class="btn">Allow once<kbd>y</kbd></button> <button class="btn">Decline<kbd>n</kbd></button> <span style="color:var(--faint);font-size:11.5px;margin-left:6px">keys work after a pause, never while you type</span></div></div>
+    </div></section>
+</main>
+
+<div id="panel">
+  <div><div class="lab">Theme</div><div class="seg" id="theme"><span data-v="dark" class="on">Dark</span><span data-v="light">Light</span></div></div>
+  <div><div class="lab">Accent (D2)</div><div id="accents" style="display:flex;gap:8px"></div></div>
+  <div><div class="lab">Motion</div><div class="seg" id="motion"><span data-v="on" class="on">On</span><span data-v="off">Reduced</span></div></div>
+</div>
+
+<script>
+// the terminal's palette, src/ui/mod.rs DARK / LIGHT
+const TP = {
+  dark: { bg: "#171613", surface: "#211f1b", field: "#2a2823", border: "#3a3731", text: "#ece8df", ink2: "#d2cdc2", dim: "#afaa9e", faint: "#9a958d", accent: "#8f9bf0", warn: "#e0b46a", err: "#e08b7f", ok: "#7cc08f" },
+  light: { bg: "#f6f4ef", surface: "#fffefb", field: "#efebe3", border: "#d8d2c5", text: "#23221e", ink2: "#3f3c35", dim: "#5b574f", faint: "#69655d", accent: "#3d4aa8", warn: "#a76a14", err: "#b4473a", ok: "#3b7d4f" },
+};
+const COLS = 72;
+const mix = (a, b, t) => { const p = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)); const x = p(a), y = p(b); return "#" + x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, "0")).join(""); };
+// a line: [segments], a segment: [text, fg token, {b, i, bg, shimmer, w2, mark}]; {band: token|colour} spans the row
+function term(lines, { theme, tbg, title = "tazuna — ~/proj" } = {}) {
+  const P = TP[theme], wrap = document.createElement("div"); wrap.className = "tw";
+  const termBg = tbg || P.bg;
+  wrap.innerHTML = `<div class="bar"><i></i><i></i><i></i><span>${title}</span></div>`;
+  const pad = document.createElement("div"); pad.className = "pad"; pad.style.background = termBg;
+  const t = document.createElement("div"); t.className = "t"; t.style.background = tbg ? "transparent" : P.bg; t.style.color = P.text;
+  const col = (c) => (c in P ? P[c] : c);
+  for (const ln of lines) {
+    const row = document.createElement("div"); row.className = "l";
+    const segs = Array.isArray(ln) ? ln : ln.segs, band = Array.isArray(ln) ? null : ln.band;
+    if (band) row.style.background = col(band);
+    let used = 0;
+    for (const [text, fg = "text", o = {}] of segs) {
+      const s = document.createElement("span");
+      s.style.color = col(fg);
+      if (o.bg) s.style.background = col(o.bg);
+      if (o.b) s.style.fontWeight = "700";
+      if (o.i) s.style.fontStyle = "italic";
+      if (o.mark) { s.className = "w2 markpulse"; s.style.setProperty("--sh-hi", P.accent); s.style.setProperty("--sh-base", mix(P.accent, P.bg, 0.45)); s.textContent = "手"; used += 2; }
+      else if (o.shimmer) { s.className = "sh"; [...text].forEach((ch, i) => { const c = document.createElement("span"); c.textContent = ch; c.style.animationDelay = `${i * 90}ms`; s.append(c); });
+        s.style.setProperty("--sh-base", col(fg)); s.style.setProperty("--sh-hi", P.accent); used += text.length; }
+      else { s.textContent = text; used += text.length; }
+      row.append(s);
+    }
+    if (used < COLS) { const f = document.createElement("span"); f.textContent = " ".repeat(COLS - used); row.append(f); }
+    t.append(row);
+  }
+  pad.append(t); wrap.append(pad); return wrap;
+}
+const R = (n) => " ".repeat(n);
+const len = (segs) => segs.reduce((n, [t = "", , o = {}]) => n + (o.mark ? 2 : t.length), 0);
+// a row whose right part ends at the last column
+const lr = (left, rt, edge = 2) => [...left, [R(Math.max(1, COLS - edge - len(left) - len(rt)))], ...rt];
+const right = (left, rightText) => R(Math.max(1, COLS - left - rightText));
+// T1
+const T1a = (P) => [
+  [["  change the greeting to hello tazuna", "dim", { i: true }]], [],
+  [["  ⌁ thinking", "faint"]], [],
+  [["  I'll look at the folder first.", "text", { b: true }]], [],
+  [["  ⠋ ran 1 tool   bash ×1   0 lines   thought ~20 tok", "faint"]],
+  [["    ls -la", "faint", { i: true }]], [], [],
+  [["  " + "─".repeat(68), "border"]],
+  lr([["  › ", "accent"], ["say something…", "faint", { i: true }]], [["⠋ ", "accent"], ["Working 2 s", "text", { b: true }], [" · esc stops", "faint"]]),
+];
+const T1b = (P) => [
+  [{ band: "surface" }].length && { band: "surface", segs: [["  ▎ ", "accent"], ["change the greeting to hello tazuna", "ink2"]] }, [],
+  [["  I'll look at the folder first.", "text", { b: true }]], [],
+  [["  ✓ bash ", "ok"], ["ls -la", "dim"], ["  · 6 lines · 0.1 s", "faint"]],
+  [["  ", ""], ["", "", { mark: true }], [" "], ["Working", "dim", { shimmer: true, b: true }], ["  12 s · ↓ 1.2k tokens · editing main.rs", "faint"]], [], [],
+  [["  " + "─".repeat(68), "border"]],
+  lr([["  › ", "accent"], ["say something…", "faint", { i: true }]], [[" ● auto ", "dim", { bg: "surface" }], ["  esc stops", "faint"]]),
+];
+// T2
+const T2a = () => [
+  [["  Done. The greeting now says ", "text"], ["hello, tazuna", "text", { b: true }], [".", "text"]], [],
+  [["  ✓ Done  2 s  $0  ▸", "ok"]], [],
+  [["  now add a test for the second line too, and run it", "dim", { i: true }]], [],
+  [["  I'll add the test next to main.rs.", "text", { b: true }]],
+];
+const T2b = () => [
+  [["  Done. The greeting now says ", "text"], ["hello, tazuna", "text", { b: true }], [".", "text"]], [],
+  [["  ✓ Done  2 s  $0  ▸", "ok"]], [],
+  { band: "surface", segs: [["  ▎ ", "accent"], ["now add a test for the second line too, and run it", "ink2"]] }, [],
+  [["  I'll add the test next to main.rs.", "text", { b: true }]],
+];
+// T3
+const T3a = () => [
+  [["  ✓ ", "ok"], ["edit", "text", { b: true }], ["   main.rs  · -1 +2", "faint"]],
+  [["    │ ", "faint"], ["-     println!(\"hi\");", "err"]],
+  [["    │ ", "faint"], ["+     println!(\"hello, tazuna\");", "ok"]],
+  [["    │ ", "faint"], ["+     println!(\"second line\");", "ok"]],
+  [["  ✗ ", "err"], ["bash", "text", { b: true }], ["   cat nope.txt  · exit 1", "faint"]],
+  [["    │ ", "faint"], ["cat: nope.txt: No such file or directory", "err"]], [],
+  [["  ✓ Done  2 s  $0", "ok"]],
+];
+const T3b = (P) => {
+  const add = mix(P.ok, P.bg, 0.84), del = mix(P.err, P.bg, 0.84), addW = mix(P.ok, P.bg, 0.62), delW = mix(P.err, P.bg, 0.62);
+  return [
+    [["  ⌁ ran 4 tools   bash ×2  edit ×1  write ×1   ", "faint"], ["1 failed", "err"]],
+    [["  ✓ Done  2 s  $0   ", "ok"], ["main.rs ", "text"], ["+2 −1", "ok"], ["  NOTES.md ", "text"], ["+3", "ok"], ["   ctrl-o diffs", "faint"]], [],
+    [["  ✓ ", "ok"], ["edit", "text", { b: true }], ["   main.rs  ", "dim"], ["+2 −1", "faint"]],
+    [["    1 1 ", "faint"], ["  fn main() {", "dim"]],
+    { band: del, segs: [["    2   ", "faint"], ["-     println!(\"", "err"], ["hi", "err", { bg: delW }], ["\");", "err"]] },
+    { band: add, segs: [["      2 ", "faint"], ["+     println!(\"", "ok"], ["hello, tazuna", "ok", { bg: addW }], ["\");", "ok"]] },
+    { band: add, segs: [["      3 ", "faint"], ["+     println!(\"second line\");", "ok"]] },
+    [["    3 4 ", "faint"], ["  }", "dim"]],
+  ];
+};
+// T4
+const T4a = () => [
+  [["  ? allow bash?   ", "warn", { b: true }], ["auto asks: git push --force: rewrites the remote's history · al", "dim"]],
+  [["    git push --force origin main", "text"]],
+  lr([["    y ", "accent", { b: true }], ["yes   ", "text", { b: true }], ["a ", "accent", { b: true }], ["always   ", "text", { b: true }], ["n ", "accent", { b: true }], ["no", "text", { b: true }]], [["● needs you", "warn"]]), [],
+  lr([["  › ", "accent"], ["say something…", "faint", { i: true }]], [["[full] ", "warn"], ["● ready", "dim"]]),
+  lr([["  › ", "accent"], ["say something…", "faint", { i: true }]], [["● ready", "dim"]]),
+];
+const T4b = (P) => [
+  [["  ? before a destructive command   ", "warn", { b: true }], ["git push --force rewrites", "dim"]],
+  [["    the remote's history (auto asks about this)", "dim"]],
+  [["    git push --force origin main", "text"]],
+  lr([["    y ", "accent", { b: true }], ["allow once   ", "text", { b: true }], ["n ", "accent", { b: true }], ["no", "text", { b: true }]], [["● needs you", "warn"]]),
+  lr([["  › ", "accent"], ["say something…", "faint", { i: true }]], [[" ● full · never asks ", "warn", { bg: mix(P.warn, P.bg, 0.82) }], [" ", ""]]),
+  lr([["  › ", "accent"], ["say something…", "faint", { i: true }]], [[" ● auto ", "ok", { bg: "surface" }], ["  ● ready", "dim"]]),
+];
+// T5
+const T5a = () => [
+  [["  The lookup is constant: $$t_{lookup} = \\Theta(1)$$", "text"]],
+  [["  ▎ Closures are not magic: they are scope that outlives its call.", "dim"]],
+  [["  Section 2", "text", { b: true }]],
+  [["  Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem", "text"]],
+  [["  ipsum dolor sit amet, consectetur adipiscing elit.", "text"]],
+  [["  Section 3", "text", { b: true }]],
+  [["  Lorem ipsum dolor sit amet, consectetur adipiscing elit.", "text"]],
+];
+const T5b = () => [
+  [["  The lookup is constant: ", "text"], ["t_lookup = Θ(1)", "text", { i: true }]],
+  [["  ▎ Closures are not magic: they are scope that outlives its call.", "dim"]], [],
+  [["  ▍", "accent"], ["Section 2", "text", { b: true }]],
+  [["  Lorem ipsum dolor sit amet, consectetur adipiscing elit. Lorem", "text"]],
+  [["  ipsum dolor sit amet, consectetur adipiscing elit.", "text"]], [],
+  [["  ▍", "accent"], ["Section 3", "text", { b: true }]],
+];
+// T6
+const T6a = () => [
+  [["$ ", "dim"], ["tazuna", "text"]],
+  [["session saved: /Users/you/.local/share/tazuna/sessions/1795543269-pro", "text"]],
+  [["j-10275.jsonl", "text"]],
+  [["$ ", "dim"]],
+];
+const T6b = () => [
+  [["$ ", "dim"], ["tazuna", "text"]],
+  [["", "", { mark: true }], [" tazuna · 3 turns · 2 files changed ", "dim"], ["+5 −1", "ok"], [" · $0.04 · 4 min", "dim"]],
+  [["   resume: ", "faint"], ["tazuna -c", "accent"]],
+  [["$ ", "dim"]],
+];
+// T7: a Catppuccin-like terminal
+const T7 = (P, own) => [
+  lr([["  tazuna", "faint", { i: true }]], [["Sonnet 5.5 medium", "dim"]]), [],
+  [["  ", ""], ["", "", { mark: true }], [" tazuna ", "text", { b: true }], ["0.1.223", "dim"]],
+  [["     ~/proj  ", "text"], ["on ", "dim"], ["main", "text", { b: true }]], [],
+  own ? { band: "surface", segs: [["  ▎ ", "accent"], ["how is this repo laid out?", "ink2"]] } : [["  how is this repo laid out?", "dim", { i: true }]], [],
+  [["  " + "─".repeat(68), "border"]],
+  lr([["  › ", "accent"], ["say something…", "faint", { i: true }]], [["● ready", "dim"]]),
+];
+function render() {
+  const theme = document.body.classList.contains("dark") ? "dark" : "light", P = TP[theme];
+  const put = (id, f, opts = {}) => { const el = document.getElementById(id); el.innerHTML = ""; el.append(term(f(P).filter(Boolean), { theme, ...opts })); };
+  put("t1a", T1a); put("t1b", T1b); put("t2a", T2a); put("t2b", T2b); put("t3a", T3a); put("t3b", T3b);
+  put("t4a", T4a); put("t4b", T4b); put("t5a", T5a); put("t5b", T5b);
+  put("t6a", T6a, { tbg: theme === "dark" ? "#1c1c1c" : "#ffffff", title: "zsh" }); put("t6b", T6b, { tbg: theme === "dark" ? "#1c1c1c" : "#ffffff", title: "zsh" });
+  const cat = theme === "dark" ? "#1e1e2e" : "#eff1f5";
+  document.getElementById("t7a").innerHTML = ""; document.getElementById("t7a").append(term(T7(P, false), { theme, title: "tazuna — catppuccin terminal" }));
+  const a = document.querySelector("#t7a .pad"); a.style.background = cat;
+  document.getElementById("t7b").innerHTML = ""; document.getElementById("t7b").append(term(T7({ ...P, surface: mix(cat, P.text, 0.07) }, true).map((l) => l && l.band ? { ...l, band: mix(cat, P.text, 0.07) } : l), { theme, tbg: cat, title: "tazuna — catppuccin terminal" }));
+}
+// accents for D2: light and dark values
+const ACCENTS = [
+  ["Indigo", "#3d4aa8", "#2f3a8f", "#8f9bf0", "#aab3f5"], ["Jade", "#2f7a5e", "#256a51", "#6cc3a0", "#8fd3b7"],
+  ["Amber", "#9a5f12", "#82500f", "#e3b25f", "#ecc683"], ["Rose", "#a8425f", "#8e3550", "#ec8fae", "#f2adc4"], ["Graphite", "#45433e", "#33312d", "#c9c4b9", "#ddd8ce"],
+];
+let accent = 0;
+function applyAccent() {
+  const dark = document.body.classList.contains("dark"), a = ACCENTS[accent];
+  document.body.style.setProperty("--accent", dark ? a[3] : a[1]); document.body.style.setProperty("--accent-ink", dark ? a[4] : a[2]);
+  document.body.style.setProperty("--on-accent", dark ? "#16151a" : "#fff");
+  for (const box of [document.getElementById("swatches"), document.getElementById("accents")]) {
+    box.innerHTML = "";
+    ACCENTS.forEach((x, i) => { const s = document.createElement("span"); s.className = "sw" + (i === accent ? " on" : ""); s.title = x[0]; s.style.background = dark ? x[3] : x[1];
+      s.onclick = () => { accent = i; applyAccent(); }; box.append(s); });
+  }
+}
+document.querySelectorAll("#theme span").forEach((s) => s.onclick = () => {
+  document.querySelectorAll("#theme span").forEach((x) => x.classList.toggle("on", x === s));
+  document.body.classList.toggle("dark", s.dataset.v === "dark"); applyAccent(); render(); location.hash = `theme=${s.dataset.v}`;
+});
+document.querySelectorAll("#motion span").forEach((s) => s.onclick = () => {
+  document.querySelectorAll("#motion span").forEach((x) => x.classList.toggle("on", x === s)); document.body.classList.toggle("nomotion", s.dataset.v === "off");
+});
+if (/theme=light/.test(location.hash)) { document.body.classList.remove("dark"); document.querySelectorAll("#theme span").forEach((x) => x.classList.toggle("on", x.dataset.v === "light")); }
+if (matchMedia("(prefers-reduced-motion: reduce)").matches) document.body.classList.add("nomotion");
+applyAccent(); render();
+</script>
+</body>
+</html>

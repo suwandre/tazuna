@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>tazuna · mark alternatives (design review 13)</title>
+<!-- Design review 13 (2026-11-24): the user likes the 手 mark and asked whether a more code- or terminal-looking icon would
+     fit beside Claude Code, Codex, Zed and MonoCode. Six marks, each in the places it lives: the app icon, the Dock, the
+     sidebar's brand row, 16 px, the terminal's welcome, and its working animation. All share the current mark's round
+     stroke on a 24-unit grid. The panel switches the tile colour and the theme. Not the app. -->
+<style>
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Regular.woff2") format("woff2"); font-weight: 400; }
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Medium.woff2") format("woff2"); font-weight: 500; }
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-SemiBold.woff2") format("woff2"); font-weight: 600; }
+@font-face { font-family: "Source Serif 4"; src: url("../node_modules/@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-normal.woff2") format("woff2"); font-weight: 200 900; }
+:root { --desk:#efebe3; --main:#fbfaf7; --ink:#23221e; --muted:#5b574f; --faint:#69655d; --line:#e3ded3; --sheet:0 0 0 1px #2321190a, 0 1px 2px #2321190f, 0 8px 28px #2321190d;
+  --tile:#3d4aa8; --tile2:#4e5bc0; --glyph:#fbfaf7; --hi:#c9cffa; --term-bg:#171613; --term-fg:#ece8df; --term-acc:#8f9bf0; }
+.dark { --desk:#121110; --main:#211f1b; --ink:#ece8df; --muted:#afaa9e; --faint:#a29d95; --line:#35322c; --sheet:0 0 0 1px #ffffff14, 0 1px 2px #00000080, 0 12px 34px #00000066; }
+.t-ink { --tile:#1d1c19; --tile2:#2a2824; --glyph:#ece8df; --hi:#8f9bf0; }
+.t-paper { --tile:#fbfaf7; --tile2:#efebe3; --glyph:#3d4aa8; --hi:#8f9bf0; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--desk); color: var(--ink); font: 14px/1.5 "Geist", system-ui, sans-serif; }
+main { max-width: 1240px; margin: 0 auto; padding: 36px 28px 140px; }
+h1 { font: 500 26px/1.2 "Source Serif 4", Georgia, serif; margin: 0 0 6px; }
+.lede { color: var(--muted); max-width: 880px; margin: 0 0 18px; }
+.opt { background: var(--main); border-radius: 14px; box-shadow: var(--sheet); padding: 18px 20px; margin: 14px 0; display: grid; grid-template-columns: 250px 1fr; gap: 22px; align-items: center; }
+.opt h3 { margin: 0; font: 600 15px/1.3 "Geist", sans-serif; } .opt h3 b { color: #8f9bf0; margin-right: 6px; }
+.opt p { margin: 6px 0 0; color: var(--muted); font-size: 12.5px; }
+.places { display: grid; grid-template-columns: 150px 210px 150px 100px 1fr; gap: 18px; align-items: center; }
+.cap { font: 500 10.5px/1 "Geist", sans-serif; text-transform: uppercase; letter-spacing: .07em; color: var(--faint); margin-bottom: 8px; }
+/* the app icon on macOS's grid: an 824-unit body in 1024, a soft shadow */
+.icon { display: block; filter: drop-shadow(0 6px 8px #0000003d); }
+.dock { display: flex; gap: 8px; align-items: end; padding: 7px 9px; border-radius: 16px; background: color-mix(in srgb, var(--main) 60%, #8884); box-shadow: inset 0 0 0 1px #ffffff1a; }
+.ph { width: 40px; height: 40px; border-radius: 9px; background: linear-gradient(#a8a49b, #8c887f); opacity: .55; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--main) 80%, #000 6%); }
+.small { display: flex; gap: 12px; align-items: center; }
+.term { background: var(--term-bg); color: var(--term-fg); border-radius: 8px; padding: 10px 12px; font: 12.5px/1.45 ui-monospace, "SF Mono", Menlo, "Hiragino Sans", monospace; white-space: pre; }
+.term .a { color: var(--term-acc); } .term .d { color: #afaa9e; } .term .b { font-weight: 700; }
+.term .blk { background: var(--term-acc); color: var(--term-bg); font-weight: 700; }
+.work { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12.5px; }
+/* animations, one per mark (the working state); still with reduced motion */
+@keyframes draw { 0% { stroke-dashoffset: var(--len); } 55%, 100% { stroke-dashoffset: 0; } }
+.anim .drawn { stroke-dasharray: var(--len); animation: draw 1.8s ease-in-out infinite; }
+@keyframes blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+.anim .blink, .anim .blink2 { animation: blink 1.06s steps(1, end) infinite; }
+@keyframes px { 0%, 10% { opacity: .18; } 18%, 100% { opacity: 1; } }
+.anim .px { animation: px 2.2s linear infinite; }
+@keyframes breathe { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(-1.2px); } }
+.anim .left { animation: breathe 1.6s ease-in-out infinite; } .anim .right { animation: breathe 1.6s ease-in-out infinite reverse; }
+.still .drawn, .still .blink, .still .blink2, .still .px, .still .left, .still .right { animation: none !important; }
+#panel { position: fixed; right: 18px; bottom: 18px; background: var(--main); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 14px 36px #0004; padding: 12px 14px; font-size: 12px; display: grid; gap: 9px; z-index: 9; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; padding: 2px; gap: 2px; }
+.seg span { padding: 3px 9px; border-radius: 6px; color: var(--muted); cursor: pointer; } .seg span.on { background: var(--desk); color: var(--ink); }
+.lab { color: var(--faint); margin-bottom: 4px; }
+.verdict { font-size: 12px; margin-top: 8px; color: var(--muted); } .verdict b { color: var(--ink); font-weight: 500; }
+</style>
+</head>
+<body class="dark">
+<main>
+  <h1>tazuna's mark: six options</h1>
+  <p class="lede">Each row shows one mark in every place it appears: the app icon, the Dock (next to neutral placeholders, not other apps' icons), the sidebar's brand row, 16 px, the terminal's welcome, and the working animation. All six use the current mark's round stroke on the same grid. The panel at the bottom right switches the tile colour (indigo, ink, paper), the theme, and motion.</p>
+  <div id="opts"></div>
+</main>
+<div id="panel">
+  <div><div class="lab">Tile</div><div class="seg" id="tile"><span data-v="" class="on">Indigo</span><span data-v="t-ink">Ink</span><span data-v="t-paper">Paper</span></div></div>
+  <div><div class="lab">Theme</div><div class="seg" id="theme"><span data-v="dark" class="on">Dark</span><span data-v="light">Light</span></div></div>
+  <div><div class="lab">Motion</div><div class="seg" id="motion"><span data-v="anim" class="on">On</span><span data-v="still">Reduced</span></div></div>
+</div>
+<script>
+// each mark: its strokes on the 24 grid (what animates carries class drawn / blink / px), a body override, and its terminal form
+const S = 'fill="none" stroke="var(--glyph)" stroke-linecap="round" stroke-linejoin="round"';
+const TE = (w = 1.9) => `<g ${S} stroke-width="${w}"><path d="M16.2 4.6Q12.4 6 7.6 6.4"/><path d="M7.2 10.2h9.6M5.4 14.2h13.2"/>`;
+// the pixel 手: a 9×9 bitmap, the rein's loop at the foot; listed in stroke order so the animation writes it
+const PX = [[6,0],[7,0],[3,1],[4,1],[5,1],[4,2],[1,3],[2,3],[3,3],[4,3],[5,3],[6,3],[7,3],[4,4],[0,5],[1,5],[2,5],[3,5],[4,5],[5,5],[6,5],[7,5],[8,5],[4,6],[4,7],[1,7],[1,8],[2,8],[3,8],[4,8]];
+const MARKS = [
+  { key: "A", name: "手 with the rein's loop (today)", note: "Brushwork, not code. It's the most distinctive of the six, but it says nothing about a terminal.",
+    g: (w) => TE(w) + `<path class="drawn" style="--len:26" d="M12 6.2v11.3a2 2 0 1 1-2.6-1.9"/></g>`,
+    term: `<span class="a">▐</span><span class="blk">手</span><span class="a">▌</span> <span class="b">tazuna</span> <span class="d">0.1.223</span>`, verdict: "Keeps the brand. Weak on code." },
+  { key: "B", name: "手 in a terminal window", note: "A window frame with a title bar, and 手 written inside it like a prompt's output. Clear at 128 px; the frame turns to mush at 16 px.",
+    g: (w) => `<g ${S} stroke-width="${w * 0.8}"><rect x="2.6" y="3.4" width="18.8" height="17.2" rx="3"/><path d="M2.6 7.6h18.8"/></g><g fill="var(--glyph)"><circle cx="5" cy="5.5" r=".7"/><circle cx="7.2" cy="5.5" r=".7"/><circle cx="9.4" cy="5.5" r=".7"/></g>
+      <g transform="translate(5.2 8.4) scale(.56)">${TE(w * 1.5)}<path d="M12 6.2v11.3a2 2 0 1 1-2.6-1.9"/></g></g><rect class="blink" x="15.6" y="15.6" width="2.6" height="3.4" rx=".5" fill="var(--hi)"/>`,
+    term: `<span class="a">╭──╮</span>\n<span class="a">│</span><span class="b">手</span><span class="a">│</span> <span class="b">tazuna</span> <span class="d">0.1.223</span>\n<span class="a">╰──╯</span>`, verdict: "Says “terminal” loudest. Loses detail when small." },
+  { key: "C", name: "手 and a cursor", note: "手 followed by a block cursor, as if just typed. It matches the terminal's ▐手▌, and the cursor blinks while tazuna works.",
+    g: (w) => `<g transform="translate(-2.6 0)">${TE(w)}<path d="M12 6.2v11.3a2 2 0 1 1-2.6-1.9"/></g></g><rect class="blink" x="17.2" y="12.6" width="3.4" height="6.4" rx=".7" fill="var(--hi)"/>`,
+    term: `<span class="blk">手</span><span class="a blink2">█</span> <span class="b">tazuna</span> <span class="d">0.1.223</span>`, verdict: "Keeps the brand, adds the terminal. Still reads at 16 px." },
+  { key: "D", name: "The prompt as reins", note: "No kanji: a › whose two strokes are reins meeting at the hand, and an underscore ending in the rein's loop. Reads as ›_ to a developer, as reins to anyone who knows the name.",
+    g: (w) => `<g ${S} stroke-width="${w * 1.05}"><path d="M5.2 6.6 11.4 12 5.2 17.4"/><path class="drawn" style="--len:16" d="M12.4 17.6h5.6a1.7 1.7 0 1 0-1.5-2.3"/></g>`,
+    term: `<span class="a b">›_</span> <span class="b">tazuna</span> <span class="d">0.1.223</span>`, verdict: "The most “codey”, works at every size, but it's the most generic." },
+  { key: "E", name: "Pixel 手", note: "手 as a 9×9 bitmap with the loop at its foot: a terminal's own font. The working animation writes it pixel by pixel, in stroke order.",
+    g: () => `<g fill="var(--glyph)">${PX.map(([x, y], i) => `<rect class="px" style="animation-delay:${i * 45}ms" x="${3.3 + x * 1.95}" y="${3.3 + y * 1.95}" width="1.75" height="1.75" rx=".25"/>`).join("")}</g>`,
+    term: `<span class="a">▐</span><span class="blk">手</span><span class="a">▌</span> <span class="b">tazuna</span> <span class="d">0.1.223</span>`, verdict: "Terminal by its very texture. Pixel marks are common (opencode, Claude's crab)." },
+  { key: "F", name: "手 in angle brackets", note: "‹手›: the hand inside a tag. The brackets breathe while tazuna works.",
+    g: (w) => `<g ${S} stroke-width="${w}"><path class="left" d="M5.4 7.4 2.6 12l2.8 4.6"/><path class="right" d="M18.6 7.4 21.4 12l-2.8 4.6"/></g><g transform="translate(4.5 3.4) scale(.64)">${TE(w * 1.4)}<path d="M12 6.2v11.3a2 2 0 1 1-2.6-1.9"/></g></g>`,
+    term: `<span class="a">‹</span><span class="blk">手</span><span class="a">›</span> <span class="b">tazuna</span> <span class="d">0.1.223</span>`, verdict: "Code at a glance, but brackets around a glyph is a well-worn move." },
+];
+const tile = (m, px, { body = true, w = 1.9, shadow = false } = {}) => {
+  const inner = `<svg viewBox="0 0 24 24" x="${body ? 160 : 0}" y="${body ? 160 : 0}" width="${body ? 704 : 1024}" height="${body ? 704 : 1024}">${m.g(w)}</svg>`;
+  return `<svg class="${shadow ? "icon" : ""}" width="${px}" height="${px}" viewBox="0 0 1024 1024"><defs><linearGradient id="g${m.key}${px}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--tile2)"/><stop offset="1" stop-color="var(--tile)"/></linearGradient></defs>
+    <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#g${m.key}${px})"/>${inner}</svg>`;
+};
+const flat = (m, px, w) => `<svg width="${px}" height="${px}" viewBox="0 0 24 24" style="border-radius:22%;background:var(--tile)">${m.g(w)}</svg>`;
+document.getElementById("opts").innerHTML = MARKS.map((m) => `
+  <section class="opt"><div><h3><b>${m.key}</b>${m.name}</h3><p>${m.note}</p><div class="verdict"><b>Verdict:</b> ${m.verdict}</div></div>
+    <div class="places">
+      <div><div class="cap">App icon</div>${tile(m, 128, { shadow: true })}</div>
+      <div><div class="cap">Dock</div><div class="dock"><span class="ph"></span><span class="ph"></span>${tile(m, 52, { shadow: true })}<span class="ph"></span></div></div>
+      <div><div class="cap">Sidebar</div><div class="brand">${flat(m, 22, 2.2)} tazuna</div></div>
+      <div><div class="cap">32 · 16 px</div><div class="small">${flat(m, 32, 2.1)}${flat(m, 16, 2.6)}</div></div>
+      <div><div class="cap">Terminal welcome · working</div><div class="term">${m.term}</div>
+        <div class="work" style="margin-top:8px">${flat(m, 18, 2.4)} Working 12 s</div></div>
+    </div></section>`).join("");
+document.body.classList.add("anim");
+const seg = (id, f) => document.querySelectorAll(`#${id} span`).forEach((s) => s.onclick = () => { document.querySelectorAll(`#${id} span`).forEach((x) => x.classList.toggle("on", x === s)); f(s.dataset.v); });
+seg("tile", (v) => { document.body.classList.remove("t-ink", "t-paper"); if (v) document.body.classList.add(v); });
+seg("theme", (v) => document.body.classList.toggle("dark", v === "dark"));
+seg("motion", (v) => { document.body.classList.toggle("anim", v === "anim"); document.body.classList.toggle("still", v === "still"); });
+</script>
+</body>
+</html>
