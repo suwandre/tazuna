@@ -52,7 +52,9 @@ export type Meta = { cost: number | null; tokens: number; in?: number; cached?: 
 /** A share as a whole percent that never rounds up to all of it: 99.6% of the input cached is "99%", only all of it "100%". */
 export const pct = (part: number, whole: number) => (part >= whole ? 100 : Math.min(99, Math.round((100 * part) / whole)));
 export type Message =
-  | { role: "user"; text: string; queued?: boolean; edit?: { cp: number; block: number } }
+  | { role: "user"; text: string; queued?: boolean; edit?: { cp: number; block: number };
+      /** waiting in the window behind the reply (App's queue): "Send now" can stop the reply and send it at once */
+      held?: boolean }
   | { role: "agent"; prose: string[]; tools?: ToolStep[]; change?: Change; meta?: Meta; routedChat?: boolean; ask?: string;
       /** a plain chat's answer: "Send to agent" beside Copy */
       chat?: boolean;

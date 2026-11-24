@@ -633,6 +633,14 @@ Also from Devin's runs (PRs #26, #27, #29): the sidebar reads the run log once p
 the model picker loads a newly configured provider's model list instead of waiting for the hourly refresh; the narrow
 conversations drawer is a real dialog (focus stays in it, Esc closes it, a close button).
 
+0.1.115: a message queued behind a reply can go now: "Send now" beside "Queued: goes after this reply", or ⌘↩ (Ctrl+Enter)
+in the box while a reply runs, stops the reply and sends that message at once (the user: "users should have the option to
+force a reply … if they dont want it queued"). Not sent into the running turn: claude takes a message mid-turn only at
+its next tool call, and as a turn of its own when the reply is plain text (tried on Haiku 5.5), so stopping first is the
+one way that always answers now. A command still running stops too, as with Stop. Your messages keep their line breaks
+and tabs: a pasted list or table ran together into one paragraph. The design sweep covers both (d-send-now,
+d-send-now-key).
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
