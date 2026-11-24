@@ -686,9 +686,7 @@ fn main() -> Result<()> {
                 live.set_escalate(m, e);
             }
             live.permission_mode = a.mode.clone();
-            if no_git && matches!(live.permission_mode.as_str(), "auto" | "bypassPermissions") {
-                live.permission_mode = "default".into();
-            }
+            live.permission_mode = start_mode(&live.permission_mode, !no_git, live.profile).into();
             let earlier = match &a.resume {
                 Some(id) => {
                     let (sid, rec) = previous_session(&base, &std::env::current_dir()?, id.as_deref())
@@ -1399,8 +1397,8 @@ fn app_server(a: &Args) -> Result<()> {
     let mut s = Session::new("", &live.effort);
     s.cwd = std::env::current_dir()?.to_string_lossy().into_owned();
     s.apply(&route.1, route.0);
-    // the permission mode as in the terminal: --mode (auto by default), and ask outside git, where nothing can be undone
-    let mode = if matches!(a.mode.as_str(), "auto" | "bypassPermissions") && !live::in_git_repo() { "default" } else { a.mode.as_str() };
+    // the permission mode as in the terminal (`start_mode`)
+    let mode = start_mode(&a.mode, live::in_git_repo(), live.profile);
     let (t, e) = live.set_mode(mode);
     s.apply(&e, t);
     // the plan's windows as last read, and SubRouter's balance (on a thread), as the terminal starts
@@ -2696,6 +2694,13 @@ fn question_parts(req: &serde_json::Value) -> (String, String, String) {
         }
     };
     (tool, what, note)
+}
+
+/// The mode a conversation starts in: the one chosen (--mode, auto by default), but ask in a project outside git, where
+/// nothing it changes can be undone. A plain chat keeps the chosen mode, though it runs in the home folder: it works on no
+/// project, and in ask its hand-offs asked before each command (17 in one desktop chat; the user, 2026-11-24).
+fn start_mode(chosen: &str, in_git: bool, profile: route::Profile) -> &str {
+    if matches!(chosen, "auto" | "bypassPermissions") && !in_git && profile != route::Profile::Chat { "default" } else { chosen }
 }
 
 /// How long mode picks must stop before the mode reaches the agent: shift-tab from ask to full stepped through edits,
@@ -6425,6 +6430,17 @@ not json"#;
     /// chat handed over the question offers no "always" (the window's card hides it for `once`).
     /// shift-tab's order, full last; a pick shows at once and reaches the agent only once the picks stop (or a message goes):
     /// stepping from ask to full gave edits, review and plan to the running agent on the way.
+    #[test]
+    fn a_project_outside_git_starts_in_ask_and_a_chat_in_its_mode() {
+        use route::Profile::{Chat, Lean, Repo};
+        assert_eq!(super::start_mode("auto", false, Repo), "default", "a project outside git: nothing can be undone");
+        assert_eq!(super::start_mode("bypassPermissions", false, Lean), "default");
+        assert_eq!(super::start_mode("auto", false, Chat), "auto", "a plain chat in the home folder");
+        assert_eq!(super::start_mode("bypassPermissions", false, Chat), "bypassPermissions");
+        assert_eq!(super::start_mode("auto", true, Repo), "auto");
+        assert_eq!(super::start_mode("plan", false, Repo), "plan", "a mode that asks anyway stays");
+    }
+
     #[test]
     fn a_picked_mode_shows_at_once_and_reaches_the_agent_once_the_picks_stop() {
         let mut m = "auto";

@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.220 (2026-11-24): a plain chat starts in your mode
+
+A conversation outside a git repo started in ask, since nothing it changes can be undone there; a desktop chat runs in the
+home folder, so every chat started in ask and its hand-offs asked before each command. A plain chat now keeps the mode
+chosen (auto by default, or `--mode`); a project outside git still starts in ask. One rule for the terminal and the app
+(main.rs `start_mode`, with a test).
+
 ## 0.1.219 (2026-11-24): in auto, a chat's hand-off asks only before a destructive command
 
 A desktop chat asked 17 times in one conversation: a question a chat hands to the agent ran in a turn that asked before

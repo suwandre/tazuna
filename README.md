@@ -211,7 +211,8 @@ login is never used outside the claude CLI.
 - tazuna expects a git repo: in auto mode (the default) the agent edits and runs commands without asking, and `git diff`
   is the review. Auto still asks before a destructive command: rm, chmod or chown outside the project (the temporary
   folders count as inside), `git push --force`, `git reset --hard`, `git clean -f`, sudo, and disk or system tools such
-  as dd, diskutil and mkfs. Full mode (`--mode full`, or shift-tab) never asks. Outside a repo it starts in ask mode.
+  as dd, diskutil and mkfs. Full mode (`--mode full`, or shift-tab) never asks. A project outside a repo starts in ask mode; a plain chat keeps
+  your mode.
 - A repo's `CLAUDE.md` / `AGENTS.md` go into the prompt; a repo whose config runs code (hooks, skills) asks "Trust this
   repo?" once. In repos you did not write, add `--no-project-instructions`.
 - On the own loop the provider key never reaches the agent's commands, and keys saved in tazuna (and the managed

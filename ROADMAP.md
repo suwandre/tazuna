@@ -307,7 +307,8 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   the old auto and never asks. A turn a chat hands to the agent follows the session's mode in full and auto, reversing
   part of 2026-11-21's rule that it asked before everything but the web whatever the mode: a chat got 17 questions and
   the user chose auto's rule there (a fetched page could still steer it, as it can any turn in auto). The other modes keep
-  the hand-off's once-only questions.
+  the hand-off's once-only questions. A plain chat starts in the chosen mode even outside git (it works on no project);
+  a project outside git still starts in ask.
 - 2026-11-22: Gemini CLI and Antigravity sign-ins built behind the strongest warning (Google's terms forbid both outside
   their apps; Google suspended Antigravity accounts and omp paused that login); the user chose to ship them as the user's
   own risk. Claude models a plan serves are offered (Copilot's, Antigravity's): they are GitHub's and Google's services on
