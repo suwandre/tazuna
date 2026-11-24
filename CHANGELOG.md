@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Unreleased
+
+- The desktop sidebar reads the run log once per refresh, not once per folder, and resolves each logged path once per
+  scan. On an M4 Pro Mac VM with 6,001 synthetic run rows (30 warm runs per build, `bench/local_latency.py`), median/p95
+  for 20 folders dropped from 1,129/1,322 ms to 34/37 ms; for one folder, from 79/92 ms to 33/40 ms. This keeps each
+  requested folder's session summaries in memory until the reply; no persistent cache. The release binary grew 16.1 KiB.
+
 ## 0.1.213 (2026-11-24): edits mode asks before a write outside the project; replay reads as replay
 
 - Edits mode on the own loop asks before a write or edit outside the project, under its .git, or among the home
