@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tazuna · Model discovery</title>
+<style>
+:root{color-scheme:light;--desk:#e9e5dd;--paper:#f8f6f1;--card:#fffdf8;--field:#efebe3;--ink:#26241e;--muted:#605b50;--line:#d9d2c5;--accent:#3d4aa8;--soft:#ececf8;--ok:#346b47;--warn:#865516}
+:root.dark{color-scheme:dark;--desk:#12110f;--paper:#191815;--card:#221f1b;--field:#2b2822;--ink:#eee9de;--muted:#b8b1a3;--line:#403b32;--accent:#a7afff;--soft:#30334d;--ok:#9dd7ad;--warn:#e6bd7e}
+*{box-sizing:border-box}body{margin:0;background:var(--desk);color:var(--ink);font:14px/1.5 system-ui,sans-serif}
+main{max-width:1350px;margin:auto;padding:34px clamp(17px,4vw,50px) 52px}
+button,input{font:inherit;color:inherit}button{border:1px solid var(--line);border-radius:7px;background:var(--card);padding:5px 10px;cursor:pointer}
+button:hover{background:var(--field)}button[aria-pressed=true]{color:var(--accent);background:var(--soft);border-color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.brand,.toolbar,.composer-footer,.choice,.provider-head,.preview-name{display:flex;align-items:center;gap:8px}
+.mark{width:23px;height:23px;padding:2px;border-radius:6px;background:#3d4aa8;color:#fbfaf7;flex:none}
+.meta,.tag,.preview-name{color:var(--muted);font:11px/1.45 ui-monospace,monospace;letter-spacing:.045em}
+h1,h2,.greeting{font:400 clamp(29px,4vw,46px)/1.1 Georgia,serif;letter-spacing:-.04em;margin:12px 0}
+h2{font-size:26px;margin:8px 0}.intro{max-width:63ch;color:var(--muted);margin:0}
+.toolbar{flex-wrap:wrap;margin:24px 0 29px;padding:12px 0;border-block:1px solid var(--line)}
+.toolbar button:last-of-type{margin-left:auto}
+.comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px}
+.direction{min-width:0}.direction header{min-height:112px}.direction header p{color:var(--muted);margin:0 0 15px}
+.tag{border:1px solid var(--line);border-radius:14px;padding:3px 8px}.recommended{color:var(--accent);border-color:var(--accent)}
+.preview{border:1px solid var(--line);border-radius:13px;background:var(--paper);box-shadow:0 12px 30px #0001;overflow:hidden;min-height:470px}
+.preview-name{padding:8px 12px;border-bottom:1px solid var(--line);background:var(--card)}
+.work{padding:23px 16px 27px;margin:auto;max-width:560px}.greeting{text-align:center;font-size:24px;margin:7px 0 14px}
+.composer{padding:10px 11px;background:var(--card);border:1px solid var(--line);border-radius:10px;color:var(--muted);font-size:12px}
+.composer-footer{margin-top:7px}.pill{border-radius:20px;background:var(--field);padding:2px 8px}.pill.model{color:var(--accent);background:var(--soft)}
+.picker-layout{margin:8px 0 0}.with-status{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(132px,1fr);gap:8px;align-items:start}
+.picker,.provider-status{min-width:0;border:1px solid var(--line);background:var(--card);border-radius:10px;overflow:hidden;box-shadow:0 4px 13px #0001}
+.search{display:flex;align-items:center;gap:7px;padding:8px 10px;border-bottom:1px solid var(--line);color:var(--muted)}
+.search input{width:100%;min-width:0;border:0;background:none;font-size:12px;padding:2px}
+.list{padding:7px 9px 9px}.label{color:var(--muted);font-size:10px;margin:5px 0}.label:not([hidden]){display:block}
+.choice{gap:6px;justify-content:space-between;padding:6px 7px;border-radius:6px;background:var(--field);font-size:11px}
+.choice+.choice{margin-top:4px}.choice.ready{background:var(--soft)}.choice-name{min-width:0;overflow-wrap:anywhere}
+.choice small,.status small{display:block;color:var(--muted);font-size:10px}.price{flex:none;color:var(--muted);font-size:10px}
+.inline-status{border-top:1px solid var(--line);padding:8px 10px}.provider-status{padding:8px 9px}
+.provider-status h3{font-size:12px;margin:0 0 7px}.provider-head{gap:5px;margin:0 0 3px;font-size:11px;font-weight:650}
+.status p{margin:0;color:var(--muted);font-size:11px}.status button{font-size:11px;margin-top:7px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex:none}.dot.ready{background:var(--ok)}.dot.failed{background:var(--warn)}
+.notes{margin-top:22px;border-top:1px solid var(--line);padding-top:14px;color:var(--muted)}.notes strong{color:var(--ink)}
+@media(max-width:900px){.comparison{grid-template-columns:1fr}.direction header{min-height:0}.preview{min-height:0}}
+@media(max-width:480px){.with-status{grid-template-columns:1fr}.provider-status{grid-row:1}.toolbar button:last-of-type{margin-left:0}}
+@media(prefers-reduced-motion:no-preference){button{transition:background .12s ease}}
+</style>
+</head>
+<body>
+<svg aria-hidden="true" width="0" height="0" style="position:absolute"><symbol id="hand" viewBox="0 0 24 24"><path d="M16.2 4.6Q12.4 6 7.6 6.4M7.2 10.2h9.6M5.4 14.2h13.2M12 6.2v11.3a2 2 0 1 1-2.6-1.9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol></svg>
+<main>
+  <div class="brand"><svg class="mark" aria-hidden="true"><use href="#hand"/></svg><strong>tazuna</strong><span class="meta">Review 02 / prototype only</span></div>
+  <h1>Where is my model?</h1>
+  <p class="intro">A provider can have a key and still not show up in search. Compare two ways to show what the app knows without sending someone to replace a working key.</p>
+  <div class="toolbar" role="group" aria-label="Preview controls">
+    <span class="meta">Catalog state</span>
+    <button type="button" data-state="loading" aria-pressed="true">Loading</button>
+    <button type="button" data-state="ready" aria-pressed="false">Ready</button>
+    <button type="button" data-state="failed" aria-pressed="false">Unavailable</button>
+    <button type="button" id="theme" aria-pressed="false">Dark theme</button>
+  </div>
+  <section class="comparison" aria-label="Design options">
+    <article class="direction" aria-labelledby="inline-title">
+      <header><span class="tag recommended">A · Recommended</span><h2 id="inline-title">One line in the picker</h2><p>Keep search in place. Add a short explanation for the configured provider under the results.</p></header>
+      <div class="preview" data-preview="inline"></div>
+    </article>
+    <article class="direction" aria-labelledby="status-title">
+      <header><span class="tag">B · More room for providers</span><h2 id="status-title">A provider status pane</h2><p>Give setup and catalog health their own space beside search. At narrow widths it moves above the list.</p></header>
+      <div class="preview" data-preview="pane"></div>
+    </article>
+  </section>
+  <p class="notes"><strong>Start with A.</strong> It answers the first-run question without giving setup permanent space. Choose B if users regularly need to scan several configured providers at once. This prototype uses sample data; it does not fetch catalogs, handle credentials, change models, or send messages.</p>
+</main>
+<template id="preview">
+  <div class="preview-name">Chat / New chat</div>
+  <div class="work">
+    <p class="greeting">What are we working on?</p>
+    <div class="composer">Ask anything, or describe a change…
+      <div class="composer-footer"><span class="pill">Chat</span><span class="pill model">Choose model</span></div>
+    </div>
+    <div class="picker-layout">
+      <div class="picker">
+        <label class="search"><span aria-hidden="true">⌕</span><input aria-label="Search models" value="flash" autocomplete="off"></label>
+        <div class="list">
+          <div data-ready-model hidden><span class="label">Configured provider</span><div class="choice ready"><span class="choice-name">Flash Preview</span><span class="price">Free</span></div></div>
+          <div data-other-model><span class="label">Other provider</span><div class="choice"><span class="choice-name">Flash Preview<small>Key needed in Settings</small></span><span class="price">Free</span></div></div>
+          <p class="label" data-empty hidden>No known models match this search.</p>
+        </div>
+      </div>
+      <div class="status" aria-live="polite" aria-atomic="true"></div>
+    </div>
+  </div>
+</template>
+<script>
+let state = "loading";
+const previews = [...document.querySelectorAll("[data-preview]")];
+const statusCopy = {
+  loading: ["Loading model list", "A key is configured. The provider’s models will appear here when the list is ready."],
+  ready: ["Models ready", "The configured provider’s list is available. Models show when they match your search."],
+  failed: ["Model list unavailable", "A key is configured, but the list couldn’t load. Try loading it again before changing the key."]
+};
+for (const preview of previews) {
+  preview.append(document.querySelector("#preview").content.cloneNode(true));
+  const pane = preview.dataset.preview === "pane";
+  const status = preview.querySelector(".status");
+  if (pane) {
+    preview.querySelector(".picker-layout").classList.add("with-status");
+    status.classList.add("provider-status");
+  } else {
+    status.classList.add("inline-status");
+    preview.querySelector(".picker").append(status);
+  }
+  preview.querySelector("input").addEventListener("input", e => {
+    for (const other of previews) other.querySelector("input").value = e.target.value;
+    renderResults();
+  });
+}
+function renderResults() {
+  for (const p of previews) {
+    const match = "flash preview".includes(p.querySelector("input").value.trim().toLowerCase());
+    p.querySelector("[data-ready-model]").hidden = !match || state !== "ready";
+    p.querySelector("[data-other-model]").hidden = !match;
+    p.querySelector("[data-empty]").hidden = match;
+  }
+}
+function setState(next) {
+  state = next;
+  renderResults();
+  for (const b of document.querySelectorAll("[data-state]")) b.setAttribute("aria-pressed", String(b.dataset.state === state));
+  const [heading, description] = statusCopy[state];
+  for (const p of previews) {
+    const status = p.querySelector(".status");
+    const label = p.dataset.preview === "pane" ? "<h3>Configured provider</h3>" : "";
+    status.innerHTML = label + '<div class="provider-head"><span class="dot '+state+'" aria-hidden="true"></span>'+heading+'</div><p>'+description+'</p>';
+    if (state === "failed") {
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.textContent = "Retry list";
+      retry.onclick = () => {
+        setState("loading");
+        document.querySelector('[data-state="loading"]').focus();
+      };
+      status.append(retry);
+    }
+  }
+}
+for (const b of document.querySelectorAll("[data-state]")) b.onclick = () => setState(b.dataset.state);
+document.querySelector("#theme").onclick = e => e.currentTarget.setAttribute("aria-pressed", String(document.documentElement.classList.toggle("dark")));
+setState("loading");
+</script>
+</body>
+</html>
