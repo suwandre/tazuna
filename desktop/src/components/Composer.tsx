@@ -18,6 +18,7 @@ export type ComposerBag = {
   /** a plain chat (no project): the model alone, so no permission pill (design review 10) */
   chat?: boolean;
   session: Session; busy?: boolean; models?: Models | null; onModels?: () => void; onPickModel?: (c: ModelChoice) => void;
+  onRefreshModelList?: (provider: string) => void;
   /** a model whose provider has no key: Settings on that provider */
   onAddKey?: (provider: string) => void;
   onPickEffort?: (e: string) => void; onMode?: (mode: string) => void; onPickFiles?: () => Promise<string[]>; attach: (paths: string[]) => void;
@@ -35,6 +36,7 @@ type Props = {
   chat?: boolean;
   /** the model catalog (null until asked for); onModels asks for it when the picker opens */
   models?: Models | null; onModels?: () => void; onPickModel?: (c: ModelChoice) => void; onPickEffort?: (e: string) => void;
+  onRefreshModelList?: (provider: string) => void;
   onAddKey?: (provider: string) => void; onMode?: (mode: string) => void;
   /** a pasted image saved as a file: its path (Cmd-V of a screenshot or of an image copied in Finder) */
   onPasteImage?: (f: File) => Promise<string>;
@@ -100,7 +102,7 @@ export const MODES: [string, string][] = [
 // one line always (a narrow window wrapped "Opus 5.5" onto two), and readable while a reply runs (faded, they read as broken)
 const pill = "inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink disabled:cursor-default disabled:text-muted";
 
-export function Composer({ session, where, chat, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {}, readOnly = false }: Props) {
+export function Composer({ session, where, chat, busy, onSend, onStop, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {}, readOnly = false }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   // attachments are chips over the text, with a thumbnail for an image (until desktop 0.1.87 their paths were typed into
   // the message, and a screenshot was a line of path)
@@ -172,7 +174,7 @@ export function Composer({ session, where, chat, busy, onSend, onStop, models, o
     return () => { off.then((f) => f()); };
   }, [onDrop]);
   const nextMode = () => { const i = MODES.findIndex(([m]) => m === session.mode); onMode?.(MODES[(i + 1) % MODES.length][0]); };
-  const bag: ComposerBag = { readOnly, where, chat, session, busy, models, onModels, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, attach: (p) => { attach(p); }, picker };
+  const bag: ComposerBag = { readOnly, where, chat, session, busy, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, attach: (p) => { attach(p); }, picker };
   // a message sent during a reply waits behind it (the core queues it, as the terminal does)
   // attachments go in the message as paths after its text (quoted when they hold a space): the core sends images as images
   const send = () => {
@@ -351,6 +353,7 @@ export function ModelPill({ composer: c }: { composer: ComposerBag }) {
       </button>
       {open && <ModelPicker models={c.models ?? null} onClose={() => setOpen(false)} onPick={(m) => { setOpen(false); c.onPickModel?.(m); }}
         onKey={c.onAddKey && ((p) => { setOpen(false); c.onAddKey!(p); })}
+        onRefreshModelList={c.onRefreshModelList}
         efforts={current?.efforts ?? []} effort={c.session.effort} onEffort={c.onPickEffort} />}
     </span>
   );
