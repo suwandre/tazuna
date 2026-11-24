@@ -3945,6 +3945,15 @@ mod tests {
         for label in ["cache read", "cache write", "estimate (list prices)", "no file changed yet", "bash", "edit", "write"] {
             assert!(side.contains(label), "preserve other panel content ({label}): {side}");
         }
+        for input in ["!", "first line\nsecond line"] {
+            v.input = input.into();
+            v.cursor = input.len();
+            let (side, areas) = render(&s, &v, 120, 34);
+            let text = side.lines().map(|l| l.trim_matches(['│', ' '])).collect::<Vec<_>>().join(" ");
+            assert!(areas.bars.unwrap().0.height >= 2 && side.contains("out per call · #") && text.contains("1.5s to first token"), "keep both axes, caption and pace with an extra composer row: {side}");
+        }
+        v.input.clear();
+        v.cursor = 0;
         s.cache_ttl_ms = Some(300_000.0);
         s.last_call_ms = Some(0.0);
         s.credits.push(("other".into(), Some("$0.50".into())));

@@ -155,16 +155,18 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     }
 
     // tokens per turn
-    let b = hot_panel("tokens", th, under_mouse(v, p_tokens) && !s.turn_usage.is_empty());
+    let mut b = hot_panel("tokens", th, under_mouse(v, p_tokens) && !s.turn_usage.is_empty());
     let a = b.inner(p_tokens).inner(Margin { horizontal: 1, vertical: 0 });
-    f.render_widget(b, p_tokens);
     let mut bars_at = None;
     if s.turn_usage.is_empty() {
         f.render_widget(Paragraph::new(Span::styled("no model calls yet", st(th.faint))), a);
     } else {
         // The fixed-width rail needs two rows for writing rate, end-to-end rate and first-token time. More terminal
         // columns widen the transcript, not this rail, so a single row clipped the last label even in a wide window.
-        let [t1, chart, caption, pace] = Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1), Constraint::Length(2)]).areas(a);
+        // An extra composer row can leave only five content rows. Put the caption on the existing lower border
+        // then, rather than collapsing the chart's zero axis or hiding a pace label.
+        let compact_chart = a.height < 6;
+        let [t1, chart, caption, pace] = Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(u16::from(!compact_chart)), Constraint::Length(2)]).areas(a);
         // a y axis beside the bars: the tallest bar's value on top, 0 at the bottom (a user could not read the bare bars)
         let [axis, spark] = Layout::horizontal([Constraint::Length(5), Constraint::Min(1)]).areas(chart);
         f.render_widget(
@@ -182,7 +184,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         let first = data.len().saturating_sub(spark.width as usize);
         let top = data[first..].iter().copied().max().unwrap_or(0);
         // one bar per model call, the newest on the right; the mouse over a bar names that call, a click lists them all
-        let label = match v.hover_call.filter(|i| *i < data.len()) {
+        let mut label = match v.hover_call.filter(|i| *i < data.len()) {
             Some(i) => {
                 let c = s.calls.get(i);
                 let mut l = vec![Span::styled(format!("#{} ", i + 1), st(th.faint)), Span::styled(human(data[i]), st(th.text)), Span::styled(" out", st(th.faint))];
@@ -197,7 +199,13 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
             None if data.is_empty() => Line::from(Span::styled("output per model call", st(th.faint))),
             None => Line::from(Span::styled(format!("out per call · #{}–{} · click", first + 1, data.len()), st(th.faint))),
         };
-        f.render_widget(Paragraph::new(label), caption);
+        if compact_chart {
+            label.spans.insert(0, Span::raw(" "));
+            label.spans.push(Span::raw(" "));
+            b = b.title_bottom(label);
+        } else {
+            f.render_widget(Paragraph::new(label), caption);
+        }
         let mut ylab = vec![Line::from(Span::styled(format!("{:>4}", human(top)), st(th.faint)))];
         ylab.extend((1..axis.height.saturating_sub(1)).map(|_| Line::default()));
         if axis.height > 1 {
@@ -240,6 +248,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         f.render_widget(Sparkline::default().data(bars).max(top.max(1)).style(st(th.dim)), spark);
         bars_at = Some((spark, first));
     }
+    f.render_widget(b, p_tokens);
 
     // cost
     let b = hot_panel("cost · click: all accounts", th, under_mouse(v, p_cost));
