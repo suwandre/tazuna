@@ -33,7 +33,7 @@ export type ViewBlock =
        * to more than one (the own loop changed route inside it), in order; `provider` and `price_m` are then null.
        * `sub_calls`: its subagents' model calls, which are in its cost and not among `calls`. */
       model?: string; plan?: boolean; provider?: string | null; price_m?: [number, number, number] | null; providers?: string[]; sub_calls?: number }
-  | { kind: "notice"; text: string; error: boolean }
+  | { kind: "notice"; text: string; error: boolean; ended?: boolean }
   | { kind: "verify"; cmd: string; ok?: boolean; secs: number; timed_out?: boolean; cannot_run?: boolean; no_tests?: boolean };
 type Usage = { input: number; cache_write: number; cache_read: number; output: number };
 export type View = {

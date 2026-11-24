@@ -5992,7 +5992,7 @@ broken"#;
         paid(&mut s, 10.0, 0.5, 1.5);
         let d = s.view()["blocks"].as_array().unwrap().iter().rfind(|b| b["kind"] == "done").unwrap().clone();
         assert!((d["run_cost"].as_f64().unwrap() - 0.5).abs() < 1e-9 && (s.cost() - 1.5).abs() < 1e-9, "{} {}", d["run_cost"], s.cost());
-        assert!(s.blocks.iter().any(|b| matches!(b, crate::session::Block::Notice { text, error: true } if text.starts_with("hook"))), "the failure is still an error");
+        assert!(s.blocks.iter().any(|b| matches!(b, crate::session::Block::Notice { text, error: true, .. } if text.starts_with("hook"))), "the failure is still an error");
         // a hook that fails during the tests: Working goes on
         s.apply(&json!({"type": "harness_verify_start", "cmd": "cargo test", "round": 1}), 20_000.0);
         s.apply(&super::note("hook: npm run lint failed", true), 21_000.0);
