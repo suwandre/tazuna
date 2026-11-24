@@ -3873,23 +3873,29 @@ mod tests {
             s.blocks.push(Block::Tool(Tool { id: format!("a{i}"), name: "Agent".into(), input: serde_json::json!({"description": "look"}), result: Some("ok".into()), error: false, started_ms: 0.0, done_ms: Some(131_600.0), sub: None }));
         }
         s.turn_usage = (0..40).map(|i| crate::session::Usage { input: 10, cache_write: 100, cache_read: 50_000, output: 200 + 300 * (i % 7) }).collect();
+        s.calls.push(crate::session::CallTime { ttft_ms: Some(1500.0), gen_ms: 10_000.0, out: 12_000, total_ms: 11_500.0 });
         let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
-        let render = |v: &View| {
-            let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 44)).unwrap();
+        let render = |v: &View, width: u16| {
+            let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 44)).unwrap();
             let mut areas = Areas::default();
             term.draw(|f| { areas = draw(f, &s, v); }).unwrap();
             let buf = term.backend().buffer().clone();
-            let rows: Vec<String> = (0..buf.area.height).map(|y| (82..120).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect();
+            let rows: Vec<String> = (0..buf.area.height).map(|y| (width - 38..width).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect();
             (rows.join("\n"), areas)
         };
-        let (side, areas) = render(&v);
+        let (side, areas) = render(&v, 120);
         assert!(side.contains("×14") && side.contains("30.7m") && side.contains("avg 2.2m"), "{side}");
         assert!(side.contains("2.0k") && side.contains("out per call · #"), "an axis label and the caption: {side}");
         assert_eq!(areas.tool_rows.len(), 1);
         let (rect, first) = areas.bars.unwrap();
         v.hover_call = Some(first + 2);
-        let (side, _) = render(&v);
+        let (side, _) = render(&v, 120);
         assert!(side.contains(&format!("#{}", first + 3)) && rect.width > 10, "{side}");
+        for width in [120, 175] {
+            let (side, _) = render(&v, width);
+            let text = side.lines().map(|l| l.trim_matches(['│', ' '])).collect::<Vec<_>>().join(" ");
+            assert!(text.contains("1200 tok/s writing") && text.contains("1043 end to end") && text.contains("1.5s to first token"), "all pace metrics must fit the fixed rail at {width} columns: {side}");
+        }
     }
 
     #[test]

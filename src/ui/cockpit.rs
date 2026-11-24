@@ -4,7 +4,7 @@ use super::*;
 use crate::session::Block;
 use ratatui::{
     layout::{Constraint, Layout, Margin},
-    widgets::{Block as Panel, BorderType, LineGauge, Sparkline, SparklineBar},
+    widgets::{Block as Panel, BorderType, LineGauge, Sparkline, SparklineBar, Wrap},
 };
 
 pub(super) const OPTS: Opts = Opts { prompt: PromptStyle::Bar, group_tools: false, durations: true };
@@ -144,7 +144,9 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     if s.turn_usage.is_empty() {
         f.render_widget(Paragraph::new(Span::styled("no model calls yet", st(th.faint))), a);
     } else {
-        let [t1, chart, caption, pace] = Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)]).areas(a);
+        // The fixed-width rail needs two rows for writing rate, end-to-end rate and first-token time. More terminal
+        // columns widen the transcript, not this rail, so a single row clipped the last label even in a wide window.
+        let [t1, chart, caption, pace] = Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1), Constraint::Length(2)]).areas(a);
         // a y axis beside the bars: the tallest bar's value on top, 0 at the bottom (a user could not read the bare bars)
         let [axis, spark] = Layout::horizontal([Constraint::Length(5), Constraint::Min(1)]).areas(chart);
         f.render_widget(
@@ -212,7 +214,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
             }
             (None, None) => vec![],
         };
-        f.render_widget(Paragraph::new(Line::from(pace_line)), pace);
+        f.render_widget(Paragraph::new(Line::from(pace_line)).wrap(Wrap { trim: true }), pace);
         let bars = data[first..].iter().enumerate().map(|(k, &n)| {
             let b = SparklineBar::from(n);
             if v.hover_call == Some(first + k) { b.style(Some(st(th.text))) } else { b }
