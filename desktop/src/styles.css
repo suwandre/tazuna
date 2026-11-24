@@ -13,7 +13,8 @@
   --ink: #23221e; --ink-2: #3f3c35; --muted: #5b574f; --faint: #69655d;
   --line: #e3ded3; --line-soft: #ece8df; --line-strong: #d8d2c5;
   --accent: #3d4aa8; --accent-ink: #2f3a8f; --accent-soft: #e7e8f6; --on-accent: #ffffff;
-  --ok: #3b7d4f; --bad: #b4473a; --warn: #a76a14;
+  /* Semantic colours are text too: keep 4.5:1 on field, hover and selected, not only paper. */
+  --ok: #347045; --bad: #aa4236; --warn: #8c5811;
 --code-string: #7a5a1c; --code-number: #8a4a6b; --code-keyword: var(--accent-ink); --code-comment: var(--faint);
   --shadow-composer: 0 1px 2px #2321190d, 0 4px 14px #23211908;
   --shadow-pop: 0 2px 6px #2321190f, 0 14px 36px #23211924; --pop: var(--card);
