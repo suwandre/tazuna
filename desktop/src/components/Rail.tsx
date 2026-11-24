@@ -52,11 +52,6 @@ export function Card({ title, children }: { title: string; children: ReactNode }
   return <Section title={title}>{children}</Section>;
 }
 
-/** A bar for a used share (the plan card's meters). */
-export function Bar({ pct }: { pct: number }) {
-  return <div className="h-1.5 overflow-hidden rounded bg-line"><i className="block h-full rounded bg-accent transition-[width] duration-200" style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} /></div>;
-}
-
 /** Opens the usage page (App listens). */
 export const openUsage = () => window.dispatchEvent(new CustomEvent("tazuna-usage"));
 
