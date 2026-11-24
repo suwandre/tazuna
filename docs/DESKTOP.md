@@ -677,6 +677,12 @@ row from the first frame: until its messages came it matched no row and showed a
 second or two whenever another conversation was still working. The design sweep covers both (d-remove-open-conversation,
 d-open-saved-no-new-row). After a stopped hand-off, "please continue" carries its question (tazuna 0.1.222).
 
+0.1.124: typing no longer makes the conversation above jump up and down (the user's recording). The message box measured
+its height by setting itself to "auto", one line for a moment: the conversation grew, the browser pulled its scroll back a
+line, and the next key pinned it to the bottom again. The box is now measured on an invisible twin out of the layout.
+In Chromium the scroll went back and forth while typing before, and moves once now, as the box grows a line. The design
+sweep checks it (d-typing-keeps-scroll).
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

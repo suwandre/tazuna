@@ -451,6 +451,22 @@ const log = [];
       await p.getByText("What are we working on?").waitFor({ state: "visible", timeout: 4000 });
     });
     await ctx.close(); }
+  // typing keeps the conversation still: the box measured itself by shrinking to one line, the conversation's scroll was
+  // pulled back a line and pinned again on the next key, so the text above jumped with each key (2026-11-24)
+  { const [ctx, p] = await ctxOf({});
+    await step(p, "d-typing-keeps-scroll", async () => {
+      await p.locator('aside[aria-label="Conversations"] a').filter({ hasText: "Fix the flaky retry test" }).first().click();
+      await p.waitForTimeout(1500);
+      const box = p.getByRole("textbox", { name: "Message" });
+      await box.click();
+      const tops = [];
+      for (const ch of "so can you TLDR again what this PR does, what the issue was and what we did to solve it? maybe also help") {
+        await p.keyboard.type(ch);
+        tops.push(await p.evaluate(() => { const s = [...document.querySelectorAll("section")].find((e) => e.scrollHeight > e.clientHeight); return s ? Math.round(s.scrollTop) : -1; }));
+      }
+      for (let i = 2; i < tops.length; i++) if (tops[i] === tops[i - 2] && tops[i] !== tops[i - 1]) throw new Error(`the conversation jumped back and forth while typing: ${tops.join(",")}`);
+    });
+    await ctx.close(); }
   // a sent message's attachments: a thumbnail under it (not its path in the text), whole over the window on a click
   { const [ctx, p] = await ctxOf({ extra: "window.__DRAFT_SEND_SUCCESS__ = true;" });
     const box = p.getByRole("textbox", { name: "Message" });

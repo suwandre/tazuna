@@ -139,11 +139,17 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSe
   const box = useRef<HTMLTextAreaElement>(null);
   // the box grows with what is typed, up to 40% of the window, then scrolls (it was one line, and earlier lines went out
   // of sight); at the window's bottom it grows upwards
+  // measured on a copy out of the layout (`mirror`): setting the box itself to "auto" to measure it shrank it to one line
+  // for a moment, the conversation above grew, the browser pulled its scroll back a line, and the next key pinned it to
+  // the bottom again, so the text above jumped up and down with each key (the user's recording, 2026-11-24)
+  const mirror = useRef<HTMLTextAreaElement>(null);
   const resize = useCallback(() => {
-    const el = box.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.4))}px`;
+    const el = box.current, m = mirror.current;
+    if (!el || !m) return;
+    m.style.width = `${el.clientWidth}px`;
+    m.value = el.value;
+    const h = `${Math.min(m.scrollHeight, Math.round(window.innerHeight * 0.4))}px`;
+    if (el.style.height !== h) el.style.height = h;
   }, []);
   useLayoutEffect(resize, [text, resize]);
   useEffect(() => {
@@ -207,7 +213,10 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSe
     <footer className="px-7 pb-[22px] pt-2.5">
       <div className="mx-auto max-w-[700px]"><Slot name="composer.dock" props={{}} /></div>
       {above}
-      <div data-composer className="mx-auto max-w-[700px] rounded-xl border border-line-strong bg-card py-2 pl-4 pr-3 pt-3 shadow-composer focus-within:border-accent">
+      <div data-composer className="relative mx-auto max-w-[700px] rounded-xl border border-line-strong bg-card py-2 pl-4 pr-3 pt-3 shadow-composer focus-within:border-accent">
+        {/* the box's twin, for measuring its height (`resize`): out of the layout, never seen or read */}
+        <textarea ref={mirror} aria-hidden="true" tabIndex={-1} readOnly rows={1}
+          className="pointer-events-none invisible absolute left-0 top-0 h-0 resize-none overflow-hidden pb-3 pt-0.5" />
         {menu && <div className="relative -ml-4 -mr-3"><CompleteMenu items={menu.items} sel={sel} onPick={take} /></div>}
         {files.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-1.5">
