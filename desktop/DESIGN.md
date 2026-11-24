@@ -22,9 +22,9 @@ colors:
     accent-ink: "#2f3a8f"
     accent-soft: "#e7e8f6"
     on-accent: "#ffffff"
-    ok: "#3b7d4f"
-    bad: "#b4473a"
-    warn: "#a76a14"
+    ok: "#347045"
+    bad: "#aa4236"
+    warn: "#8c5811"
     scrim: "#1d1b1640"
     desk: "#efebe3"
   dark:
