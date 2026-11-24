@@ -407,6 +407,11 @@ const log = [];
       await p.getByText("paste-1.png").waitFor({ state: "visible", timeout: 4000 });
       if (await box.inputValue() !== "what is wrong here?") throw new Error("the pasted file's name went into the draft");
     });
+    await step(p, "d-paste-linux-clipboard-image", async () => {
+      await box.evaluate((el) => el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: new DataTransfer(), bubbles: true, cancelable: true })));
+      await p.getByText("paste-clipboard.png").waitFor({ state: "visible", timeout: 4000 });
+      if (await box.inputValue() !== "what is wrong here?") throw new Error("the fallback changed the draft");
+    });
     await ctx.close(); }
   // a sent message's attachments: a thumbnail under it (not its path in the text), whole over the window on a click
   { const [ctx, p] = await ctxOf({ extra: "window.__DRAFT_SEND_SUCCESS__ = true;" });
