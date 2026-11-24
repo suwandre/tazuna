@@ -643,6 +643,9 @@ d-send-now-key).
 Also from Devin's runs (PRs #31 to #35): the model picker says which provider lists are ready, loading or unavailable, and
 fetches a missing one again; unused code and a dependency went.
 
+0.1.116 (with tazuna 0.1.216): in full mode a question a chat hands to the agent runs without asking too, as every other
+turn in full does.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
