@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.216 (2026-11-24): full never asks, in a chat's hand-off too
+
+The user, in full mode: "still somehow requires access for bash? i thought full access means basically near if not full
+access to everything". A question a chat hands to the agent ("how is my memory doing?") ran in a turn of its own that
+asked before every command, whatever the session's mode (security review, 2026-11-21: a fetched page could steer it).
+In full that turn now asks nothing, as every other turn there; auto, ask, edits, review and plan keep its once-only
+questions. The user's own questions to the user (AskUserQuestion) still wait for an answer.
+
 ## 0.1.215 (2026-11-24): the desktop's model picker says which provider lists are loading
 
 From Devin's runs (PRs #31, #34): the desktop app's model picker shows, for each provider with a key, whether its model

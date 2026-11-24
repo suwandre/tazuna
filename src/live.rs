@@ -1727,7 +1727,11 @@ impl Live {
                             e["request"]["handoff"] = json!(true);
                         }
                         let risky = self.risky(&e).0;
-                        if !from_text && !outside && self.handoff.is_none() && (self.allowed.contains(&always_key(&e)) || self.auto_allows(&e, risky.is_none())) {
+                        // full never asks, a turn a chat handed over included (it asked for each command there until
+                        // 0.1.216: "i thought full access means basically near if not full access to everything", the user)
+                        let full_handoff = self.handoff.is_some() && self.permission_mode == "bypassPermissions"
+                            && !matches!(e["request"]["tool_name"].as_str(), Some("AskUserQuestion" | "ExitPlanMode"));
+                        if !from_text && !outside && (full_handoff || self.handoff.is_none() && (self.allowed.contains(&always_key(&e)) || self.auto_allows(&e, risky.is_none()))) {
                             self.respond(&e, true, None);
                         } else if self.mode == "headless" {
                             // nobody is there to answer: a question (AskUserQuestion, or any tool in ask mode) would wait forever
@@ -3369,6 +3373,24 @@ mod tests {
         assert!(got(r#""mode":"acceptEdits""#), "auto reaches claude as acceptEdits");
         drop(live);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Full never asks, in a turn a chat handed over too; every other mode keeps the hand-off's question.
+    #[cfg(unix)]
+    #[test]
+    fn full_mode_answers_a_hand_offs_questions_itself() {
+        for (mode, asked) in [("bypassPermissions", false), ("auto", true), ("default", true)] {
+            let (mut live, dir) = stub::live(&format!("handoff-full-{mode}"));
+            live.permission_mode = mode.into();
+            live.hand_off("how full is my disk?", "how full is my disk?", HANDOFF_SENT).unwrap();
+            stub::started(&dir);
+            stub::feed(&live, json!({"type": "control_request", "request_id": "perm-1",
+                "request": {"subtype": "can_use_tool", "tool_name": "mcp__lean__bash", "input": {"command": "df -h"}}}));
+            live.poll();
+            assert_eq!(!live.pending.is_empty(), asked, "{mode}");
+            drop(live);
+            std::fs::remove_dir_all(&dir).ok();
+        }
     }
 
     /// No "always" in a handed-over turn: not offered (the question says once only), and an "always" answer allows it once.
