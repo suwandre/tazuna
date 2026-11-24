@@ -38,6 +38,7 @@ export type ViewBlock =
 type Usage = { input: number; cache_write: number; cache_read: number; output: number };
 export type View = {
   blocks: ViewBlock[]; model: string; effort: string; cwd: string; profile: string; mode: string; activity: string;
+  model_restore?: { model: string; waiting: boolean } | null;
   /** `context_window` null: the model's window is not known (a local model), and no share of it is shown */
   cost: number; usage: Usage; turns: number; context: number; context_window?: number | null; tasks?: Task[]; limits?: [number, number]; limits_at?: number | null; limits_reset?: number | null; balance?: number | null;
   /** what an untrusted folder's config would run (it runs lean until trusted) */
@@ -136,7 +137,8 @@ export const core = {
   /** Commands from now on go to thread `tid`. */
   use: (tid: string) => { current = tid; },
   /** Starts thread `tid`'s core; resolves to the folder it runs in. */
-  start: (tid: string, cwd?: string, profile?: string) => invoke<string>("start", { tid, cwd, profile }),
+  start: (tid: string, cwd?: string, profile?: string, savedModel?: Pick<ModelChoice, "model" | "url" | "key_env"> | null) =>
+    invoke<string>("start", { tid, cwd, profile, savedModel }),
   /** Ends thread `tid`'s core. */
   stop: (tid: string) => invoke("stop", { tid }),
   /** Resumes a conversation in thread `tid` (right after its start, before it is the current one). */

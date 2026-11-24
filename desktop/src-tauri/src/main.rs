@@ -45,7 +45,7 @@ fn login_path() -> Option<String> {
 /// Starts (or restarts) thread `tid`'s core in `cwd` (a project) or the home folder (a chat). Async: stopping an old
 /// core waits for it, off the main thread.
 #[tauri::command]
-async fn start(app: AppHandle, core: State<'_, Core>, tid: String, cwd: Option<String>, profile: Option<String>) -> Result<String, String> {
+async fn start(app: AppHandle, core: State<'_, Core>, tid: String, cwd: Option<String>, profile: Option<String>, saved_model: Option<serde_json::Value>) -> Result<String, String> {
     stop_thread(&core, &tid);
     // a chat runs in the home folder: HOME, or USERPROFILE on Windows (which has no HOME, and "." is the app's own folder)
     let dir = cwd.or_else(|| std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok()).unwrap_or_else(|| ".".into());
@@ -66,7 +66,12 @@ async fn start(app: AppHandle, core: State<'_, Core>, tid: String, cwd: Option<S
     let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()
         .map_err(|e| format!("could not start {} app-server: {e}", tazuna_bin()))?;
     eprintln!("tazuna desktop: app-server running (pid {})", child.id());
-    let stdin = child.stdin.take().ok_or("no stdin")?;
+    let mut stdin = child.stdin.take().ok_or("no stdin")?;
+    // The saved pick goes in before the window can send a message to this thread.
+    if let Some(m) = saved_model.filter(|m| m["model"].is_string() && m["url"].is_string() && m["key_env"].is_string()) {
+        let req = serde_json::json!({"op": "model", "restore": true, "model": m["model"], "url": m["url"], "key_env": m["key_env"]});
+        writeln!(stdin, "{req}").map_err(|e| e.to_string())?;
+    }
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let run = core.started.fetch_add(1, Ordering::SeqCst) + 1;
     let t = tid.clone();
