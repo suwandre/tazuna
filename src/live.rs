@@ -1714,6 +1714,20 @@ impl Live {
                             }
                         }
                     }
+                    // claude's echo of a message as it takes it (`--replay-user-messages`). Taken while a turn runs, claude
+                    // folds it into that turn at its next tool call, and the turn ends with one result for both: its run
+                    // joins the one running. Counted as its own run, it waited for a result that never came: the run log
+                    // put later costs on the wrong message and the session never went idle (tried on Haiku 5.5, 2026-11-24).
+                    // Taken after the result, it is its own turn, and already the front run. Only counted, never shown.
+                    if e["type"] == "user" && e["isReplay"] == true {
+                        let c = &e["message"]["content"];
+                        let said = c.as_str().map(String::from).unwrap_or_else(|| c.as_array().into_iter().flatten().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n"));
+                        if let Some(i) = self.runs.iter().skip(1).position(|r| !r.prompt.trim().is_empty() && said.contains(r.prompt.trim())) {
+                            let later = self.runs.remove(i + 1).expect("found above");
+                            self.runs.front_mut().expect("a run before it").join(later);
+                        }
+                        continue;
+                    }
                     if e["type"] == "control_request" && e["request"]["subtype"] == "can_use_tool" {
                         // a tool call the own loop recovered from the model's text is asked every time: no "always"
                         // covers it (a page could hold such text, security review 2026-11-12)
@@ -2398,7 +2412,9 @@ impl Live {
             let ttl = self.ttl();
             cmd.env("CLAUDE_CODE_PROMPT_CACHE_TTL", ttl);
         }
-        cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])
+        // --replay-user-messages: claude says when it takes each message, so one it folds into a running turn is counted
+        // with that turn (poll)
+        cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--replay-user-messages"])
             .args(["--model", &self.model, "--effort", &self.effort])
             // claude asks tazuna (stdio) instead of a terminal it does not have; "full" never asks
             .args(["--permission-prompt-tool", "stdio", "--allow-dangerously-skip-permissions", "--permission-mode", self.turn_mode().0])
@@ -3174,6 +3190,38 @@ mod tests {
     #[cfg(unix)]
     fn result(live: &Live, r: &str) {
         stub::feed(live, json!({"type": "result", "subtype": "success", "is_error": false, "result": r, "total_cost_usd": 0.0}));
+    }
+
+    /// A message sent while a turn runs: claude's echo before that turn's result means it folded the message into the turn
+    /// (one result for both), so its run joins the running one; an echo after the result is a turn of its own.
+    #[cfg(unix)]
+    #[test]
+    fn a_message_claude_folds_into_the_running_turn_joins_its_run() {
+        let echo = |live: &Live, text: &str| stub::feed(live, json!({"type": "user", "isReplay": true, "message": {"role": "user", "content": text}}));
+        let (mut live, dir) = stub::live("replay-join");
+        live.send_typed("run the tests").unwrap();
+        assert!(stub::started(&dir).iter().any(|a| a == "--replay-user-messages"), "claude says when it takes each message");
+        echo(&live, "run the tests");
+        live.send_typed("and the linter too").unwrap();
+        assert_eq!(live.runs.len(), 2);
+        echo(&live, "and the linter too");
+        live.poll();
+        assert_eq!((live.runs.len(), live.runs[0].prompt.as_str()), (1, "run the tests\n\nand the linter too"), "folded into the turn: one run");
+        result(&live, "Both pass.");
+        live.poll();
+        assert!(live.runs.is_empty() && live.idle(), "the turn's one result ends it");
+        // taken after the result: a turn and a run of its own
+        live.send_typed("thanks").unwrap();
+        live.send_typed("one more").unwrap();
+        result(&live, "You're welcome.");
+        echo(&live, "one more");
+        live.poll();
+        assert_eq!((live.runs.len(), live.runs[0].prompt.as_str()), (1, "one more"));
+        result(&live, "Done.");
+        live.poll();
+        assert!(live.runs.is_empty());
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// After a hand-off the chat's own conversation goes on as it was, the marker in it (no fork, no rewind: one

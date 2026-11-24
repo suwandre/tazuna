@@ -312,8 +312,12 @@ fn window_name(label: &str) -> String {
     }
 }
 
-/// Where a provider's page link starts in its row: after the two-space indent and the name's column.
-pub const LINK_FROM: usize = 22;
+/// Where a provider's page link starts in its row: after the two-space indent and the name's column, which is as wide as
+/// the longest name and two spaces (at least 20): at a fixed 20, "Qwen Cloud Token Plan" ran into its link (2026-11-24).
+pub fn link_from(v: &Value) -> usize {
+    let longest = v["credits"].as_array().into_iter().flatten().filter_map(|c| c["provider"].as_str()).map(|n| n.chars().count()).max().unwrap_or(0);
+    2 + (longest + 2).max(20)
+}
 
 /// The terminal's /usage panel: a section per kind of account (a heading, a line across), the meters' bars aligned,
 /// notes dimmed; a row's link (a provider's page), opened by a click.
@@ -355,6 +359,7 @@ pub fn lines(v: &Value) -> Vec<(String, crate::ui::Tone, Option<String>)> {
         None => push("  no reading: is claude installed and logged in to a subscription?".into(), Dim, None),
     }
     let credits = v["credits"].as_array().cloned().unwrap_or_default();
+    let col = link_from(v) - 2;
     if !credits.is_empty() {
         push(String::new(), Plain, None);
         push("Providers' credits".into(), Head, None);
@@ -362,12 +367,12 @@ pub fn lines(v: &Value) -> Vec<(String, crate::ui::Tone, Option<String>)> {
         for c in &credits {
             let name = c["provider"].as_str().unwrap_or_default();
             match (c["left"].as_str(), c["page"].as_str()) {
-                (Some(left), _) => push(format!("  {name:<20}{left}"), if left.contains(" over ") { Bad } else { Plain }, None),
+                (Some(left), _) => push(format!("  {name:<col$}{left}"), if left.contains(" over ") { Bad } else { Plain }, None),
                 (None, Some(page)) => {
                     let host = page.trim_start_matches("https://").trim_start_matches("http://");
-                    push(format!("  {name:<20}{host}"), Plain, Some(page.to_string()));
+                    push(format!("  {name:<col$}{host}"), Plain, Some(page.to_string()));
                 }
-                (None, None) => push(format!("  {name:<20}no balance to read"), Dim, None),
+                (None, None) => push(format!("  {name:<col$}no balance to read"), Dim, None),
             }
         }
         push("  no balance from their APIs: their page is a click away".into(), Dim, None);
@@ -423,7 +428,13 @@ mod tests {
         assert_eq!((row("Claude plan").1, shown[1].1), (Head, Rule), "a section: its heading, a line across");
         assert!(row("5-hour session").0.contains("14%") && row("5-hour session").0.contains("resets ") && !row("5-hour session").0.contains("Europe"), "the zone dropped: {:?}", row("5-hour session"));
         assert_eq!(row("Week, Fable").1, Bad, "a window at 90% or more is red");
-        assert_eq!((row("Mortera").2.as_deref(), &row("Mortera").0[LINK_FROM..]), (Some("https://mortera.cloud"), "mortera.cloud"), "its page, a click away");
+        assert_eq!((row("Mortera").2.as_deref(), &row("Mortera").0[22..]), (Some("https://mortera.cloud"), "mortera.cloud"), "its page, a click away");
+        // a name longer than the column's 20: the column widens, two spaces stay between it and its link
+        let long = json!({"credits": [{"provider": "Qwen Cloud Token Plan", "left": null, "page": "https://home.qwencloud.com/api-keys"}, {"provider": "Mortera", "left": null, "page": "https://mortera.cloud"}]});
+        let rows = lines(&long);
+        let qwen = rows.iter().find(|l| l.0.contains("Qwen")).unwrap();
+        assert_eq!((link_from(&long), &qwen.0[link_from(&long)..]), (25, "home.qwencloud.com/api-keys"), "{qwen:?}");
+        assert!(qwen.0.contains("Plan  home"), "{qwen:?}");
         assert_eq!(row("OpenRouter").1, Bad, "below zero");
         let g = row("Gemini Models, weekly");
         assert!(g.1 == Plain && g.0.contains("resets ") && g.0.chars().position(|c| c == '░') == row("5-hour session").0.chars().position(|c| c == '█'), "bars line up across sections: {g:?}");

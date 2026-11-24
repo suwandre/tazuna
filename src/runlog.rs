@@ -58,6 +58,12 @@ impl Baseline {
 }
 
 impl Run {
+    /// A message claude took into this run's turn (live.rs: its echo came before this run's result): the run log keeps
+    /// both messages under the one run that turn's result ends.
+    pub fn join(&mut self, later: Run) {
+        self.prompt = format!("{}\n\n{}", self.prompt, later.prompt);
+    }
+
     pub fn new(prompt: &str, at_ms: f64, cwd: &Path) -> Self {
         Run {
             started_ms: at_ms,

@@ -1,7 +1,7 @@
 import { ArrowUp, Check, ChevronDown, FileText, FolderOpen, Gauge, MessageCircle, Paperclip, Plus, Shield, Square, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { quotePath, type ModelChoice, type Models } from "../lib/tazuna";
-import { keysOf, modelLabel, type Session } from "../lib/types";
+import { IMAGE_FILE, keysOf, modelLabel, type Session } from "../lib/types";
 import { Slot } from "../lib/slots";
 import { EffortMenu, Menu, ModelPicker, usePlace } from "./ModelPicker";
 import { Sep } from "./Sep";
@@ -42,6 +42,7 @@ type Props = {
   onAddKey?: (provider: string) => void; onMode?: (mode: string) => void;
   /** a pasted image saved as a file: its path (Cmd-V of a screenshot or of an image copied in Finder) */
   onPasteImage?: (f: File) => Promise<string>;
+  onPasteClipboardImage?: () => Promise<string | null>;
   /** files to attach (the native picker); dropped files come through onDrop */
   onPickFiles?: () => Promise<string[]>;
   onDrop?: (cb: (paths: string[]) => void) => Promise<() => void>;
@@ -69,7 +70,7 @@ export const DRAFT = "tazuna.draft.";
 export type Completions = { commands: [string, string][]; files: string[] };
 // the window's own commands, there before (and without) the core's list
 const OWN: [string, string][] = [["/create", "Make a command, skill, tool, panel or plugin"], ["/agent", "Send to the coding agent, past the chat router"]];
-const IMAGE = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i;
+const IMAGE = IMAGE_FILE;
 type Pick = { text: string; label: string; about: string };
 
 /** What the word at the caret completes to: commands when the box holds only `/…`, files for an `@…` word anywhere. As the
@@ -104,7 +105,7 @@ export const MODES: [string, string][] = [
 // one line always (a narrow window wrapped "Opus 5.5" onto two), and readable while a reply runs (faded, they read as broken)
 const pill = "inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink disabled:cursor-default disabled:text-muted";
 
-export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSendNow, onStop, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {}, readOnly = false }: Props) {
+export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSendNow, onStop, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onPasteClipboardImage, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {}, readOnly = false }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   // attachments are chips over the text, with a thumbnail for an image (until desktop 0.1.87 their paths were typed into
   // the message, and a screenshot was a line of path)
@@ -202,10 +203,15 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSe
           // Cmd-V of an image: an attachment, as a picked or dropped one (until desktop 0.1.114 the paste went nowhere).
           // A file copied in Finder brings its name as text too: the image alone goes in
           onPaste={(e) => {
-            const images = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
-            if (readOnly || !onPasteImage || !images.length) return;
-            e.preventDefault();
-            Promise.all(images.map(onPasteImage)).then(attach).catch((err) => console.error(`paste: ${err}`));
+            if (readOnly || !onPasteImage) return;
+            const { files, types } = e.clipboardData;
+            const images = [...files].filter((f) => f.type.startsWith("image/"));
+            if (images.length) {
+              e.preventDefault();
+              Promise.all(images.map(onPasteImage)).then(attach).catch((err) => console.error(`paste: ${err}`));
+            } else if (!files.length && !types.length) {
+              onPasteClipboardImage?.().then((path) => { if (path) attach([path]); }).catch((err) => console.error(`paste: ${err}`));
+            }
           }}
           onKeyDown={(e) => {
             if (readOnly) return;

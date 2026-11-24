@@ -180,7 +180,40 @@ export function linkName(u: string): string {
 /** A conversation's name from its first message: its first line with each link said in words, and when that line was only
  * a link, the next line after it ("app PR #1485: good to approve?"). Until desktop 0.1.77 the first line as
  * typed, so a list of pasted links read "https://github.com/acme/a…" eight times (design review 5). */
+/** An image file, by its name. */
+export const IMAGE_FILE = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i;
+
+/** The files the box attached to a message, as the message carries them: paths after its text (quoted where they hold a
+ * space, src/components/Composer.tsx quotePath) or `@path` (the terminal's ctrl-v). Trailing images, and trailing quoted
+ * paths, come off the text; a plain path someone typed at the end ("look at /etc/hosts") stays in it. */
+export function attachments(text: string): { text: string; files: string[] } {
+  const files: string[] = [];
+  let rest = text.trimEnd();
+  const tail = /(?:^|\s)(?:"((?:[A-Za-z]:\\|\/|~\/)[^"\n]+)"|@?((?:[A-Za-z]:\\|\/|~\/)\S+))$/;
+  for (let m = rest.match(tail); m && (m[1] || IMAGE_FILE.test(m[2])); m = rest.match(tail)) {
+    files.unshift(m[1] ?? m[2]);
+    rest = rest.slice(0, m.index).trimEnd();
+  }
+  return { text: rest, files };
+}
+
+/** A check of `attachments`: `node` on the two functions (types.ts has no imports a plain run needs). */
+export function attachmentsDemo() {
+  const eq = (a: unknown, b: unknown) => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${JSON.stringify(a)} != ${JSON.stringify(b)}`); };
+  eq(attachments('is this intended? "/Users/me/Desktop/Screenshot 2026-11-24 at 11.26.34.png"'),
+    { text: "is this intended?", files: ["/Users/me/Desktop/Screenshot 2026-11-24 at 11.26.34.png"] });
+  eq(attachments("two /tmp/a.png /tmp/b.jpg"), { text: "two", files: ["/tmp/a.png", "/tmp/b.jpg"] });
+  eq(attachments("what is wrong in @/tmp/paste-1.png"), { text: "what is wrong in", files: ["/tmp/paste-1.png"] });
+  eq(attachments("look at /etc/hosts"), { text: "look at /etc/hosts", files: [] });
+  eq(attachments('notes "/Users/me/My Notes/plan.md"'), { text: "notes", files: ["/Users/me/My Notes/plan.md"] });
+  eq(attachments("/tmp/only.png"), { text: "", files: ["/tmp/only.png"] });
+  return "ok";
+}
+
 export function titleFrom(text?: string | null): string {
+  // the files a message carries are not its title: their paths come off, an image alone is named by its file
+  const { text: words, files } = attachments(text ?? "");
+  text = words || (files[0] ? files[0].slice(Math.max(files[0].lastIndexOf("/"), files[0].lastIndexOf("\\")) + 1) : text);
   const lines = (text ?? "").replace(/^\[tazuna: [^\]]*\]\n\n/, "").split("\n").map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return "";
   // a link pasted without its scheme ("github.com/acme/app/pull/1476") reads as one too (design review 7)
