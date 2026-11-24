@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.215 (2026-11-24): the desktop's model picker says which provider lists are loading
+
+From Devin's runs (PRs #31, #34): the desktop app's model picker shows, for each provider with a key, whether its model
+list is ready, loading or unavailable, and can fetch a missing one again; the window starts at most one fetch per
+provider at a time. The hourly refresh does what it did. A type check's baseline is kept after it is first read (a
+refactor, with a test). No change in the terminal.
+
 ## 0.1.214 (2026-11-24): a pasted screenshot comes in as an image
 
 The user: "i still cannot upload images to both CLI and the desktop harness as an attachment … cmd c, cmd v, nothing
