@@ -378,6 +378,19 @@ const log = [];
       await p.getByText("Second message", { exact: true }).waitFor({ state: "visible", timeout: 4000 });
       if (await box.inputValue()) throw new Error("a queued send left its draft in the box");
     });
+    // Send now on a queued message: the reply stops and that message goes at once, no longer queued
+    await step(p, "d-send-now", async () => {
+      await p.getByRole("button", { name: "Send now" }).first().click();
+      await p.locator("[data-msg]").getByText("Second message", { exact: true }).waitFor({ state: "visible", timeout: 4000 });
+      if (await p.getByText("Queued: goes after this reply").count()) throw new Error("the message sent now still reads as queued");
+    });
+    // ⌘↩ (Ctrl+Enter here) during a reply: the same, from the box
+    await step(p, "d-send-now-key", async () => {
+      await box.fill("Third message");
+      await box.press("Control+Enter");
+      await p.locator("[data-msg]").getByText("Third message", { exact: true }).waitFor({ state: "visible", timeout: 4000 });
+      if (await p.getByText("Queued: goes after this reply").count()) throw new Error("Ctrl+Enter left the message queued");
+    });
     await ctx.close(); }
   // Cmd-V of an image (a screenshot, or an image file copied in Finder, which brings its name as text too): an attachment
   { const [ctx, p] = await ctxOf({});

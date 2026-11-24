@@ -130,6 +130,12 @@ function useCore(onDraftRejected: (text: string) => void) {
   const heldRef = useRef(held);
   heldRef.current = held;
   const hold = (tid: string, text: string, agent = false) => setHeld((m) => ({ ...m, [tid]: [...(m[tid] ?? []), { text, agent }] }));
+  /** Send now: this held message first in its queue, and the reply stopped; the queue sends it as the stop ends the reply
+   * (the drain below), the rest after it. Messages it was behind stay queued. */
+  const sendHeldNow = (tid: string, text: string) => {
+    setHeld((m) => { const q = m[tid] ?? [], i = q.findIndex((w) => w.text === text); return i < 0 ? m : { ...m, [tid]: [q[i], ...q.slice(0, i), ...q.slice(i + 1)] }; });
+    core.interruptIn(tid).catch(() => {});
+  };
   /** A thread's held messages, taken out (Stop: back into its box). */
   const unhold = (tid: string) => { const q = heldRef.current[tid] ?? []; setHeld(({ [tid]: _, ...m }) => m); return q.map((w) => w.text); };
   /** The queue as it stands (the core's and the window's), kept under the conversation's id while it holds anything: after
@@ -294,7 +300,7 @@ function useCore(onDraftRejected: (text: string) => void) {
   /** The id the saved lists know a conversation by: its session's, else an earlier one's they still hold. */
   const listed = new Set(Object.values(sessions).flatMap((rows) => rows.map((r) => r.id)));
   const listedId = (t?: Thread) => (t ? idsOf(t).find((id) => listed.has(id)) ?? t.view?.session_id ?? undefined : undefined);
-  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, restoreDraft, side, openSide, closeSide, forget, resuming, held: (held[active] ?? []).map((w) => w.text), hold, unhold, listedId };
+  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, restoreDraft, side, openSide, closeSide, forget, resuming, held: (held[active] ?? []).map((w) => w.text), hold, unhold, sendHeldNow, listedId };
 }
 
 /** Light or dark: the choice in Settings (lib/chrome.ts keeps it; until desktop 0.1.87 a flip lasted until the window
@@ -360,7 +366,7 @@ export default function App() {
     });
     return () => { off.then((f) => f()); };
   }, []);
-  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, restoreDraft, resuming, side, openSide, closeSide, forget, held, hold, unhold, listedId } = useCore((text) => setDraft({ text, n: Date.now(), append: true }));
+  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, restoreDraft, resuming, side, openSide, closeSide, forget, held, hold, unhold, sendHeldNow, listedId } = useCore((text) => setDraft({ text, n: Date.now(), append: true }));
   useEffect(() => setEditing(null), [active]);
   useEffect(watchUpdates, []);
   // creator mode: the user's panels, read again whenever a conversation finishes a turn (a creator one may have made one)
@@ -706,7 +712,7 @@ export default function App() {
     setEditing(null);
     core.rewind(cp, keep).then(() => send(text)).catch(refused);
   };
-  const messages: Message[] = [...(view ? viewMessages(view) : inTauri ? [] : demo.messages), ...held.map((text) => ({ role: "user" as const, text, queued: true }))];
+  const messages: Message[] = [...(view ? viewMessages(view) : inTauri ? [] : demo.messages), ...held.map((text) => ({ role: "user" as const, text, queued: true, held: true }))];
   /** Stop: the reply ends, and what waited behind it goes back into the box (it went to the agent at once). */
   const stop = () => { core.interrupt().catch(() => {}); const q = unhold(active); if (q.length) setDraft({ text: q.join("\n\n"), n: Date.now(), append: true }); };
   // the core did not start: its reason and a way to try again, no conversation (until desktop 0.1.77 the demo's title,
@@ -854,7 +860,7 @@ export default function App() {
     } satisfies Record<string, [string, () => void]> : {}),
   } : {};
   const composer = (
-        <Composer key={active} readOnly={!inTauri} commands={windowCommands} where={fresh ? where : undefined} chat={inTauri && !folder} draftKey={draftKey} session={session} threadCost={usage.threadCost} busy={busy}
+        <Composer key={active} readOnly={!inTauri} onSendNow={inTauri ? (text) => { hold(active, text); sendHeldNow(active, text); } : undefined} commands={windowCommands} where={fresh ? where : undefined} chat={inTauri && !folder} draftKey={draftKey} session={session} threadCost={usage.threadCost} busy={busy}
             onSend={inTauri ? (text, draft) => {
               if (line?.paid && paidKey && !localStorage.getItem(paidKey)) { setPaidAsk({ text, draft }); return; }
               sendNow(text, draft);
@@ -962,7 +968,7 @@ export default function App() {
             projects={projects.filter((p) => p !== folder).slice(0, 3).map((p) => ({ path: p, name: base(p), count: sessions[p]?.length ?? 0 }))} onProject={(p) => open(p)} />
         // keyed by the conversation, not its session: a change of model goes on in a new session with the same messages (core
         // C5), and the transcript stays where it was
-        : <Transcript key={active} messages={messages} editFrom={editing?.cp}
+        : <Transcript key={active} messages={messages} editFrom={editing?.cp} onSendNow={inTauri ? (text) => sendHeldNow(active, text) : undefined}
           onEdit={inTauri ? (e, text) => {
             const files = new Set((view?.changes ?? []).filter((c) => c.at_block > e.block && !c.undone).flatMap((c) => c.files.map((f) => f.path))).size;
             setEditing({ ...e, files, keep: files > 0 }); setDraft({ text, n: Date.now() });
