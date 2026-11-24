@@ -3489,6 +3489,7 @@ mod tests {
     }
 
     /// A chat outside git keeps auto; leaving it for an agent profile there drops to ask, as starting in one would have.
+    #[cfg(unix)]
     #[test]
     fn leaving_a_chat_outside_git_for_an_agent_drops_to_ask() {
         let dir = std::env::temp_dir().join(format!("tazuna-nogit-{}", std::process::id()));
