@@ -1,8 +1,9 @@
 import { ArrowDown, CircleAlert, Check, ChevronRight, Copy, FileText, Info, LoaderCircle, MessageCircle, Pencil, RotateCcw, Square, SquareTerminal } from "lucide-react";
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Slot } from "../lib/slots";
 import { readableError } from "../lib/fromView";
-import { type Change, type Message, type ToolStep } from "../lib/types";
+import { attachments, IMAGE_FILE, type Change, type Message, type ToolStep } from "../lib/types";
 import { AnswerSlip, dur, priceSaid, tok } from "./Receipt";
 import { Parts, Sep } from "./Sep";
 import { quietButton } from "./Controls";
@@ -285,16 +286,21 @@ export function UserMessage({ message: m }: { message: Message }) {
   // the note tazuna adds after an undo ("[tazuna: ...]") is shown as what it is, apart from the message
   const note = m.text.match(/^\[tazuna: ([^\]]*)\]\n\n/);
   const text = note ? m.text.slice(note[0].length) : m.text;
-  const long = text.length > 600 || text.split("\n").length > 6;
+  // the files it carries show as tiles under it, not as their paths in its text (the user, 2026-11-24)
+  const { text: said, files } = attachments(text);
+  const long = said.length > 600 || said.split("\n").length > 6;
   return (
     <>
       {note && <div className="mb-1 text-[11.5px] text-faint">told the model: {note[1]}</div>}
       <div className="flex items-start gap-1">
         {/* a long message (a pasted log, eight lines of links) folds to six lines; all of it on a click (design review 5) */}
-        <div className="inline-block max-w-full select-text rounded-lg bg-field px-3.5 py-2.5 text-ink">
-          {/* as typed or pasted: its line breaks and tabs kept (a pasted table or list ran together into one paragraph) */}
-          <div className={`whitespace-pre-wrap break-words ${!all && long ? "line-clamp-6" : ""}`}>{inlineCode(text)}</div>
-          {long && <button onClick={() => setAll(!all)} className="mt-1 text-[12px] text-muted hover:text-ink">{all ? "Show less" : "Show all"}</button>}
+        <div className="min-w-0">
+          {said && <div className="inline-block max-w-full select-text rounded-lg bg-field px-3.5 py-2.5 text-ink">
+            {/* as typed or pasted: its line breaks and tabs kept (a pasted table or list ran together into one paragraph) */}
+            <div className={`whitespace-pre-wrap break-words ${!all && long ? "line-clamp-6" : ""}`}>{inlineCode(said)}</div>
+            {long && <button onClick={() => setAll(!all)} className="mt-1 text-[12px] text-muted hover:text-ink">{all ? "Show less" : "Show all"}</button>}
+          </div>}
+          {files.length > 0 && <Attachments files={files} />}
         </div>
         {m.edit && onEdit && !busy && (
           <button onClick={() => onEdit(m.edit!, text)} title="Edit and send again from here: the conversation goes back to before this message" aria-label="Edit from here"
@@ -304,6 +310,44 @@ export function UserMessage({ message: m }: { message: Message }) {
       {m.queued && <div className="mt-1 flex items-center gap-2 text-[11.5px] text-faint">Queued: goes after this reply
         {m.held && onSendNow && <button onClick={() => onSendNow(m.text)} title="Stop the reply and send this message now (a command still running stops too)"
           className="rounded px-1 text-muted underline-offset-2 hover:text-ink hover:underline">Send now</button>}</div>}
+    </>
+  );
+}
+
+/** A message's attachments: an image as a thumbnail that opens whole over the window (a click or Esc closes it), any
+ * other file, or an image no longer there, as its name. */
+function Attachments({ files }: { files: string[] }) {
+  const { onImage } = useTranscript();
+  const [src, setSrc] = useState<Record<string, string>>({}), [big, setBig] = useState<string | null>(null);
+  useEffect(() => { for (const f of files) if (onImage && IMAGE_FILE.test(f) && !src[f]) onImage(f).then((s) => setSrc((m) => ({ ...m, [f]: s }))).catch(() => {}); }, [files.join("|")]);
+  useEffect(() => {
+    if (!big) return;
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); setBig(null); } };
+    window.addEventListener("keydown", key, true);
+    return () => window.removeEventListener("keydown", key, true);
+  }, [big]);
+  const name = (f: string) => f.slice(Math.max(f.lastIndexOf("/"), f.lastIndexOf("\\")) + 1);
+  return (
+    <>
+      <div className="mt-1.5 flex flex-wrap gap-2">
+        {files.map((f) => src[f] ? (
+          <button key={f} onClick={() => setBig(f)} title={f} aria-label={`${name(f)}: show it whole`}
+            className="overflow-hidden rounded-lg border border-line bg-card p-0 hover:border-line-strong">
+            <img src={src[f]} alt={name(f)} className="block h-[72px] max-w-[160px] object-cover" />
+          </button>
+        ) : (
+          <span key={f} title={f} className="inline-flex max-w-[240px] items-center gap-1.5 rounded-lg border border-line bg-field py-1 pl-1 pr-2 text-[12px] text-ink-2">
+            <span className="grid size-7 flex-none place-items-center rounded-md bg-card text-muted"><FileText size={14} strokeWidth={1.5} /></span>
+            <span className="truncate">{name(f)}</span>
+          </span>
+        ))}
+      </div>
+      {/* over the whole window, not inside the scrolling transcript (which clipped it) */}
+      {big && src[big] && createPortal(
+        <div role="dialog" aria-modal="true" aria-label={name(big)} onClick={() => setBig(null)} className="tz-fade fixed inset-0 z-50 flex flex-col items-center justify-center gap-2 bg-scrim p-10">
+          <img src={src[big]} alt={name(big)} className="max-h-[85vh] max-w-full rounded-lg shadow-[var(--shadow-pop)]" />
+          <span className="max-w-full truncate text-[12px] text-ink-2">{big}</span>
+        </div>, document.body)}
     </>
   );
 }

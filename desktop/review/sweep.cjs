@@ -408,6 +408,27 @@ const log = [];
       if (await box.inputValue() !== "what is wrong here?") throw new Error("the pasted file's name went into the draft");
     });
     await ctx.close(); }
+  // a sent message's attachments: a thumbnail under it (not its path in the text), whole over the window on a click
+  { const [ctx, p] = await ctxOf({ extra: "window.__DRAFT_SEND_SUCCESS__ = true;" });
+    const box = p.getByRole("textbox", { name: "Message" });
+    await step(p, "d-message-attachment", async () => {
+      await box.fill("is this intended?");
+      await p.evaluate(() => {
+        const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="), (c) => c.charCodeAt(0));
+        const dt = new DataTransfer(); dt.items.add(new File([png], "image.png", { type: "image/png" }));
+        document.querySelector('textarea[aria-label="Message"]').dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      });
+      await p.getByText("paste-1.png").waitFor({ state: "visible", timeout: 4000 });
+      await p.getByTitle("Send (Enter)").click();
+      await p.getByRole("button", { name: "paste-1.png: show it whole" }).click();
+      await p.getByRole("dialog", { name: "paste-1.png" }).waitFor({ state: "visible", timeout: 4000 });
+      if (await p.locator("[data-msg]").getByText("/tmp/tazuna-desktop-images/paste-1.png").count()) throw new Error("the path still shows in the message");
+    });
+    await step(p, "d-message-attachment-closed", async () => {
+      await p.keyboard.press("Escape");
+      await p.getByRole("dialog", { name: "paste-1.png" }).waitFor({ state: "detached", timeout: 4000 });
+    });
+    await ctx.close(); }
   // the model picker's search takes the typing as it opens (0.1.74 to 0.1.76 it did not)
   { const [ctx, p] = await ctxOf({});
     await p.getByTitle("Model and effort").click(); await p.waitForTimeout(400);

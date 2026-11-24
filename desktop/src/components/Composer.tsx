@@ -1,7 +1,7 @@
 import { ArrowUp, Check, ChevronDown, FileText, FolderOpen, Gauge, MessageCircle, Paperclip, Plus, Shield, Square, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { quotePath, type ModelChoice, type Models } from "../lib/tazuna";
-import { keysOf, modelLabel, type Session } from "../lib/types";
+import { IMAGE_FILE, keysOf, modelLabel, type Session } from "../lib/types";
 import { Slot } from "../lib/slots";
 import { EffortMenu, Menu, ModelPicker, usePlace } from "./ModelPicker";
 import { Sep } from "./Sep";
@@ -69,7 +69,7 @@ export const DRAFT = "tazuna.draft.";
 export type Completions = { commands: [string, string][]; files: string[] };
 // the window's own commands, there before (and without) the core's list
 const OWN: [string, string][] = [["/create", "Make a command, skill, tool, panel or plugin"], ["/agent", "Send to the coding agent, past the chat router"]];
-const IMAGE = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i;
+const IMAGE = IMAGE_FILE;
 type Pick = { text: string; label: string; about: string };
 
 /** What the word at the caret completes to: commands when the box holds only `/…`, files for an `@…` word anywhere. As the
