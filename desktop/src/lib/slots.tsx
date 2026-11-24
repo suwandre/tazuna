@@ -78,21 +78,6 @@ export function Slot<P>({ name, props, only }: { name: string; props: P; only?: 
   return <>{(only ? list.slice(0, 1) : list).map((e) => <Boundary key={e.id} entry={e}>{e.render(props)}</Boundary>)}</>;
 }
 
-/** The spots and what each receives (docs/PLUGINS.md lists the same). */
-export const SLOT_NAMES: Record<string, string> = {
-  "rail": "the right column's cards. props: { usage, data, messages }",
-  "header.actions": "the chips and buttons at the right of the header. props: { data, folder }",
-  "composer.dock": "above the message box (a bar, a dashboard). props: {} (the data: ctx.useData())",
-  "composer.pills": "the controls under the message box (mode, model, effort, attach). props: { composer }",
-  "sidebar.top": "the sidebar's actions under the search (New chat, Open folder). props: {}",
-  "sidebar.footer": "the sidebar's bottom row (an update, Settings). props: { planLeft }",
-  "message.user": "how one of your messages is drawn. props: { message, index }",
-  "message.text": "how an answer's text is drawn (one entry: replace 'message.text.markdown' to restyle answers). props: { text }",
-  "message.after": "under each answer (the change card, the cost line). props: { message, index }",
-  "tool.view": "how a tool step is drawn (one entry: replace 'tool.view.default'). props: { step }",
-  "overlay": "anything drawn over the window (fixed position). props: { data }",
-};
-
 /** A check of replace, restore and hide: `npx tsx -e 'import("./src/lib/slots.tsx").then(m => m.demo())'`. */
 export function demo() {
   const ids = (s: string) => slots.entries(s).map((e) => `${e.id}:${e.source}`).join(",");
