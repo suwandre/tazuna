@@ -887,6 +887,7 @@ export default function App() {
               <div role="alert" className="mx-auto mb-2 max-w-[700px] text-[12.5px] text-bad">{readableError(freshError.text)}</div>
             )} onStop={stop}
             models={models} onModels={inTauri ? () => core.models() : undefined}
+            onRefreshModelList={inTauri ? (p) => { core.refreshModelList(p).catch(() => {}); } : undefined}
             onPickModel={inTauri ? pickModel : undefined} onPickEffort={inTauri ? (e) => core.setEffort(e) : undefined}
             onAddKey={inTauri ? (p) => { setKeyFocus(p); settingsAt("Providers"); } : undefined}
             onMode={inTauri ? (m) => core.setMode(m) : undefined}

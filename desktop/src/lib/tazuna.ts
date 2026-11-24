@@ -126,7 +126,8 @@ export type Accounts = {
 };
 export type Models = { choices: ModelChoice[]; rebuild: string | null;
   /** each provider's terms in one line, once (`Provider.note` and `warn`), shown on its group in the picker */
-  cautions?: Record<string, { note: string; warn: boolean }> };
+  cautions?: Record<string, { note: string; warn: boolean }>;
+  catalogs?: { provider: string; state: "loading" | "ready" | "unavailable" }[] };
 /** A background task of claude's (a subagent, a command), as the core's view lists them: `calls` are the calls that
  * started and continued it (a step's id), `secs` how long it took once ended. */
 export type Task = { id: string; kind: string; agent: string; description: string; status: string; running: boolean; doing: string; tokens: number; tools: number; calls: string[]; secs: number | null };
@@ -264,6 +265,7 @@ export const core = {
   newChat: () => to("new_chat"),
   setProfile: (name: string) => to("set_profile", { name }),
   models: () => to("op", { msg: { op: "models" } }),
+  refreshModelList: (provider: string) => to("op", { msg: { op: "refresh_model_list", provider } }),
   setModel: (c: ModelChoice, effort?: string) => to("op", { msg: { op: "model", model: c.model, url: c.url, key_env: c.key_env, effort } }),
   setEffort: (effort: string) => to("op", { msg: { op: "effort", effort } }),
   onModels: (cb: (m: Models, tid: string) => void) => on<Models>("models", cb),
