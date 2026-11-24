@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState
 import { GitBranch, LoaderCircle, MessagesSquare, PanelLeft, PanelRight } from "lucide-react";
 import { AgentPanel } from "./components/AgentPanel";
 import { Approval } from "./components/Approval";
-import { Composer, DRAFT, MODES, type Completions } from "./components/Composer";
+import { Composer, DRAFT, MODES, draftFiles, saveDraftFiles, type Completions } from "./components/Composer";
 import { DiffView } from "./components/DiffView";
 import { ReviewView } from "./components/ReviewView";
 import { Palette, Shortcuts, type Action } from "./components/Palette";
@@ -42,7 +42,7 @@ const MENUS = ".tz-pop:not([data-panel]):not(.tz-out), [role=menu], [role=listbo
 
 const NO_USAGE: Usage = { contextPct: 0, contextUsed: "0", contextMax: "", plan5h: null, plan5hReset: "", planWeek: null, threadCost: 0, threadTurns: 0, cachedPct: 0, saved: 0, today: 0, todayTurns: 0, todaySeries: [], balance: null };
 import { THEME, applyLooks, darkNow, look } from "./lib/chrome";
-import { HOTKEY, core, defaultHotkey, inTauri, menuKeys, type Accounts, type ClaudeSetup, type Diff, type ModelChoice, type Models, type SessionRow, type View } from "./lib/tazuna";
+import { HOTKEY, core, defaultHotkey, inTauri, menuKeys, type Accounts, type ClaudeSetup, type Diff, type ModelChoice, type Models, type SendDraft, type SessionRow, type View } from "./lib/tazuna";
 import { listen } from "@tauri-apps/api/event";
 import { accentButton, quietButton } from "./components/Controls";
 
@@ -76,7 +76,7 @@ const KEEP_OPEN = 4;
 
 /** The open conversations (each its own core, so one can keep working while another is on screen) and the one on
  * screen. Outside the Tauri window there is no core (the demo data shows instead). */
-function useCore(onDraftRejected: (text: string) => void) {
+function useCore(onDraftRejected: (draft: SendDraft) => void) {
   const [threads, setThreads] = useState<Record<string, Thread>>({});
   const [active, setActiveTid] = useState("");
   const [projects, setProjects] = useState<string[]>(recent);
@@ -98,13 +98,14 @@ function useCore(onDraftRejected: (text: string) => void) {
   const waits = useRef<Record<string, number>>({});
   const activeRef = useRef("");
   activeRef.current = active;
-  const restoreDraft = (tid: string, text: string) => {
+  const restoreDraft = (tid: string, draft: SendDraft) => {
     const t = live.current[tid];
     if (!t) return;
-    if (tid === activeRef.current) onDraftRejected(text);
+    if (tid === activeRef.current) onDraftRejected(draft);
     else {
-      const key = DRAFT + draftKeyOf(t);
-      localStorage.setItem(key, [localStorage.getItem(key), text].filter(Boolean).join("\n\n"));
+      const key = draftKeyOf(t);
+      if (draft.text) localStorage.setItem(DRAFT + key, [localStorage.getItem(DRAFT + key), draft.text].filter(Boolean).join("\n\n"));
+      if (draft.files?.length) saveDraftFiles(key, [...new Set([...draftFiles(key), ...draft.files])]);
     }
   };
   const patch = (tid: string, p: Partial<Thread>) => setThreads((t) => (t[tid] ? { ...t, [tid]: { ...t[tid], ...p } } : t));
@@ -222,7 +223,7 @@ function useCore(onDraftRejected: (text: string) => void) {
     if (!inTauri) return;
     const offs = [
       core.onExit((tid) => patch(tid, { error: "tazuna stopped. The app needs tazuna 0.1.128 or later (it carries its own; TAZUNA_BIN overrides)." })),
-      core.onSendRejected(({ text }, tid) => restoreDraft(tid, text)),
+      core.onSendRejected(({ text, files }, tid) => restoreDraft(tid, { text, files })),
       core.onView((v, tid) => {
         const was = live.current[tid]?.view?.session_id;
         // (a switch's view has no session until its first turn: the id before it is kept too)
@@ -349,7 +350,7 @@ export default function App() {
   // "edit from here": the message being edited (its checkpoint, its block, the files tazuna changed since, whether they
   // go back too) and the text put in the box
   const [editing, setEditing] = useState<{ cp: number; block: number; files: number; keep: boolean } | null>(null);
-  const [draft, setDraft] = useState<{ text: string; n: number; append?: boolean }>();
+  const [draft, setDraft] = useState<SendDraft & { n: number; append?: boolean }>();
   const [reviewing, setReviewing] = useState<{ scope: string; turn?: number; path?: string } | null>(null);
   // the menu bar's items (macOS)
   useEffect(() => {
@@ -366,7 +367,7 @@ export default function App() {
     });
     return () => { off.then((f) => f()); };
   }, []);
-  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, restoreDraft, resuming, side, openSide, closeSide, forget, held, hold, unhold, sendHeldNow, listedId } = useCore((text) => setDraft({ text, n: Date.now(), append: true }));
+  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, restoreDraft, resuming, side, openSide, closeSide, forget, held, hold, unhold, sendHeldNow, listedId } = useCore((draft) => setDraft({ ...draft, n: Date.now(), append: true }));
   useEffect(() => setEditing(null), [active]);
   useEffect(watchUpdates, []);
   // creator mode: the user's panels, read again whenever a conversation finishes a turn (a creator one may have made one)
@@ -498,7 +499,7 @@ export default function App() {
   // the conversation runs on Claude (its CLI: no url) and setup says it is signed out
   const claudeOut = claude?.claude_login === false && !!view && (choice ? !choice.url : /^(claude-)?(opus|sonnet|haiku|fable)/.test(view.model));
   // the first message to a paid model asks once (per model; the cap in Settings holds after that)
-  const [paidAsk, setPaidAsk] = useState<{ text: string; draft: string } | null>(null);
+  const [paidAsk, setPaidAsk] = useState<{ text: string; draft: SendDraft } | null>(null);
   const paidKey = choice ? `tazuna.paid-ok.${choice.model}|${choice.url}` : "";
   // the pull request of the conversation's branch (gh, through the core): asked when a folder's conversation shows and
   // after each finished reply; the header chip and the PR panel read it
@@ -699,7 +700,7 @@ export default function App() {
   const createBehaviour = (ask: string) => open(folder, undefined, { then: (tid) => { core.createIn(tid, ask).catch(() => {}); } });
   const creation = creations[active];
   /** A message on its way: /create, a creator conversation's first, an edit from an earlier message, or a plain one. */
-  const sendNow = (text: string, draft: string) => {
+  const sendNow = (text: string, draft: SendDraft) => {
     // /create: part of the window (a panel or plugin) or something tazuna does (a command, skill or tool): asked first
     if (text.startsWith("/create ")) { setCreateAsk(text.slice(8).trim()); return; }
     // during a reply it waits in the window, shown queued, and goes when the reply ends
@@ -880,7 +881,7 @@ export default function App() {
               <div className="mx-auto mb-2 flex max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
                 <span className="flex-1">This goes to <span className="text-ink">{choice?.label}</span> on {choice?.provider}, a paid API{line?.est != null ? `: about ${usd(line.est)} a message` : ""}. Paid spend stops at your cap per 24 hours (Settings).</span>
                 <button onClick={() => { localStorage.setItem(paidKey, "1"); setPaidAsk(null); sendNow(paidAsk.text, paidAsk.draft); }} className={accentButton}>Send</button>
-                <button onClick={() => { setDraft({ text: paidAsk.draft, n: Date.now() }); setPaidAsk(null); }} className={quietButton}>Cancel</button>
+                <button onClick={() => { setDraft({ ...paidAsk.draft, n: Date.now() }); setPaidAsk(null); }} className={quietButton}>Cancel</button>
               </div>
             ) : editing ? (
               <div className="mx-auto mb-2 flex max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
