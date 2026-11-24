@@ -160,6 +160,9 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
     const side = Object.values(live.current).find((t) => t.side === tid);
     if (side) close(side.tid);
     core.stop(tid).catch(() => {});
+    // gone for what follows in the same tick too (a new one opened in its place must not find it)
+    const { [tid]: _gone, ...left } = live.current;
+    live.current = left;
     setThreads((t) => { const { [tid]: _, ...rest } = t; return rest; });
     // what was kept for it goes with it (its queue stays saved under its id, for when it is opened again)
     setHeld(({ [tid]: _, ...m }) => m);
@@ -926,7 +929,9 @@ export default function App() {
     onOpenThread={inTauri ? (t, p) => open(p?.path ?? null, t.id) : undefined} onSearch={() => setOverlay("palette")} onSettings={inTauri ? () => setOverlay("settings") : undefined}
     open={inTauri ? threads.filter((t) => t.tid === active || t.view?.blocks.some((b) => b.kind === "prompt")).map((t) => ({ tid: t.tid, id: listedId(t), model: t.view?.model, title: titleOf(t), place: t.folder ? base(t.folder) : "chat",
       state: t.error ? "stopped" : t.view?.asking ? "asking" : busyView(t.view) ? "working" : "idle" })) : []}
-    activeTid={active} onSwitch={show} onClose={close}
+    activeTid={active} onSwitch={show}
+    // the one on screen closed: a new one in its folder takes its place, as when it is removed
+    onClose={(tid) => { const t = threads.find((x) => x.tid === tid); close(tid); if (tid === active) open(t?.folder ?? null); }}
     onRename={inTauri ? (t, title) => core.rename(t.id, title).then(refreshSessions) : undefined}
     // the conversation removed is closed where it is open: it stayed on screen, and a message sent there brought it back to
     // the list (the user, 2026-11-24); on screen, a new one in its place takes over
