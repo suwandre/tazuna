@@ -891,6 +891,7 @@ export default function App() {
             onAddKey={inTauri ? (p) => { setKeyFocus(p); settingsAt("Providers"); } : undefined}
             onMode={inTauri ? (m) => core.setMode(m) : undefined}
             onPickFiles={inTauri ? core.pickFiles : undefined} onPasteImage={inTauri ? core.pasteImage : undefined} onDrop={inTauri ? core.onDrop : undefined}
+            onPasteClipboardImage={inTauri && navigator.userAgent.includes("Linux") ? core.pasteClipboardImage : undefined}
             complete={complete[active] ?? null} onComplete={inTauri ? () => { core.complete().catch(() => {}); } : undefined}
             onImage={inTauri ? (p) => core.imageData(p, folder ?? undefined) : undefined} />
   );

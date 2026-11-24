@@ -577,11 +577,34 @@ async fn image_data(path: String, cwd: Option<String>) -> Result<String, String>
 #[tauri::command]
 fn paste_image(request: tauri::ipc::Request<'_>) -> Result<String, String> {
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("no image in the paste".into()) };
-    if bytes.is_empty() || bytes.len() > 20 << 20 { return Err("an image up to 20 MB".into()); }
     let ext = match request.headers().get("x-ext").and_then(|v| v.to_str().ok()).map(str::to_ascii_lowercase).as_deref() {
         Some(e @ ("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "avif")) => e.to_string(),
         _ => "png".into(),
     };
+    save_pasted_image(bytes, &ext)
+}
+
+/// WebKitGTK can deliver an empty paste event even when the system clipboard holds an image.
+#[tauri::command]
+async fn paste_clipboard_image(_app: AppHandle) -> Result<Option<String>, String> {
+    #[cfg(target_os = "linux")]
+    {
+        let (tx, mut rx) = tauri::async_runtime::channel(1);
+        _app.run_on_main_thread(move || {
+            gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD).request_image(move |_, image| {
+                let bytes = image.map(|p| p.save_to_bufferv("png", &[]).map_err(|e| e.to_string())).transpose();
+                let _ = tx.try_send(bytes);
+            });
+        }).map_err(|e| e.to_string())?;
+        let bytes = rx.recv().await.ok_or("could not read the clipboard")??;
+        bytes.map(|b| save_pasted_image(&b, "png")).transpose()
+    }
+    #[cfg(not(target_os = "linux"))]
+    Ok(None)
+}
+
+fn save_pasted_image(bytes: &[u8], ext: &str) -> Result<String, String> {
+    if bytes.is_empty() || bytes.len() > 20 << 20 { return Err("an image up to 20 MB".into()); }
     let dir = std::env::temp_dir().join("tazuna-desktop-images");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     #[cfg(unix)]
@@ -723,7 +746,7 @@ fn main() {
             Ok(())
         })
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, image_data, paste_image, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, plugins_export, plugins_import, plugins_import_file, hotkey, update_check, update_install, interrupt, new_chat, set_profile])
+        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, image_data, paste_image, paste_clipboard_image, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, plugins_export, plugins_import, plugins_import_file, hotkey, update_check, update_install, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
                 stop_all(&w.state::<Core>());

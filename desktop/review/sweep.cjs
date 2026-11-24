@@ -394,6 +394,11 @@ const log = [];
       await p.getByText("paste-1.png").waitFor({ state: "visible", timeout: 4000 });
       if (await box.inputValue() !== "what is wrong here?") throw new Error("the pasted file's name went into the draft");
     });
+    await step(p, "d-paste-linux-clipboard-image", async () => {
+      await box.evaluate((el) => el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: new DataTransfer(), bubbles: true, cancelable: true })));
+      await p.getByText("paste-clipboard.png").waitFor({ state: "visible", timeout: 4000 });
+      if (await box.inputValue() !== "what is wrong here?") throw new Error("the fallback changed the draft");
+    });
     await ctx.close(); }
   // the model picker's search takes the typing as it opens (0.1.74 to 0.1.76 it did not)
   { const [ctx, p] = await ctxOf({});
