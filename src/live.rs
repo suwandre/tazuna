@@ -1288,6 +1288,15 @@ impl Live {
             self.boss = None;
             note = " (boss mode off: it needs the repo profile)";
         }
+        // a chat keeps auto or full outside git (main.rs start_mode); a project there asks, so leaving the chat for one
+        // drops to ask, as starting in it would have (security review, 2026-11-24)
+        let in_git = Command::new("git").args(["rev-parse", "--is-inside-work-tree"]).current_dir(&self.cwd).output().is_ok_and(|o| o.status.success());
+        if p != Profile::Chat && !in_git && matches!(self.permission_mode.as_str(), "auto" | "bypassPermissions") {
+            // the screen hears of it at the next poll, with this switch's own line
+            let ask = self.set_mode("default");
+            self.outbox.push(ask);
+            note = " (ask mode: this folder is not a git repo, so nothing changed here could be undone)";
+        }
         self.prev_profile = Some(self.profile);
         self.profile = p;
         (self.said, self.told) = (Vec::new(), 0);
@@ -3477,6 +3486,29 @@ mod tests {
         assert!(sent.contains(r#""request_id":"q-1""#) && sent.matches(r#""behavior":"allow""#).count() == 2, "{sent}");
         drop(live);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A chat outside git keeps auto; leaving it for an agent profile there drops to ask, as starting in one would have.
+    #[test]
+    fn leaving_a_chat_outside_git_for_an_agent_drops_to_ask() {
+        let dir = std::env::temp_dir().join(format!("tazuna-nogit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut live = stub::in_dir(&dir, "rec.jsonl");
+        (live.profile, live.permission_mode) = (Profile::Chat, "auto".into());
+        live.set_profile(Profile::Lean).unwrap();
+        assert_eq!(live.permission_mode, "default");
+        assert!(live.poll().iter().any(|(_, e)| e["type"] == "harness_mode" && e["mode"] == "default"), "the screen hears of it");
+        live.set_profile(Profile::Chat).unwrap();
+        live.permission_mode = "auto".into();
+        let git = std::env::temp_dir().join(format!("tazuna-git-{}", std::process::id()));
+        std::fs::create_dir_all(&git).unwrap();
+        assert!(Command::new("git").args(["init", "-q"]).current_dir(&git).status().unwrap().success());
+        let mut repo = stub::in_dir(&git, "rec.jsonl");
+        (repo.profile, repo.permission_mode) = (Profile::Chat, "auto".into());
+        repo.set_profile(Profile::Lean).unwrap();
+        assert_eq!(repo.permission_mode, "auto", "in a repo: as it was");
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&git).ok();
     }
 
     /// A turn a chat handed over: full never asks, auto only before a destructive command, the other modes ask.

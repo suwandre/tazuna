@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.221 (2026-11-24): leaving a chat outside git for an agent profile drops to ask
+
+An automated security review of 0.1.220: a plain chat outside git keeps auto or full, and a switch from it to an agent
+profile there (repo, repo-lean, lean) kept that mode, past the rule that a project outside git starts in ask. The switch
+now drops to ask and says why; in a repo nothing changes. The chat's own hand-offs keep the session's mode: the user's
+choice (0.1.219), with its risk said.
+
 ## 0.1.220 (2026-11-24): a plain chat starts in your mode
 
 A conversation outside a git repo started in ask, since nothing it changes can be undone there; a desktop chat runs in the
