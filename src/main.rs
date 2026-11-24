@@ -1453,8 +1453,11 @@ fn app_server(a: &Args) -> Result<()> {
     // reply streamed (2026-11-16).
     // the model calls likewise (`calls_from`): a long session has hundreds, and only the one in flight changes
     let sent = std::cell::RefCell::new((Vec::<String>::new(), Vec::<String>::new()));
-    let emit = |s: &Session, untrusted: &Option<String>, live: &live::Live| {
+    let emit = |s: &Session, untrusted: &Option<String>, live: &live::Live, restore: Option<&SavedModelRestore>| {
         let mut v = s.view();
+        if let Some(r) = restore {
+            v["model_restore"] = json!({"model": r.request["model"], "waiting": r.waiting_for.is_some()});
+        }
         let mut prev = sent.borrow_mut();
         let (old_blocks, old_calls) = &mut *prev;
         for (key, from_key, old) in [("blocks", "from", old_blocks), ("calls", "calls_from", old_calls)] {
@@ -1497,7 +1500,8 @@ fn app_server(a: &Args) -> Result<()> {
     // turns with their files, and the note the next message carries after an undo
     let mut turn: Option<(String, bool)> = None;
     let mut undo_note: Option<String> = None;
-    emit(&s, &untrusted, &live);
+    let mut model_restore: Option<SavedModelRestore> = None;
+    emit(&s, &untrusted, &live, model_restore.as_ref());
     let mut last_reply = String::new();
     let mut chat_last: Option<ChatLast> = None;
     // the router: on as in the terminal; the settings page turns it off (the terminal's /route off)
@@ -1522,7 +1526,9 @@ fn app_server(a: &Args) -> Result<()> {
                             };
                             let open = route_on && !forced && live.idle() && live.profile != route::Profile::Chat && route::code_signals(text, &cwd).is_empty();
                             let follow = route::short_followup(text, !s.last_prompt.is_empty());
-                            let accepted = if let Some(why) = untrusted_in_use(&live) {
+                            let accepted = if model_restore.is_some() {
+                                false
+                            } else if let Some(why) = untrusted_in_use(&live) {
                                 info(&mut s, why);
                                 false
                             } else if open && follow && chat_last.is_some() {
@@ -1550,7 +1556,8 @@ fn app_server(a: &Args) -> Result<()> {
                             } else {
                                 agent_send(&mut live, &mut s, text, &cwd, &mut turn, &mut undo_note, true)
                             };
-                            if !accepted && let Some(text) = cmd["draft"].as_str() {
+                            let draft = cmd["draft"].as_str().or_else(|| model_restore.as_ref().and(cmd["text"].as_str()));
+                            if !accepted && let Some(text) = draft {
                                 let mut o = out.lock();
                                 let _ = writeln!(o, "{}", json!({"type": "send_rejected", "text": text}));
                                 let _ = o.flush();
@@ -1862,7 +1869,10 @@ fn app_server(a: &Args) -> Result<()> {
                                 accounts::recheck_claude_login(accounts::claude_logged_in(), move || { let _ = tx.send(json!({"type": "tazuna_lists"})); });
                             }
                             let cs = app_catalog()?;
-                            let (rows, cautions) = app_models(&cs, &live);
+                            if let Some(r) = model_restore.take_if(|r| r.completed_by(&cmd)) {
+                                model_restore = restore_saved_model(&mut live, &mut s, &cs, r.request, &pending_lists);
+                            }
+                            let (rows, cautions) = app_models(&cs, &live, model_restore.is_none());
                             let catalogs: Vec<_> = lists.into_iter().map(|(l, cached)| json!({
                                 "provider": l.name, "state": if cached { "ready" } else if pending_lists.contains(l.name) { "loading" } else { "unavailable" },
                             })).collect();
@@ -1876,18 +1886,15 @@ fn app_server(a: &Args) -> Result<()> {
                         // claude); the effort defaults as in the terminal's picker
                         Some("model") => {
                             let cs = app_catalog()?;
-                            let want = (cmd["url"].as_str(), cmd["key_env"].as_str());
-                            match cs.iter().find(|c| c.model == cmd["model"].as_str().unwrap_or_default()
-                                && (c.route.as_ref().map(|r| r.0.as_str()), c.route.as_ref().map(|r| r.1.as_str())) == want) {
-                                Some(c) => {
-                                    let effort = cmd["effort"].as_str().filter(|e| c.efforts.iter().any(|x| x == e)).map(String::from)
-                                        .or_else(|| c.efforts.get(models::start_effort(c, &live.model, &live.effort)).cloned());
-                                    match apply_choice(&mut live, c, effort) {
-                                        Ok((t, e)) => s.apply(&e, t),
-                                        Err(e) => info(&mut s, format!("{e:#}")),
-                                    }
+                            if cmd["restore"] == true {
+                                model_restore = restore_saved_model(&mut live, &mut s, &cs, cmd, &pending_lists);
+                            } else if let Some(c) = app_model_choice(&cs, &cmd) {
+                                match app_pick_model(&mut live, &mut s, c, &cmd) {
+                                    Ok(()) => model_restore = None,
+                                    Err(e) => info(&mut s, format!("{e:#}")),
                                 }
-                                None => info(&mut s, format!("no model {} in the catalog", cmd["model"])),
+                            } else {
+                                info(&mut s, format!("no model {} in the catalog", cmd["model"]));
                             }
                         }
                         Some("effort") => match live.set_effort(cmd["effort"].as_str().unwrap_or_default().to_string()) {
@@ -2202,6 +2209,10 @@ fn app_server(a: &Args) -> Result<()> {
                             let ask = cmd["ask"].as_str().unwrap_or_default().trim().to_string();
                             if ask.is_empty() {
                                 info(&mut s, CREATE_USAGE.into());
+                            } else if model_restore.is_some() {
+                                let mut o = out.lock();
+                                let _ = writeln!(o, "{}", json!({"type": "send_rejected", "text": format!("/create {ask}")}));
+                                let _ = o.flush();
                             } else if !live.idle() || creating.is_some() {
                                 info(&mut s, "wait until this run has finished, then create".into());
                             } else if let Some(why) = untrusted_in_use(&live) {
@@ -2291,7 +2302,7 @@ fn app_server(a: &Args) -> Result<()> {
             }
         }
         if changed && last.elapsed() >= Duration::from_millis(50) {
-            emit(&s, &untrusted, &live);
+            emit(&s, &untrusted, &live, model_restore.as_ref());
             (changed, last) = (false, Instant::now());
         }
         std::thread::sleep(Duration::from_millis(15));
@@ -5219,7 +5230,7 @@ fn app_refresh_lists(providers: impl IntoIterator<Item = &'static models::Login>
 /// provider, price and reason, its label and score where they say more, `no_key` where Settings adds what it needs (the
 /// terminal's "/login, or set the environment variable" does not apply there). Each provider's terms once, in `cautions`.
 #[inline(never)]
-fn app_models(cs: &[models::Choice], live: &live::Live) -> (Vec<serde_json::Value>, serde_json::Map<String, serde_json::Value>) {
+fn app_models(cs: &[models::Choice], live: &live::Live, has_model: bool) -> (Vec<serde_json::Value>, serde_json::Map<String, serde_json::Value>) {
     let mut cautions = serde_json::Map::new();
     let rows = cs.iter().map(|c| {
         let provider = models::provider_of(c);
@@ -5233,7 +5244,7 @@ fn app_models(cs: &[models::Choice], live: &live::Live) -> (Vec<serde_json::Valu
                 "url": c.route.as_ref().map(|r| &r.0), "key_env": c.route.as_ref().map(|r| &r.1),
                 "efforts": c.efforts, "effort": c.efforts.get(models::start_effort(c, &live.model, &live.effort)),
                 "price": c.price, "bench": c.bench, "why_not": null,
-                "current": models::same_model(c, &live.model) && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)),
+                "current": has_model && models::same_model(c, &live.model) && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)),
             });
         };
         let mut row = json!({"model": c.model, "provider": provider, "price": c.price});
@@ -5268,6 +5279,42 @@ fn app_models(cs: &[models::Choice], live: &live::Live) -> (Vec<serde_json::Valu
 fn app_catalog() -> Result<Vec<models::Choice>> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     Ok(models::catalog(&labels::dir()?.join("routes.json"), trusted_host, &models::KeyModels::new(), now))
+}
+
+fn app_model_choice<'a>(cs: &'a [models::Choice], cmd: &serde_json::Value) -> Option<&'a models::Choice> {
+    let want = (cmd["url"].as_str(), cmd["key_env"].as_str());
+    cs.iter().find(|c| c.model == cmd["model"].as_str().unwrap_or_default()
+        && (c.route.as_ref().map(|r| r.0.as_str()), c.route.as_ref().map(|r| r.1.as_str())) == want)
+}
+
+fn app_pick_model(live: &mut live::Live, s: &mut Session, c: &models::Choice, cmd: &serde_json::Value) -> Result<()> {
+    let effort = cmd["effort"].as_str().filter(|e| c.efforts.iter().any(|x| x == e)).map(String::from)
+        .or_else(|| c.efforts.get(models::start_effort(c, &live.model, &live.effort)).cloned());
+    let (t, e) = apply_choice(live, c, effort)?;
+    s.apply(&e, t);
+    Ok(())
+}
+
+struct SavedModelRestore {
+    request: serde_json::Value,
+    waiting_for: Option<&'static str>,
+}
+
+impl SavedModelRestore {
+    fn completed_by(&self, event: &serde_json::Value) -> bool {
+        event["type"] == "tazuna_list_finished" && self.waiting_for.is_some_and(|p| event["provider"] == p)
+    }
+}
+
+fn restore_saved_model(live: &mut live::Live, s: &mut Session, cs: &[models::Choice], request: serde_json::Value,
+                       pending_lists: &HashSet<&'static str>) -> Option<SavedModelRestore> {
+    let waiting_for = match app_model_choice(cs, &request) {
+        Some(c) if app_pick_model(live, s, c, &request).is_ok() => return None,
+        Some(_) => None,
+        None => models::LOGINS.iter().find(|l| pending_lists.contains(l.name)
+            && request["url"] == l.url && request["key_env"].as_str().is_some_and(|k| l.vars.contains(&k))).map(|l| l.name),
+    };
+    Some(SavedModelRestore { request, waiting_for })
 }
 
 /// A model picked (the terminal's /model picker, the app's): the switch, or only the effort when it is the model in use on
@@ -5686,7 +5733,7 @@ mod tests {
         let live = crate::live::Live::new("claude-opus-5-5", "medium").unwrap();
         let row = |model: &str, state: models::State| models::Choice { model: model.into(), label: model.into(), route: Some(("https://api.z.ai/api/coding/paas/v4".into(), "ZAI_API_KEY".into(), "0,0,0".into())),
             place: "Z.ai Coding Plan".into(), efforts: vec!["high".into()], price: "plan".into(), note: String::new(), stale: false, state, bench: String::new(), aa: String::new(), pins: vec![] };
-        let (rows, cautions) = super::app_models(&[row("glm-5", models::State::Ready), row("glm-4.6", models::State::NoKey)], &live);
+        let (rows, cautions) = super::app_models(&[row("glm-5", models::State::Ready), row("glm-4.6", models::State::NoKey)], &live, true);
         // a row that can be picked: whole; one without a key: what a search shows, and that Settings adds the key
         assert!(rows[0]["url"].is_string() && rows[0]["efforts"][0] == "high" && rows[0]["why_not"].is_null() && rows[0]["current"] == false, "{}", rows[0]);
         let keys: Vec<&String> = rows[1].as_object().unwrap().keys().collect();
@@ -5701,7 +5748,7 @@ mod tests {
         let live = crate::live::Live::new("claude-opus-5-5", "medium").unwrap();
         let opus = models::Choice { model: "claude-opus-5-5".into(), label: "Opus 5.5".into(), route: None, place: "Claude · subscription".into(),
             efforts: vec!["high".into()], price: "plan".into(), note: String::new(), stale: false, state: models::State::NoKey, bench: String::new(), aa: String::new(), pins: vec![] };
-        let (rows, _) = super::app_models(std::slice::from_ref(&opus), &live);
+        let (rows, _) = super::app_models(std::slice::from_ref(&opus), &live, true);
         assert_eq!((rows[0]["why_not"].as_str(), rows[0]["no_key"].as_bool(), rows[0]["label"].as_str()), (Some("not signed in"), Some(true), Some("Opus 5.5")), "{}", rows[0]);
         assert_eq!(models::why_not(&opus).as_deref(), Some(models::CLAUDE_SIGNED_OUT), "the terminal's picker says what to run");
         let mut live = live;
@@ -5815,6 +5862,39 @@ mod tests {
             place: String::new(), efforts: vec![], price: String::new(), note: String::new(), stale: false, state: models::State::Ready, bench: String::new(), aa: String::new(), pins: vec![] };
         let (_, e) = super::apply_choice(&mut live, &c, None).unwrap();
         assert_eq!((live.effort.as_str(), e["text"].as_str().unwrap_or_default().contains(" · :")), ("", false), "{e}");
+    }
+
+    #[test]
+    fn a_saved_model_waits_for_its_exact_route_and_keeps_the_trust_gate() {
+        let mut live = crate::live::Live::new("claude-opus-5-5", "high").unwrap();
+        let mut s = super::Session::new("", &live.effort);
+        let model = "ernie-5-5-flash-preview";
+        let url = "https://mortera.cloud/v1";
+        let key = "MORTERA_API_KEY";
+        let request = json!({"model": model, "url": url, "key_env": key});
+        let mut row = models::Choice { model: model.into(), label: model.into(), route: Some(("https://other.invalid/v1".into(), key.into(), String::new())),
+            place: String::new(), efforts: vec![], price: String::new(), note: String::new(), stale: false, state: models::State::Ready,
+            bench: String::new(), aa: String::new(), pins: vec![] };
+        let pending = std::collections::HashSet::from(["Mortera"]);
+        let restore = |live: &mut crate::live::Live, s: &mut super::Session, row: &models::Choice, pending| {
+            super::restore_saved_model(live, s, std::slice::from_ref(row), request.clone(), pending)
+        };
+        let waiting = restore(&mut live, &mut s, &row, &pending).unwrap();
+        assert_eq!(waiting.waiting_for, Some("Mortera"));
+        assert!(!waiting.completed_by(&json!({"type": "tazuna_list_finished", "provider": "Fireworks"})));
+        assert!(waiting.completed_by(&json!({"type": "tazuna_list_finished", "provider": "Mortera"})));
+        let finished = std::collections::HashSet::from(["Fireworks"]);
+        assert!(restore(&mut live, &mut s, &row, &finished).unwrap().waiting_for.is_none());
+        assert!(live.provider.is_none(), "never select a different route with the same id");
+
+        row.route = Some((url.into(), key.into(), String::new()));
+        row.state = models::State::Untrusted;
+        assert!(restore(&mut live, &mut s, &row, &finished).unwrap().waiting_for.is_none());
+        assert!(live.provider.is_none(), "restoring the exact route does not grant trust");
+        row.state = models::State::Ready;
+        assert!(restore(&mut live, &mut s, &row, &finished).is_none());
+        assert_eq!(live.model, model);
+        assert_eq!(live.provider, Some((url.into(), key.into())));
     }
 
     #[test]

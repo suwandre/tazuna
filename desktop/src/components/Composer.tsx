@@ -17,7 +17,7 @@ export type ComposerBag = {
   where?: Where;
   /** a plain chat (no project): the model alone, so no permission pill (design review 10) */
   chat?: boolean;
-  session: Session; busy?: boolean; models?: Models | null; onModels?: () => void; onPickModel?: (c: ModelChoice) => void;
+  session: Session; busy?: boolean; sendBlocked?: boolean; models?: Models | null; onModels?: () => void; onPickModel?: (c: ModelChoice) => void;
   onRefreshModelList?: (provider: string) => void;
   /** a model whose provider has no key: Settings on that provider */
   onAddKey?: (provider: string) => void;
@@ -29,7 +29,7 @@ export type ComposerBag = {
 type Props = {
   /** An editable preview draft, never submitted or cleared by Send/Enter. */
   readOnly?: boolean;
-  session: Session; threadCost: number; busy?: boolean; onSend?: (text: string, draft: string) => void; onStop?: () => void;
+  session: Session; threadCost: number; busy?: boolean; sendBlocked?: boolean; onSend?: (text: string, draft: string) => void; onStop?: () => void;
   /** a new conversation: where it runs (a chat or a project), changed from the box */
   where?: Where;
   /** a plain chat (no project) */
@@ -102,7 +102,7 @@ export const MODES: [string, string][] = [
 // one line always (a narrow window wrapped "Opus 5.5" onto two), and readable while a reply runs (faded, they read as broken)
 const pill = "inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink disabled:cursor-default disabled:text-muted";
 
-export function Composer({ session, where, chat, busy, onSend, onStop, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {}, readOnly = false }: Props) {
+export function Composer({ session, where, chat, busy, sendBlocked, onSend, onStop, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {}, readOnly = false }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   // attachments are chips over the text, with a thumbnail for an image (until desktop 0.1.87 their paths were typed into
   // the message, and a screenshot was a line of path)
@@ -174,16 +174,16 @@ export function Composer({ session, where, chat, busy, onSend, onStop, models, o
     return () => { off.then((f) => f()); };
   }, [onDrop]);
   const nextMode = () => { const i = MODES.findIndex(([m]) => m === session.mode); onMode?.(MODES[(i + 1) % MODES.length][0]); };
-  const bag: ComposerBag = { readOnly, where, chat, session, busy, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, attach: (p) => { attach(p); }, picker };
+  const bag: ComposerBag = { readOnly, where, chat, session, busy, sendBlocked, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, attach: (p) => { attach(p); }, picker };
   // a message sent during a reply waits behind it (the core queues it, as the terminal does)
   // attachments go in the message as paths after its text (quoted when they hold a space): the core sends images as images
   const send = () => {
-    if (readOnly || (!files.length && run(text.trim()))) return;
+    if (readOnly || (!files.length && run(text.trim())) || sendBlocked) return;
     const paths = files.map(quotePath).join(" "), t = [text.trim(), paths].filter(Boolean).join(" ");
     if (!t) return;
     onSend?.(t, [text, paths].filter(Boolean).join(" ")); setText(""); setFiles([]);
   };
-  const ready = !readOnly && (!!text.trim() || files.length > 0);
+  const ready = !readOnly && !sendBlocked && (!!text.trim() || files.length > 0);
   return (
     <footer className="px-7 pb-[22px] pt-2.5">
       <div className="mx-auto max-w-[700px]"><Slot name="composer.dock" props={{}} /></div>
@@ -347,8 +347,8 @@ export function ModelPill({ composer: c }: { composer: ComposerBag }) {
   return (
     <span className="relative">
       <button disabled={c.busy || !c.onPickModel} onClick={toggle} aria-haspopup="dialog" aria-expanded={open} title={c.readOnly ? "Model and effort — available in the desktop app" : "Model and effort"} className={pill}>
-        <Zap size={14} strokeWidth={1.5} />{modelLabel(current?.model ?? c.session.model)}
-        {c.session.effort && <span className="flex items-center text-faint"><Sep />{c.session.effort}</span>}
+        <Zap size={14} strokeWidth={1.5} />{c.sendBlocked ? "Choose model" : modelLabel(current?.model ?? c.session.model)}
+        {!c.sendBlocked && c.session.effort && <span className="flex items-center text-faint"><Sep />{c.session.effort}</span>}
         <ChevronDown size={13} strokeWidth={1.5} className="text-faint" />
       </button>
       {open && <ModelPicker models={c.models ?? null} onClose={() => setOpen(false)} onPick={(m) => { setOpen(false); c.onPickModel?.(m); }}
