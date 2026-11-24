@@ -3032,7 +3032,9 @@ mod tests {
         live.tx.send((0, Msg::Line(json!({"type": "result", "subtype": "success", "is_error": false}).to_string()))).unwrap();
         let t = Instant::now();
         live.poll();
-        assert!(t.elapsed() < Duration::from_secs(1), "the screen froze {:?} for the baseline", t.elapsed());
+        // under the baseline's 3 s with room to spare: at 1 s the run's own git snapshot of this repo, with the whole test
+        // suite running beside it, failed it about once in two full runs (2026-11-24)
+        assert!(t.elapsed() < Duration::from_millis(2500), "the screen froze {:?} for the baseline", t.elapsed());
         std::fs::remove_file(&live.rec_path).ok();
     }
 

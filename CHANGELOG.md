@@ -16,6 +16,24 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.218 (2026-11-24): a picked mode reaches the agent once you stop picking; a switch answers the waiting question
+
+The user: shift-tab from ask to full "goes through plan, auto, etc. im assuming this will impact the calls". It did: each
+press went to the running agent at once, so a call could be judged by a mode passed on the way (plan refused an edit,
+review sent a command to the reviewer).
+- A mode picked (shift-tab in the terminal or the app, the app's mode menu) shows at once and goes to the agent 0.7 s
+  after the last pick, or at once when a message goes out, which then runs in it. `/mode NAME` applies at once.
+- Switching mode answers the questions waiting that the new mode would not have asked: in full every one, in auto every
+  one but a destructive command; the user's own questions, calls written as text and a plan to approve still wait.
+- Switching stays possible while a reply runs: it is how a run that asks before each of 40 commands goes on without
+  them (to auto), or a risky one is reined in (to ask).
+- From Devin's runs (PRs #36 to #39, #41), in the desktop app: a pasted image attaches on macOS when Tauri hands its bytes
+  over as a list of numbers (0.1.114's paste refused that form) and on Linux, where WebKitGTK sends an empty paste; a
+  refused routed message comes back into the box; a saved model whose list is still loading is put back once it is
+  ("Restoring …", sending waits for it); the model picker stays inside the conversation.
+- A test of the screen not waiting for a slow type check allowed 1 s, which the run's own git snapshot passed under a
+  full parallel test run about once in two; it allows 2.5 s of the 3 s it guards against.
+
 ## 0.1.217 (2026-11-24): a message claude folds into a running turn counts with it; /usage without cut-offs
 
 - A message sent while a turn runs: claude takes it into that turn at its next tool call and ends both with one result,
