@@ -36,6 +36,8 @@ type Props = {
   /** the model catalog (null until asked for); onModels asks for it when the picker opens */
   models?: Models | null; onModels?: () => void; onPickModel?: (c: ModelChoice) => void; onPickEffort?: (e: string) => void;
   onAddKey?: (provider: string) => void; onMode?: (mode: string) => void;
+  /** a pasted image saved as a file: its path (Cmd-V of a screenshot or of an image copied in Finder) */
+  onPasteImage?: (f: File) => Promise<string>;
   /** files to attach (the native picker); dropped files come through onDrop */
   onPickFiles?: () => Promise<string[]>;
   onDrop?: (cb: (paths: string[]) => void) => Promise<() => void>;
@@ -98,7 +100,7 @@ export const MODES: [string, string][] = [
 // one line always (a narrow window wrapped "Opus 5.5" onto two), and readable while a reply runs (faded, they read as broken)
 const pill = "inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink disabled:cursor-default disabled:text-muted";
 
-export function Composer({ session, where, chat, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {}, readOnly = false }: Props) {
+export function Composer({ session, where, chat, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {}, readOnly = false }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   // attachments are chips over the text, with a thumbnail for an image (until desktop 0.1.87 their paths were typed into
   // the message, and a screenshot was a line of path)
@@ -193,6 +195,14 @@ export function Composer({ session, where, chat, busy, onSend, onStop, models, o
         )}
         <textarea ref={box} rows={1} autoFocus aria-label={readOnly ? "Demo draft" : "Message"} aria-describedby={readOnly ? "demo-draft-help" : undefined} value={text} onChange={(e) => { setText(e.target.value); setCaret(e.target.selectionStart); setShut(false); }}
           onSelect={(e) => setCaret(e.currentTarget.selectionStart)} aria-expanded={!!menu} aria-controls={menu ? "tz-complete" : undefined}
+          // Cmd-V of an image: an attachment, as a picked or dropped one (until desktop 0.1.114 the paste went nowhere).
+          // A file copied in Finder brings its name as text too: the image alone goes in
+          onPaste={(e) => {
+            const images = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
+            if (readOnly || !onPasteImage || !images.length) return;
+            e.preventDefault();
+            Promise.all(images.map(onPasteImage)).then(attach).catch((err) => console.error(`paste: ${err}`));
+          }}
           onKeyDown={(e) => {
             if (readOnly) return;
             if (menu && !e.nativeEvent.isComposing) {

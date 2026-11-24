@@ -890,7 +890,7 @@ export default function App() {
             onPickModel={inTauri ? pickModel : undefined} onPickEffort={inTauri ? (e) => core.setEffort(e) : undefined}
             onAddKey={inTauri ? (p) => { setKeyFocus(p); settingsAt("Providers"); } : undefined}
             onMode={inTauri ? (m) => core.setMode(m) : undefined}
-            onPickFiles={inTauri ? core.pickFiles : undefined} onDrop={inTauri ? core.onDrop : undefined}
+            onPickFiles={inTauri ? core.pickFiles : undefined} onPasteImage={inTauri ? core.pasteImage : undefined} onDrop={inTauri ? core.onDrop : undefined}
             complete={complete[active] ?? null} onComplete={inTauri ? () => { core.complete().catch(() => {}); } : undefined}
             onImage={inTauri ? (p) => core.imageData(p, folder ?? undefined) : undefined} />
   );
