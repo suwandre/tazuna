@@ -6,6 +6,8 @@ import { listen } from "@tauri-apps/api/event";
 
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
+export type SendDraft = { text: string; files?: string[] };
+
 /** The thread commands go to: the one on screen. */
 let current = "";
 const to = <T = unknown>(cmd: string, args: Record<string, unknown> = {}) => invoke<T>(cmd, { tid: current, ...args });
@@ -244,8 +246,8 @@ export const core = {
   /** the plan alone, a second or so before the rest of an accounts reading (the credits and OmniRoute ask other servers) */
   onAccountsPlan: (cb: (a: Pick<Accounts, "plan" | "plan_notes">) => void) => on<Pick<Accounts, "plan" | "plan_notes">>("accounts_plan", cb),
   send: (text: string, agent = false) => to("send", { text, agent }),
-  sendDraft: (tid: string, text: string, draft: string, agent = false) => invoke("send", { tid, text, draft, agent }),
-  onSendRejected: (cb: (m: { text: string }, tid: string) => void) => on<{ text: string }>("send_rejected", cb),
+  sendDraft: (tid: string, text: string, draft: SendDraft, agent = false) => invoke("send", { tid, text, draft, agent }),
+  onSendRejected: (cb: (m: SendDraft, tid: string) => void) => on<SendDraft>("send_rejected", cb),
   trust: () => to("trust"),
   pickFolder: () => invoke<string | null>("pick_folder"),
   /** the quick-chat shortcut from anywhere ("Alt+Space"; empty: none); fails when another app holds it */

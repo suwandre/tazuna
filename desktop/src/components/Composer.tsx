@@ -1,6 +1,6 @@
 import { ArrowUp, Check, ChevronDown, FileText, FolderOpen, Gauge, MessageCircle, Paperclip, Plus, Shield, Square, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { quotePath, type ModelChoice, type Models } from "../lib/tazuna";
+import { quotePath, type ModelChoice, type Models, type SendDraft } from "../lib/tazuna";
 import { IMAGE_FILE, keysOf, modelLabel, type Session } from "../lib/types";
 import { Slot } from "../lib/slots";
 import { EffortMenu, Menu, ModelPicker, usePlace } from "./ModelPicker";
@@ -29,9 +29,9 @@ export type ComposerBag = {
 type Props = {
   /** An editable preview draft, never submitted or cleared by Send/Enter. */
   readOnly?: boolean;
-  session: Session; threadCost: number; busy?: boolean; sendBlocked?: boolean; onSend?: (text: string, draft: string) => void; onStop?: () => void;
+  session: Session; threadCost: number; busy?: boolean; sendBlocked?: boolean; onSend?: (text: string, draft: SendDraft) => void; onStop?: () => void;
   /** ⌘↩ during a reply: stop it and send this message at once, instead of after it */
-  onSendNow?: (text: string, draft: string) => void;
+  onSendNow?: (text: string, draft: SendDraft) => void;
   /** a new conversation: where it runs (a chat or a project), changed from the box */
   where?: Where;
   /** a plain chat (no project) */
@@ -48,7 +48,7 @@ type Props = {
   onDrop?: (cb: (paths: string[]) => void) => Promise<() => void>;
   /** text put in the box from outside ("edit from here"): set whenever `n` changes; `append`: after what is there (the
    * messages a Stop took back) */
-  draft?: { text: string; n: number; append?: boolean };
+  draft?: SendDraft & { n: number; append?: boolean };
   /** shown above the box (the edit banner) */
   above?: React.ReactNode;
   /** shown under the box (where a message goes and what it costs) */
@@ -66,6 +66,11 @@ type Props = {
 };
 
 export const DRAFT = "tazuna.draft.";
+const DRAFT_FILES = "tazuna.draft-files.";
+export const draftFiles = (key: string): string[] => { try { return JSON.parse(localStorage.getItem(DRAFT_FILES + key) ?? "[]"); } catch { return []; } };
+export const saveDraftFiles = (key: string, files: string[]) => {
+  if (files.length) localStorage.setItem(DRAFT_FILES + key, JSON.stringify(files)); else localStorage.removeItem(DRAFT_FILES + key);
+};
 
 export type Completions = { commands: [string, string][]; files: string[] };
 // the window's own commands, there before (and without) the core's list
@@ -109,7 +114,7 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSe
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   // attachments are chips over the text, with a thumbnail for an image (until desktop 0.1.87 their paths were typed into
   // the message, and a screenshot was a line of path)
-  const [files, setFiles] = useState<string[]>([]);
+  const [files, setFiles] = useState<string[]>(() => draftKey ? draftFiles(draftKey) : []);
   // the menu over the box for the `/` or `@` word at the caret; Esc shuts it until the text changes
   const [caret, setCaret] = useState(text.length), [sel, setSel] = useState(0), [shut, setShut] = useState(false);
   // the box's own: `/model` and `/effort` open the model pill's picker (the effort levels are at its top)
@@ -163,13 +168,24 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSe
   const savedAt = useRef(draftKey);
   useEffect(() => {
     if (!draftKey) return;
-    if (savedAt.current && savedAt.current !== draftKey) localStorage.removeItem(DRAFT + savedAt.current);
+    if (savedAt.current && savedAt.current !== draftKey) {
+      localStorage.removeItem(DRAFT + savedAt.current);
+      saveDraftFiles(savedAt.current, []);
+    }
     savedAt.current = draftKey;
     if (text) localStorage.setItem(DRAFT + draftKey, text); else localStorage.removeItem(DRAFT + draftKey);
-  }, [text, draftKey]);
+    saveDraftFiles(draftKey, files);
+  }, [text, files, draftKey]);
   // a draft from outside applies when it is new (not again when the box of another conversation mounts)
   const seen = useRef(draft?.n);
-  useEffect(() => { if (draft && draft.n !== seen.current) { seen.current = draft.n; setText((t) => (draft.append && t.trim() ? `${t.trimEnd()}\n\n${draft.text}` : draft.text)); box.current?.focus(); } }, [draft?.n]);
+  useEffect(() => {
+    if (draft && draft.n !== seen.current) {
+      seen.current = draft.n;
+      if (draft.text || !draft.append) setText((t) => (draft.append && t.trim() ? `${t.trimEnd()}\n\n${draft.text}` : draft.text));
+      if (draft.files) setFiles((f) => [...new Set([...f, ...draft.files!])]);
+      box.current?.focus();
+    }
+  }, [draft?.n]);
   const attach = (paths: string[]) => paths.length && setFiles((f) => [...new Set([...f, ...paths])]);
   useEffect(() => {
     if (!onDrop) return;
@@ -184,7 +200,7 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSe
     if (readOnly || (!files.length && run(text.trim())) || sendBlocked) return;
     const paths = files.map(quotePath).join(" "), t = [text.trim(), paths].filter(Boolean).join(" ");
     if (!t) return;
-    (now && onSendNow ? onSendNow : onSend)?.(t, [text, paths].filter(Boolean).join(" ")); setText(""); setFiles([]);
+    (now && onSendNow ? onSendNow : onSend)?.(t, { text, files }); setText(""); setFiles([]);
   };
   const ready = !readOnly && !sendBlocked && (!!text.trim() || files.length > 0);
   return (

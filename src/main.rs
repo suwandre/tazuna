@@ -1357,6 +1357,13 @@ fn untrusted_switch(p: route::Profile, a: &Args) -> Result<Option<String>> {
     }))
 }
 
+fn send_rejected(draft: &serde_json::Value) -> Option<serde_json::Value> {
+    if let Some(text) = draft.as_str() {
+        return Some(json!({"type": "send_rejected", "text": text}));
+    }
+    Some(json!({"type": "send_rejected", "text": draft["text"].as_str()?, "files": draft["files"]}))
+}
+
 /// `tazuna app-server [flags]` (2026-11-15): tazuna's core behind the desktop app (docs/DESKTOP.md). Commands come as JSON
 /// lines on stdin: {"op":"send","text":...}, {"op":"interrupt"}, {"op":"new"}, {"op":"profile","name":...}; the session
 /// goes out as JSON lines on stdout, a `view` (Session::view) after each change, at most every 50 ms. Run in the folder
@@ -1561,10 +1568,12 @@ fn app_server(a: &Args) -> Result<()> {
                             } else {
                                 agent_send(&mut live, &mut s, text, &cwd, &mut turn, &mut undo_note, true)
                             };
-                            let draft = cmd["draft"].as_str().or_else(|| model_restore.as_ref().and(cmd["text"].as_str()));
-                            if !accepted && let Some(text) = draft {
+                            if !accepted && let Some(event) = send_rejected(&cmd["draft"]).or_else(|| {
+                                let text = model_restore.as_ref().and(cmd["text"].as_str())?;
+                                Some(json!({"type": "send_rejected", "text": text}))
+                            }) {
                                 let mut o = out.lock();
-                                let _ = writeln!(o, "{}", json!({"type": "send_rejected", "text": text}));
+                                let _ = writeln!(o, "{event}");
                                 let _ = o.flush();
                             }
                         }
@@ -1736,9 +1745,9 @@ fn app_server(a: &Args) -> Result<()> {
                             } else {
                                 agent_send(&mut live, &mut s, &text, &cwd, &mut turn, &mut undo_note, false)
                             };
-                            if !accepted && let Some(text) = cmd["draft"].as_str() {
+                            if !accepted && let Some(event) = send_rejected(&cmd["draft"]) {
                                 let mut o = out.lock();
-                                let _ = writeln!(o, "{}", json!({"type": "send_rejected", "text": text}));
+                                let _ = writeln!(o, "{event}");
                                 let _ = o.flush();
                             }
                         }

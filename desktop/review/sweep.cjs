@@ -362,6 +362,17 @@ const log = [];
       await p.getByRole("alert").filter({ hasText: "starting claude (is it installed and on PATH?)" }).waitFor({ state: "visible", timeout: 4000 });
       await p.waitForFunction(() => document.querySelector('textarea[aria-label="Message"]')?.value === "  Hello\nWorld  ", null, { timeout: 4000 });
     });
+    await step(p, "d-send-rejected-attachments", async () => {
+      const box = p.getByRole("textbox", { name: "Message" });
+      const remove = p.getByRole("button", { name: /Remove Screenshot/ });
+      await box.fill("  Look at this\nplease  ");
+      await p.getByTitle("Attach files or images (or drop them on the window)").click();
+      await remove.waitFor({ state: "visible" });
+      await p.getByTitle("Send (Enter)").click();
+      await p.waitForFunction(() => document.querySelector('textarea[aria-label="Message"]')?.value === "  Look at this\nplease  ", null, { timeout: 4000 });
+      await remove.waitFor({ state: "visible", timeout: 4000 });
+      await p.getByRole("button", { name: "Remove retry-policy.md" }).waitFor({ state: "visible", timeout: 4000 });
+    });
     await step(p, "d-providers-none", async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(600); await p.getByRole("button", { name: "Providers", exact: true }).click(); });
     await ctx.close(); }
   { const [ctx, p] = await ctxOf({ extra: "window.__DRAFT_SEND_SUCCESS__ = true;" });

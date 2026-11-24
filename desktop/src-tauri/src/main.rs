@@ -142,7 +142,7 @@ fn stop_all(core: &Core) {
 
 /// `agent`: past the router, straight to the agent ("send to agent" on a message answered as a chat).
 #[tauri::command]
-fn send(core: State<Core>, tid: String, text: String, agent: bool, draft: Option<String>) -> Result<(), String> {
+fn send(core: State<Core>, tid: String, text: String, agent: bool, draft: Option<serde_json::Value>) -> Result<(), String> {
     write(&core, &tid, serde_json::json!({"op": "send", "text": text, "agent": agent, "draft": draft}))
 }
 
