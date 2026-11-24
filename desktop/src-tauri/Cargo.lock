@@ -4268,7 +4268,6 @@ dependencies = [
 name = "tazuna-desktop"
 version = "0.1.114"
 dependencies = [
- "serde",
  "serde_json",
  "tauri",
  "tauri-build",
