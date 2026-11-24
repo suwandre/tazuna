@@ -213,9 +213,8 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
     const was = live.current[activeRef.current];
     if (was && !was.creator && !was.side && !was.error && !unsaved(was.view) && (!was.view || (["Ready", "Done"].includes(was.view.activity) && !was.view.asking))) close(was.tid);
     show(tid);
-    const m = resume ? null : startModel(path);
-    core.start(tid, path ?? undefined, path ? undefined : "chat")
-      .then((dir) => { if (!path) setHome(dir); if (resume) return core.resumeIn(tid, resume); if (m) core.opIn(tid, { op: "model", ...m }).catch(() => {}); opts.then?.(tid); })
+    core.start(tid, path ?? undefined, path ? undefined : "chat", resume ? null : startModel(path))
+      .then((dir) => { if (!path) setHome(dir); if (resume) return core.resumeIn(tid, resume); opts.then?.(tid); })
       .catch((e) => patch(tid, { error: String(e) }));
     trim(tid);
   };
@@ -255,7 +254,7 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
   const cur = threads[active];
   const view = cur?.view ?? null, folder = cur?.folder ?? null, error = cur?.error ?? null;
   // the catalog for the picker and the model's name: again after each switch, so the current row is right
-  const model = view ? `${active}|${view.model}|${view.effort}` : "";
+  const model = view ? `${active}|${view.model}|${view.effort}|${!!view.model_restore}` : "";
   useEffect(() => { if (inTauri && model) core.models().catch(() => {}); }, [model]);
   // the lists again whenever a conversation's reply ends (the run log has it then, after tazuna's checks) and on another
   // folder. Until design review 12 by the view's `turns`, its model calls: the last refresh came during the reply's last
@@ -860,13 +859,19 @@ export default function App() {
       hook: ["A command of yours after each turn that changed files", () => settingsAt("After each turn")],
     } satisfies Record<string, [string, () => void]> : {}),
   } : {};
+  const modelRestore = view?.model_restore;
   const composer = (
-        <Composer key={active} readOnly={!inTauri} onSendNow={inTauri ? (text) => { hold(active, text); sendHeldNow(active, text); } : undefined} commands={windowCommands} where={fresh ? where : undefined} chat={inTauri && !folder} draftKey={draftKey} session={session} threadCost={usage.threadCost} busy={busy}
+        <Composer key={active} readOnly={!inTauri} sendBlocked={!!modelRestore} commands={windowCommands} where={fresh ? where : undefined} chat={inTauri && !folder} draftKey={draftKey} session={session} threadCost={usage.threadCost} busy={busy}
+            onSendNow={inTauri ? (text) => { hold(active, text); sendHeldNow(active, text); } : undefined}
             onSend={inTauri ? (text, draft) => {
               if (line?.paid && paidKey && !localStorage.getItem(paidKey)) { setPaidAsk({ text, draft }); return; }
               sendNow(text, draft);
             } : undefined}
-            below={claudeOut ? (
+            below={modelRestore ? (
+              <div role="status" className={`text-[11.5px] ${modelRestore.waiting ? "text-muted" : "text-warn"}`}>
+                {modelRestore.waiting ? `Restoring ${modelLabel(modelRestore.model)}…` : `Couldn’t restore ${modelLabel(modelRestore.model)}. Choose a model to send.`}
+              </div>
+            ) : claudeOut ? (
               // a conversation on Claude while it is signed out: every message would fail (design review 12)
               <div className="flex items-center text-[11.5px] text-faint">Claude isn't signed in<Sep />
                 <button onClick={() => { setKeyFocus("Claude"); settingsAt("Providers"); }} className="font-medium text-accent-ink">Settings → Providers</button></div>
