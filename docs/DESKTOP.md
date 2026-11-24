@@ -666,6 +666,9 @@ folder (not a repo) starts in ask: the user got 17 questions in one chat with no
 0.1.120 (with tazuna 0.1.219): in auto, a question a chat hands to the agent asks only before a destructive command, as
 every turn in auto does; ask, edits, review and plan keep its once-only questions.
 
+0.1.121 (with tazuna 0.1.220): a new chat starts in auto (or the mode chosen), not in ask: the home folder it runs in is
+not a repo, and the rule for a project outside git made every chat start in ask.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
