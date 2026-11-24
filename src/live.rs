@@ -1714,6 +1714,20 @@ impl Live {
                             }
                         }
                     }
+                    // claude's echo of a message as it takes it (`--replay-user-messages`). Taken while a turn runs, claude
+                    // folds it into that turn at its next tool call, and the turn ends with one result for both: its run
+                    // joins the one running. Counted as its own run, it waited for a result that never came: the run log
+                    // put later costs on the wrong message and the session never went idle (tried on Haiku 5.5, 2026-11-24).
+                    // Taken after the result, it is its own turn, and already the front run. Only counted, never shown.
+                    if e["type"] == "user" && e["isReplay"] == true {
+                        let c = &e["message"]["content"];
+                        let said = c.as_str().map(String::from).unwrap_or_else(|| c.as_array().into_iter().flatten().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n"));
+                        if let Some(i) = self.runs.iter().skip(1).position(|r| !r.prompt.trim().is_empty() && said.contains(r.prompt.trim())) {
+                            let later = self.runs.remove(i + 1).expect("found above");
+                            self.runs.front_mut().expect("a run before it").join(later);
+                        }
+                        continue;
+                    }
                     if e["type"] == "control_request" && e["request"]["subtype"] == "can_use_tool" {
                         // a tool call the own loop recovered from the model's text is asked every time: no "always"
                         // covers it (a page could hold such text, security review 2026-11-12)
@@ -1727,7 +1741,11 @@ impl Live {
                             e["request"]["handoff"] = json!(true);
                         }
                         let risky = self.risky(&e).0;
-                        if !from_text && !outside && self.handoff.is_none() && (self.allowed.contains(&always_key(&e)) || self.auto_allows(&e, risky.is_none())) {
+                        // full never asks, a turn a chat handed over included (it asked for each command there until
+                        // 0.1.216: "i thought full access means basically near if not full access to everything", the user)
+                        let full_handoff = self.handoff.is_some() && self.permission_mode == "bypassPermissions"
+                            && !matches!(e["request"]["tool_name"].as_str(), Some("AskUserQuestion" | "ExitPlanMode"));
+                        if !from_text && !outside && (full_handoff || self.handoff.is_none() && (self.allowed.contains(&always_key(&e)) || self.auto_allows(&e, risky.is_none()))) {
                             self.respond(&e, true, None);
                         } else if self.mode == "headless" {
                             // nobody is there to answer: a question (AskUserQuestion, or any tool in ask mode) would wait forever
@@ -2394,7 +2412,9 @@ impl Live {
             let ttl = self.ttl();
             cmd.env("CLAUDE_CODE_PROMPT_CACHE_TTL", ttl);
         }
-        cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])
+        // --replay-user-messages: claude says when it takes each message, so one it folds into a running turn is counted
+        // with that turn (poll)
+        cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--replay-user-messages"])
             .args(["--model", &self.model, "--effort", &self.effort])
             // claude asks tazuna (stdio) instead of a terminal it does not have; "full" never asks
             .args(["--permission-prompt-tool", "stdio", "--allow-dangerously-skip-permissions", "--permission-mode", self.turn_mode().0])
@@ -3172,6 +3192,38 @@ mod tests {
         stub::feed(live, json!({"type": "result", "subtype": "success", "is_error": false, "result": r, "total_cost_usd": 0.0}));
     }
 
+    /// A message sent while a turn runs: claude's echo before that turn's result means it folded the message into the turn
+    /// (one result for both), so its run joins the running one; an echo after the result is a turn of its own.
+    #[cfg(unix)]
+    #[test]
+    fn a_message_claude_folds_into_the_running_turn_joins_its_run() {
+        let echo = |live: &Live, text: &str| stub::feed(live, json!({"type": "user", "isReplay": true, "message": {"role": "user", "content": text}}));
+        let (mut live, dir) = stub::live("replay-join");
+        live.send_typed("run the tests").unwrap();
+        assert!(stub::started(&dir).iter().any(|a| a == "--replay-user-messages"), "claude says when it takes each message");
+        echo(&live, "run the tests");
+        live.send_typed("and the linter too").unwrap();
+        assert_eq!(live.runs.len(), 2);
+        echo(&live, "and the linter too");
+        live.poll();
+        assert_eq!((live.runs.len(), live.runs[0].prompt.as_str()), (1, "run the tests\n\nand the linter too"), "folded into the turn: one run");
+        result(&live, "Both pass.");
+        live.poll();
+        assert!(live.runs.is_empty() && live.idle(), "the turn's one result ends it");
+        // taken after the result: a turn and a run of its own
+        live.send_typed("thanks").unwrap();
+        live.send_typed("one more").unwrap();
+        result(&live, "You're welcome.");
+        echo(&live, "one more");
+        live.poll();
+        assert_eq!((live.runs.len(), live.runs[0].prompt.as_str()), (1, "one more"));
+        result(&live, "Done.");
+        live.poll();
+        assert!(live.runs.is_empty());
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// After a hand-off the chat's own conversation goes on as it was, the marker in it (no fork, no rewind: one
     /// conversation), and its next message carries the question and the agent's answer, as its own earlier answer.
     #[cfg(unix)]
@@ -3369,6 +3421,24 @@ mod tests {
         assert!(got(r#""mode":"acceptEdits""#), "auto reaches claude as acceptEdits");
         drop(live);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Full never asks, in a turn a chat handed over too; every other mode keeps the hand-off's question.
+    #[cfg(unix)]
+    #[test]
+    fn full_mode_answers_a_hand_offs_questions_itself() {
+        for (mode, asked) in [("bypassPermissions", false), ("auto", true), ("default", true)] {
+            let (mut live, dir) = stub::live(&format!("handoff-full-{mode}"));
+            live.permission_mode = mode.into();
+            live.hand_off("how full is my disk?", "how full is my disk?", HANDOFF_SENT).unwrap();
+            stub::started(&dir);
+            stub::feed(&live, json!({"type": "control_request", "request_id": "perm-1",
+                "request": {"subtype": "can_use_tool", "tool_name": "mcp__lean__bash", "input": {"command": "df -h"}}}));
+            live.poll();
+            assert_eq!(!live.pending.is_empty(), asked, "{mode}");
+            drop(live);
+            std::fs::remove_dir_all(&dir).ok();
+        }
     }
 
     /// No "always" in a handed-over turn: not offered (the question says once only), and an "always" answer allows it once.

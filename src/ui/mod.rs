@@ -377,6 +377,8 @@ pub struct Areas {
     pub list: Option<Rect>,
     pub list_links: Vec<(Rect, String)>,
     pub list_rows: Vec<(Rect, usize)>,
+    /// The open list's last scroll that still fills its panel: the caller holds the list's scroll to it.
+    pub list_top: Option<usize>,
     /// ctrl-b's task rows: a click opens one.
     pub task_rows: Vec<(Rect, usize)>,
 }
@@ -495,7 +497,9 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
         draw_login(f, p, th, band);
     }
     if let Some(p) = &v.list {
-        (areas.list, areas.list_links, areas.list_rows) = draw_list(f, p, th, v.clock_ms, band);
+        let top;
+        (areas.list, areas.list_links, areas.list_rows, top) = draw_list(f, p, th, v.clock_ms, band);
+        areas.list_top = Some(top);
     }
     areas
 }
@@ -613,7 +617,9 @@ pub fn ellipsis(t: &str, w: usize) -> String {
 }
 
 /// A ListPanel in the middle of the screen: its title, the column heads, the rows that fit (failed ones in red).
-fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme, clock_ms: f64, band: Rect) -> (Option<Rect>, Vec<(Rect, String)>, Vec<(Rect, usize)>) {
+/// The list drawn, its links and rows for clicks, and the last scroll that still fills the panel (the caller holds
+/// `scroll` to it).
+fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme, clock_ms: f64, band: Rect) -> (Option<Rect>, Vec<(Rect, String)>, Vec<(Rect, usize)>, usize) {
     // a rule straight under a heading is not drawn: a section is its bold heading, as the window's (v8.html)
     let ruled = |i: usize| p.rows[i].1 == Tone::Rule && i > 0 && p.rows[i - 1].1 == Tone::Head;
     let drawn = (0..p.rows.len()).filter(|&i| !ruled(i)).count();
@@ -631,10 +637,32 @@ fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme, clock_ms: f64, band: Rect
         let t: String = t.chars().skip(p.hscroll).collect();
         if p.hscroll == 0 && t.width() > width { format!("{}…", t.chars().take(width.saturating_sub(1)).collect::<String>()) } else { t }
     };
+    // a note (dim prose) longer than the panel wraps, its later lines under its text: "55%  Review sessions…" ended
+    // "8 or m…" at 80 columns (the user, 2026-11-24). Meters, links and tables keep their columns and scroll sideways.
+    let wraps = |i: usize| p.hscroll == 0 && p.rows[i].1 == Tone::Dim && p.rows[i].0.width() > width;
+    let wrapped = |r: &str| -> Vec<String> {
+        let indent = r.len() - r.trim_start().len();
+        let body = r.trim_start();
+        // "55%  " leads, the text's own column holds the later lines
+        let (lead, rest) = body.split_at(body.find("  ").filter(|&k| k <= 5).map_or(0, |k| k + 2));
+        let hang = indent + lead.len();
+        wrap_words(rest, width.saturating_sub(hang).max(10)).into_iter().enumerate()
+            .map(|(n, l)| if n == 0 { format!("{}{lead}{l}", " ".repeat(indent)) } else { format!("{}{l}", " ".repeat(hang)) }).collect()
+    };
+    let detail_lines = |i: usize| p.open.contains(&i).then(|| p.details.get(i).cloned().flatten()).flatten()
+        .map_or(0, |d| d.chars().count().div_ceil(width.saturating_sub(p.link_from.min(width / 3)).max(10)));
+    let height = |i: usize| if ruled(i) { 0 } else { (if wraps(i) { wrapped(&p.rows[i].0).len() } else { 1 }) + detail_lines(i) };
+    let room = inner.height as usize;
+    // the last top that still fills the panel: scrolling went on to the last row alone, a page of empty space under it
+    // (/usage, the user, 2026-11-24)
+    let (mut top_max, mut used) = (p.rows.len(), usize::from(!p.head.is_empty()));
+    while top_max > 0 && used + height(top_max - 1) <= room {
+        top_max -= 1;
+        used += height(top_max);
+    }
     let mut lines = if p.head.is_empty() { vec![] } else { vec![Line::from(Span::styled(cut(&p.head), st(th.faint)))] };
     let (mut links, mut rows) = (vec![], vec![]);
-    let room = inner.height as usize;
-    for (i, (r, tone)) in p.rows.iter().enumerate().skip(p.scroll) {
+    for (i, (r, tone)) in p.rows.iter().enumerate().skip(p.scroll.min(top_max)) {
         if lines.len() >= room {
             break;
         }
@@ -655,6 +683,14 @@ fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme, clock_ms: f64, band: Rect
         let shown = if p.pending && i == 0 { cut(&format!("{} {r}", spinner(clock_ms))) } else { cut(r) };
         rows.push((Rect::new(inner.x, y, inner.width, 1), i));
         match p.links.get(i).cloned().flatten() {
+            None if wraps(i) => {
+                for l in wrapped(r) {
+                    if lines.len() >= room {
+                        break;
+                    }
+                    lines.push(Line::from(Span::styled(l, color)));
+                }
+            }
             Some(url) => {
                 // the label after the fixed columns is the link: underlined, opened on a click
                 let at = p.link_from.saturating_sub(p.hscroll).min(shown.chars().count());
@@ -691,7 +727,7 @@ fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme, clock_ms: f64, band: Rect
         }
     }
     f.render_widget(Paragraph::new(lines), inner);
-    (Some(area), links, rows)
+    (Some(area), links, rows, top_max)
 }
 
 /// The files the agent's edit tools wrote that `skip` (git's list) leaves out, each with a diff built from the calls
@@ -4031,6 +4067,28 @@ mod tests {
         assert_eq!((idx(DARK.accent), to_256(0, 0, 0), to_256(255, 255, 255), to_256(255, 0, 0)), (105, 16, 231, 196));
     }
 
+    /// A list scrolls no further than its last page (/usage went on to a blank page), and a long note wraps under its own
+    /// text instead of ending in "…".
+    #[test]
+    fn a_list_stops_at_its_last_page_and_wraps_a_long_note() {
+        let mut rows: Vec<(String, Tone)> = (1..=40).map(|i| (format!("  row {i}"), Tone::Plain)).collect();
+        rows.push(("    55%  Review sessions active over many hours, whole sessions with requests in 8 or more distinct hours of the day".into(), Tone::Dim));
+        let n = rows.len();
+        let p = ListPanel { title: "usage".into(), head: String::new(), rows, scroll: 1000, links: vec![None; n], link_from: 22, hscroll: 0, details: vec![None; n], open: Default::default(), pending: false };
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        let mut top = 0;
+        term.draw(|f| { top = draw_list(f, &p, Design::Cockpit.theme(), 0.0, f.area()).3; }).unwrap();
+        let screen: Vec<String> = (0..24).map(|y| (0..80).map(|x| term.backend().buffer()[(x, y)].symbol().to_string()).collect()).collect();
+        let shown = screen.join("\n");
+        assert!(top > 0 && top < 40, "a last page, not the last row: {top}");
+        assert!(shown.contains("row 40") && shown.contains("8 or more distinct hours") && !shown.contains('…'), "{shown}");
+        let filled = screen.iter().filter(|l| l.contains("row ") || l.contains("Review") || l.contains("hours")).count();
+        assert!(filled >= 15, "the panel is full to its end, not one row and blank space: {shown}");
+        let wrapped = screen.iter().find(|l| l.contains("8 or more")).unwrap();
+        let first = screen.iter().find(|l| l.contains("55%  Review")).unwrap();
+        assert_eq!(wrapped.find(|c: char| c.is_alphanumeric()), first.find("Review"), "the later line under the text, not under 55%");
+    }
+
     #[test]
     fn fetch_rows_show_a_title_link_and_scroll_sideways() {
         let tool = |result: &str, url: &str| Tool { id: "f".into(), name: "fetch".into(), input: serde_json::json!({"url": url}), result: Some(result.into()), error: false, started_ms: 0.0, done_ms: Some(1.0), sub: None };
@@ -4039,9 +4097,9 @@ mod tests {
         let mut p = ListPanel { title: "fetch".into(), head: "  #   took     what".into(), rows: vec![(format!("{:>3}  {:>7}  {}  {}", 1, "0.5s", "✓", "Crypto prices today"), Tone::Plain)], scroll: 0,
             links: vec![Some("https://x.com/a".into())], link_from: 17, hscroll: 0, details: vec![None], open: Default::default(), pending: false };
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
-        let mut out = (None, vec![], vec![]);
+        let mut out = (None, vec![], vec![], 0);
         term.draw(|f| { out = draw_list(f, &p, Design::Cockpit.theme(), 0.0, f.area()); }).unwrap();
-        let (area, links, _) = out.clone();
+        let (area, links, _, _) = out.clone();
         assert!(area.is_some() && links.len() == 1 && links[0].1 == "https://x.com/a");
         let r = links[0].0;
         assert_eq!(term.backend().buffer()[(r.x, r.y)].symbol(), "C", "the link starts at the title");

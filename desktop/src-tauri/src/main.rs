@@ -575,19 +575,10 @@ async fn image_data(path: String, cwd: Option<String>) -> Result<String, String>
 fn paste_bytes(body: &tauri::ipc::InvokeBody) -> Result<Cow<'_, [u8]>, String> {
     use tauri::ipc::InvokeBody::{Json, Raw};
 
-    let check_size = |len| {
-        if len == 0 || len > 20 << 20 { Err("an image up to 20 MB".to_string()) } else { Ok(()) }
-    };
     match body {
-        Raw(bytes) => {
-            check_size(bytes.len())?;
-            Ok(Cow::Borrowed(bytes))
-        }
-        Json(serde_json::Value::Array(bytes)) => {
-            check_size(bytes.len())?;
-            bytes.iter().map(|byte| byte.as_u64().and_then(|n| u8::try_from(n).ok())
-                .ok_or_else(|| "no image in the paste".into())).collect::<Result<_, _>>().map(Cow::Owned)
-        }
+        Raw(bytes) => Ok(Cow::Borrowed(bytes)),
+        Json(serde_json::Value::Array(bytes)) => bytes.iter().map(|byte| byte.as_u64().and_then(|n| u8::try_from(n).ok())
+            .ok_or_else(|| "no image in the paste".into())).collect::<Result<_, _>>().map(Cow::Owned),
         Json(_) => Err("no image in the paste".into()),
     }
 }
@@ -602,6 +593,30 @@ fn paste_image(request: tauri::ipc::Request<'_>) -> Result<String, String> {
         Some(e @ ("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "avif")) => e.to_string(),
         _ => "png".into(),
     };
+    save_pasted_image(&bytes, &ext)
+}
+
+/// WebKitGTK can deliver an empty paste event even when the system clipboard holds an image.
+#[tauri::command]
+async fn paste_clipboard_image(_app: AppHandle) -> Result<Option<String>, String> {
+    #[cfg(target_os = "linux")]
+    {
+        let (tx, mut rx) = tauri::async_runtime::channel(1);
+        _app.run_on_main_thread(move || {
+            gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD).request_image(move |_, image| {
+                let bytes = image.map(|p| p.save_to_bufferv("png", &[]).map_err(|e| e.to_string())).transpose();
+                let _ = tx.try_send(bytes);
+            });
+        }).map_err(|e| e.to_string())?;
+        let bytes = rx.recv().await.ok_or("could not read the clipboard")??;
+        bytes.map(|b| save_pasted_image(&b, "png")).transpose()
+    }
+    #[cfg(not(target_os = "linux"))]
+    Ok(None)
+}
+
+fn save_pasted_image(bytes: &[u8], ext: &str) -> Result<String, String> {
+    if bytes.is_empty() || bytes.len() > 20 << 20 { return Err("an image up to 20 MB".into()); }
     let dir = std::env::temp_dir().join("tazuna-desktop-images");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     #[cfg(unix)]
@@ -650,7 +665,7 @@ fn op(core: State<Core>, tid: String, msg: serde_json::Value) -> Result<(), Stri
 }
 
 fn is_window_op(msg: &serde_json::Value) -> bool {
-    msg.get("type").is_none() && matches!(msg["op"].as_str(), Some("models" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route" | "full" | "rename" | "hide" | "rewind" | "mcp" | "mcp_on" | "mcp_add" | "mcp_remove" | "mcp_check" | "hook" | "setup" | "gallery" | "gallery_get" | "accounts" | "review" | "piece" | "allow_root" | "fork" | "usage" | "spend_cap" | "worktree_new" | "worktrees" | "worktree_remove" | "pr" | "create" | "create_enable" | "create_discard" | "retry" | "complete"))
+    msg.get("type").is_none() && matches!(msg["op"].as_str(), Some("models" | "refresh_model_list" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route" | "full" | "rename" | "hide" | "rewind" | "mcp" | "mcp_on" | "mcp_add" | "mcp_remove" | "mcp_check" | "hook" | "setup" | "gallery" | "gallery_get" | "accounts" | "review" | "piece" | "allow_root" | "fork" | "usage" | "spend_cap" | "worktree_new" | "worktrees" | "worktree_remove" | "pr" | "create" | "create_enable" | "create_discard" | "retry" | "complete" | "agent" | "task_stop"))
 }
 
 #[tauri::command]
@@ -743,7 +758,7 @@ fn main() {
             Ok(())
         })
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, image_data, paste_image, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, plugins_export, plugins_import, plugins_import_file, hotkey, update_check, update_install, interrupt, new_chat, set_profile])
+        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, image_data, paste_image, paste_clipboard_image, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, plugins_export, plugins_import, plugins_import_file, hotkey, update_check, update_install, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
                 stop_all(&w.state::<Core>());
@@ -759,6 +774,26 @@ mod tests {
     fn the_window_can_request_completions() {
         assert!(super::is_window_op(&serde_json::json!({"op": "complete"})));
         assert!(!super::is_window_op(&serde_json::json!({"type": "complete", "op": "complete"})));
+    }
+
+    /// Every request the window's code sends (lib/tazuna.ts) passes: a missing one was refused without a word, and its
+    /// feature looked stuck (the `@` menu until 0.1.112; a subagent's Watch, "Reading what it has done so far…" for good,
+    /// and its Stop until 0.1.117).
+    #[test]
+    fn every_op_the_window_sends_passes() {
+        let ts = include_str!("../../src/lib/tazuna.ts");
+        let ops: Vec<&str> = ts.match_indices("msg: { op: \"").map(|(i, m)| &ts[i + m.len()..]).map(|r| &r[..r.find('"').unwrap()]).collect();
+        assert!(ops.len() > 20, "{ops:?}");
+        for op in ops {
+            assert!(super::is_window_op(&serde_json::json!({"op": op})), "the window sends {op:?} and the bridge refuses it");
+        }
+    }
+
+    #[test]
+    fn the_window_can_retry_a_model_list_but_cannot_signal_completion() {
+        assert!(super::is_window_op(&serde_json::json!({"op": "refresh_model_list", "provider": "Mortera"})));
+        assert!(!super::is_window_op(&serde_json::json!({"type": "tazuna_list_finished", "op": "refresh_model_list"})));
+        assert!(!super::is_window_op(&serde_json::json!({"op": "tazuna_list_finished"})));
     }
 
     #[test]
@@ -782,7 +817,8 @@ mod tests {
             assert_eq!(super::paste_bytes(&body).unwrap().as_ref(), &png_signature);
         }
         assert_eq!(super::paste_bytes(&Json(serde_json::json!([256]))).unwrap_err(), "no image in the paste");
-        assert_eq!(super::paste_bytes(&Json(serde_json::json!([]))).unwrap_err(), "an image up to 20 MB");
+        let empty = Json(serde_json::json!([]));
+        assert_eq!(super::save_pasted_image(&super::paste_bytes(&empty).unwrap(), "png").unwrap_err(), "an image up to 20 MB");
     }
 
     #[test]

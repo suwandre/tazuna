@@ -48,18 +48,22 @@ pub enum Baseline {
 
 impl Baseline {
     pub fn get(&mut self) -> Option<String> {
-        if let Baseline::Pending(_) = self {
-            let Baseline::Pending(h) = std::mem::replace(self, Baseline::Done(None)) else { unreachable!() };
-            *self = Baseline::Done(h.join().ok());
-        }
-        match self {
-            Baseline::Done(v) => v.clone(),
-            Baseline::Pending(_) => None,
-        }
+        let output = match std::mem::replace(self, Baseline::Done(None)) {
+            Baseline::Pending(h) => h.join().ok(),
+            Baseline::Done(v) => v,
+        };
+        *self = Baseline::Done(output.clone());
+        output
     }
 }
 
 impl Run {
+    /// A message claude took into this run's turn (live.rs: its echo came before this run's result): the run log keeps
+    /// both messages under the one run that turn's result ends.
+    pub fn join(&mut self, later: Run) {
+        self.prompt = format!("{}\n\n{}", self.prompt, later.prompt);
+    }
+
     pub fn new(prompt: &str, at_ms: f64, cwd: &Path) -> Self {
         Run {
             started_ms: at_ms,
@@ -294,6 +298,13 @@ pub fn print_recent(base: &Path, n: usize) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn baseline_keeps_the_joined_output_for_later_checks() {
+        let mut baseline = Baseline::Pending(std::thread::spawn(|| "known error".to_string()));
+        assert_eq!(baseline.get().as_deref(), Some("known error"));
+        assert_eq!(baseline.get().as_deref(), Some("known error"));
+    }
 
     #[test]
     fn logs_a_recorded_run() {

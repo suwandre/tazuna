@@ -1,7 +1,7 @@
 import { ArrowUp, Check, ChevronDown, FileText, FolderOpen, Gauge, MessageCircle, Paperclip, Plus, Shield, Square, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { quotePath, type ModelChoice, type Models } from "../lib/tazuna";
-import { modelLabel, type Session } from "../lib/types";
+import { IMAGE_FILE, keysOf, modelLabel, type Session } from "../lib/types";
 import { Slot } from "../lib/slots";
 import { EffortMenu, Menu, ModelPicker, usePlace } from "./ModelPicker";
 import { Sep } from "./Sep";
@@ -18,6 +18,7 @@ export type ComposerBag = {
   /** a plain chat (no project): the model alone, so no permission pill (design review 10) */
   chat?: boolean;
   session: Session; busy?: boolean; models?: Models | null; onModels?: () => void; onPickModel?: (c: ModelChoice) => void;
+  onRefreshModelList?: (provider: string) => void;
   /** a model whose provider has no key: Settings on that provider */
   onAddKey?: (provider: string) => void;
   onPickEffort?: (e: string) => void; onMode?: (mode: string) => void; onPickFiles?: () => Promise<string[]>; attach: (paths: string[]) => void;
@@ -29,15 +30,19 @@ type Props = {
   /** An editable preview draft, never submitted or cleared by Send/Enter. */
   readOnly?: boolean;
   session: Session; threadCost: number; busy?: boolean; onSend?: (text: string, draft: string) => void; onStop?: () => void;
+  /** ⌘↩ during a reply: stop it and send this message at once, instead of after it */
+  onSendNow?: (text: string, draft: string) => void;
   /** a new conversation: where it runs (a chat or a project), changed from the box */
   where?: Where;
   /** a plain chat (no project) */
   chat?: boolean;
   /** the model catalog (null until asked for); onModels asks for it when the picker opens */
   models?: Models | null; onModels?: () => void; onPickModel?: (c: ModelChoice) => void; onPickEffort?: (e: string) => void;
+  onRefreshModelList?: (provider: string) => void;
   onAddKey?: (provider: string) => void; onMode?: (mode: string) => void;
   /** a pasted image saved as a file: its path (Cmd-V of a screenshot or of an image copied in Finder) */
   onPasteImage?: (f: File) => Promise<string>;
+  onPasteClipboardImage?: () => Promise<string | null>;
   /** files to attach (the native picker); dropped files come through onDrop */
   onPickFiles?: () => Promise<string[]>;
   onDrop?: (cb: (paths: string[]) => void) => Promise<() => void>;
@@ -65,7 +70,7 @@ export const DRAFT = "tazuna.draft.";
 export type Completions = { commands: [string, string][]; files: string[] };
 // the window's own commands, there before (and without) the core's list
 const OWN: [string, string][] = [["/create", "Make a command, skill, tool, panel or plugin"], ["/agent", "Send to the coding agent, past the chat router"]];
-const IMAGE = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i;
+const IMAGE = IMAGE_FILE;
 type Pick = { text: string; label: string; about: string };
 
 /** What the word at the caret completes to: commands when the box holds only `/…`, files for an `@…` word anywhere. As the
@@ -100,7 +105,7 @@ export const MODES: [string, string][] = [
 // one line always (a narrow window wrapped "Opus 5.5" onto two), and readable while a reply runs (faded, they read as broken)
 const pill = "inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink disabled:cursor-default disabled:text-muted";
 
-export function Composer({ session, where, chat, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {}, readOnly = false }: Props) {
+export function Composer({ session, where, chat, busy, onSend, onSendNow, onStop, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onPasteClipboardImage, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {}, readOnly = false }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   // attachments are chips over the text, with a thumbnail for an image (until desktop 0.1.87 their paths were typed into
   // the message, and a screenshot was a line of path)
@@ -172,14 +177,14 @@ export function Composer({ session, where, chat, busy, onSend, onStop, models, o
     return () => { off.then((f) => f()); };
   }, [onDrop]);
   const nextMode = () => { const i = MODES.findIndex(([m]) => m === session.mode); onMode?.(MODES[(i + 1) % MODES.length][0]); };
-  const bag: ComposerBag = { readOnly, where, chat, session, busy, models, onModels, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, attach: (p) => { attach(p); }, picker };
+  const bag: ComposerBag = { readOnly, where, chat, session, busy, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, attach: (p) => { attach(p); }, picker };
   // a message sent during a reply waits behind it (the core queues it, as the terminal does)
   // attachments go in the message as paths after its text (quoted when they hold a space): the core sends images as images
-  const send = () => {
+  const send = (now = false) => {
     if (readOnly || (!files.length && run(text.trim()))) return;
     const paths = files.map(quotePath).join(" "), t = [text.trim(), paths].filter(Boolean).join(" ");
     if (!t) return;
-    onSend?.(t, [text, paths].filter(Boolean).join(" ")); setText(""); setFiles([]);
+    (now && onSendNow ? onSendNow : onSend)?.(t, [text, paths].filter(Boolean).join(" ")); setText(""); setFiles([]);
   };
   const ready = !readOnly && (!!text.trim() || files.length > 0);
   return (
@@ -198,10 +203,15 @@ export function Composer({ session, where, chat, busy, onSend, onStop, models, o
           // Cmd-V of an image: an attachment, as a picked or dropped one (until desktop 0.1.114 the paste went nowhere).
           // A file copied in Finder brings its name as text too: the image alone goes in
           onPaste={(e) => {
-            const images = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
-            if (readOnly || !onPasteImage || !images.length) return;
-            e.preventDefault();
-            Promise.all(images.map(onPasteImage)).then(attach).catch((err) => console.error(`paste: ${err}`));
+            if (readOnly || !onPasteImage) return;
+            const { files, types } = e.clipboardData;
+            const images = [...files].filter((f) => f.type.startsWith("image/"));
+            if (images.length) {
+              e.preventDefault();
+              Promise.all(images.map(onPasteImage)).then(attach).catch((err) => console.error(`paste: ${err}`));
+            } else if (!files.length && !types.length) {
+              onPasteClipboardImage?.().then((path) => { if (path) attach([path]); }).catch((err) => console.error(`paste: ${err}`));
+            }
           }}
           onKeyDown={(e) => {
             if (readOnly) return;
@@ -211,15 +221,15 @@ export function Composer({ session, where, chat, busy, onSend, onStop, models, o
               if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) { e.preventDefault(); take(menu.items[sel] ?? menu.items[0]); return; }
               if (e.key === "Escape") { e.preventDefault(); setShut(true); return; }
             }
-            if (e.key === "Tab" && e.shiftKey && onMode) { e.preventDefault(); nextMode(); } if (e.key === "Escape" && busy) onStop?.(); if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
-          placeholder={readOnly ? "Try writing here. Nothing will be sent." : busy ? "Type your next message: it goes after this reply" : "Ask anything, or describe a change…  / for commands, @ for files"} className="max-h-[40vh] w-full resize-none overflow-y-auto bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
+            if (e.key === "Tab" && e.shiftKey && onMode) { e.preventDefault(); nextMode(); } if (e.key === "Escape" && busy) onStop?.(); if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(busy && (e.metaKey || e.ctrlKey)); } }}
+          placeholder={readOnly ? "Try writing here. Nothing will be sent." : busy ? `Type your next message: it goes after this reply · ${keysOf("⌘↵")} sends it now` : "Ask anything, or describe a change…  / for commands, @ for files"} className="max-h-[40vh] w-full resize-none overflow-y-auto bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
         <div className="flex items-center gap-1.5">
           <Slot name="composer.pills" props={{ composer: bag }} />
           <span className="flex-1" />
           {busy && !ready
             ? <button onClick={onStop} title="Stop (Esc)" className="grid size-[30px] flex-none place-items-center rounded-full bg-ink text-canvas"><Square size={12} strokeWidth={2} fill="currentColor" /></button>
             // solid only when there is something to send (a faded accent read as broken)
-            : <button onClick={send} aria-label="Send" title={readOnly ? "Read-only demo — no agent connected" : busy ? "Send after this reply (Enter)" : "Send (Enter)"} disabled={!ready}
+            : <button onClick={() => send()} aria-label="Send" title={readOnly ? "Read-only demo — no agent connected" : busy ? `Send after this reply (Enter; ${keysOf("⌘↵")} sends now)` : "Send (Enter)"} disabled={!ready}
                 className={`grid size-[30px] flex-none place-items-center rounded-full ${ready ? "bg-accent text-on-accent" : "border border-line bg-field text-faint"}`}><ArrowUp size={16} strokeWidth={1.75} /></button>}
         </div>
       </div>
@@ -351,6 +361,7 @@ export function ModelPill({ composer: c }: { composer: ComposerBag }) {
       </button>
       {open && <ModelPicker models={c.models ?? null} onClose={() => setOpen(false)} onPick={(m) => { setOpen(false); c.onPickModel?.(m); }}
         onKey={c.onAddKey && ((p) => { setOpen(false); c.onAddKey!(p); })}
+        onRefreshModelList={c.onRefreshModelList}
         efforts={current?.efforts ?? []} effort={c.session.effort} onEffort={c.onPickEffort} />}
     </span>
   );

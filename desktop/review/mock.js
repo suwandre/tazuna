@@ -269,6 +269,7 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
     if (cmd === "pick_files") return ["/Users/x/Desktop/Screenshot 2026-11-19 at 21.04.png", "/Users/x/api-gateway/docs/retry-policy.md"];
     // a pasted image: its bytes come raw (args is the Uint8Array), saved as a file the message names
     if (cmd === "paste_image") return args instanceof Uint8Array && args.length ? "/tmp/tazuna-desktop-images/paste-1.png" : Promise.reject("no image in the paste");
+    if (cmd === "paste_clipboard_image") return "/tmp/tazuna-desktop-images/paste-clipboard.png";
     if (cmd === "op" && args.msg.op === "resume" && args.msg.id === "p3") { m(p3); return null; }
     if (cmd === "op" && args.msg.op === "agent") { m({ type: "agent", call: args.msg.call, view: { ...p3, session_id: null, tasks: [], activity: "Tool", blocks: [
       { kind: "prompt", text: "Review tools/ci-chart.mjs: does it read the timings correctly, and is the SVG it writes valid? Report what you find; change nothing." },
@@ -424,6 +425,12 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
     if (cmd === "send" && window.__DRAFT_SEND_SUCCESS__ && last[tid]) {
       const v = last[tid];
       m({ ...v, from: 0, activity: "Thinking", blocks: [...v.blocks, { kind: "prompt", text: args.text }] });
+      return null;
+    }
+    // Stop (and Send now, which stops first): the reply ends
+    if (cmd === "interrupt" && window.__DRAFT_SEND_SUCCESS__ && last[tid]) {
+      const v = last[tid];
+      m({ ...v, from: 0, activity: "Done", blocks: [...v.blocks, { kind: "done", ok: false, secs: 1, turns: 0, cost: 0, usage: u(0, 0, 0), stopped: true }] });
       return null;
     }
     if (cmd === "op" && msg.op === "resume" && views[msg.id]) { setTimeout(() => T.view(tid, views[msg.id]), 10); return null; }

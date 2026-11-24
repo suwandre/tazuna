@@ -378,6 +378,19 @@ const log = [];
       await p.getByText("Second message", { exact: true }).waitFor({ state: "visible", timeout: 4000 });
       if (await box.inputValue()) throw new Error("a queued send left its draft in the box");
     });
+    // Send now on a queued message: the reply stops and that message goes at once, no longer queued
+    await step(p, "d-send-now", async () => {
+      await p.getByRole("button", { name: "Send now" }).first().click();
+      await p.locator("[data-msg]").getByText("Second message", { exact: true }).waitFor({ state: "visible", timeout: 4000 });
+      if (await p.getByText("Queued: goes after this reply").count()) throw new Error("the message sent now still reads as queued");
+    });
+    // ⌘↩ (Ctrl+Enter here) during a reply: the same, from the box
+    await step(p, "d-send-now-key", async () => {
+      await box.fill("Third message");
+      await box.press("Control+Enter");
+      await p.locator("[data-msg]").getByText("Third message", { exact: true }).waitFor({ state: "visible", timeout: 4000 });
+      if (await p.getByText("Queued: goes after this reply").count()) throw new Error("Ctrl+Enter left the message queued");
+    });
     await ctx.close(); }
   // Cmd-V of an image (a screenshot, or an image file copied in Finder, which brings its name as text too): an attachment
   { const [ctx, p] = await ctxOf({});
@@ -393,6 +406,32 @@ const log = [];
       });
       await p.getByText("paste-1.png").waitFor({ state: "visible", timeout: 4000 });
       if (await box.inputValue() !== "what is wrong here?") throw new Error("the pasted file's name went into the draft");
+    });
+    await step(p, "d-paste-linux-clipboard-image", async () => {
+      await box.evaluate((el) => el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: new DataTransfer(), bubbles: true, cancelable: true })));
+      await p.getByText("paste-clipboard.png").waitFor({ state: "visible", timeout: 4000 });
+      if (await box.inputValue() !== "what is wrong here?") throw new Error("the fallback changed the draft");
+    });
+    await ctx.close(); }
+  // a sent message's attachments: a thumbnail under it (not its path in the text), whole over the window on a click
+  { const [ctx, p] = await ctxOf({ extra: "window.__DRAFT_SEND_SUCCESS__ = true;" });
+    const box = p.getByRole("textbox", { name: "Message" });
+    await step(p, "d-message-attachment", async () => {
+      await box.fill("is this intended?");
+      await p.evaluate(() => {
+        const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="), (c) => c.charCodeAt(0));
+        const dt = new DataTransfer(); dt.items.add(new File([png], "image.png", { type: "image/png" }));
+        document.querySelector('textarea[aria-label="Message"]').dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      });
+      await p.getByText("paste-1.png").waitFor({ state: "visible", timeout: 4000 });
+      await p.getByTitle("Send (Enter)").click();
+      await p.getByRole("button", { name: "paste-1.png: show it whole" }).click();
+      await p.getByRole("dialog", { name: "paste-1.png" }).waitFor({ state: "visible", timeout: 4000 });
+      if (await p.locator("[data-msg]").getByText("/tmp/tazuna-desktop-images/paste-1.png").count()) throw new Error("the path still shows in the message");
+    });
+    await step(p, "d-message-attachment-closed", async () => {
+      await p.keyboard.press("Escape");
+      await p.getByRole("dialog", { name: "paste-1.png" }).waitFor({ state: "detached", timeout: 4000 });
     });
     await ctx.close(); }
   // the model picker's search takes the typing as it opens (0.1.74 to 0.1.76 it did not)

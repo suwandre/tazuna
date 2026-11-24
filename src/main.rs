@@ -135,7 +135,7 @@ use replay::Replay;
 use serde_json::json;
 use session::Session;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -1288,11 +1288,15 @@ fn login_save(l: &'static models::Login, typed: &str, tx: &std::sync::mpsc::Send
         if matches!(l.host(), "mortera.cloud" | "api.cheaperinference.com" | "localhost") || l.source == models::Source::List {
             // their models come from their lists, which need the key: this provider's, in the background (every keyed list
             // was fetched on the UI thread, up to 15 s each, review 11); the picker reads it when it is there
-            let tx = tx.clone();
-            std::thread::spawn(move || {
-                if l.host() == "localhost" { models::refresh_omniroute() } else { models::refresh_lists(l.vars) }
-                let _ = tx.send(json!({"type": "tazuna_lists"}));
-            });
+            if window && l.host() != "localhost" {
+                let _ = tx.send(json!({"type": "tazuna_fetch_list", "provider": l.name}));
+            } else {
+                let tx = tx.clone();
+                std::thread::spawn(move || {
+                    if l.host() == "localhost" { models::refresh_omniroute() } else { models::refresh_lists(l.vars) }
+                    let _ = tx.send(json!({"type": "tazuna_lists"}));
+                });
+            }
         }
     } else if l.vars.iter().all(|v| models::key(v).is_none()) && unsure.is_none() {
         bail!("no key typed");
@@ -1419,26 +1423,17 @@ fn app_server(a: &Args) -> Result<()> {
     let dir = labels::dir().ok();
     let stale = dir.as_ref().and_then(|d| std::fs::metadata(d.join("openrouter-models.json")).and_then(|m| m.modified()).ok())
         .is_none_or(|t| t.elapsed().is_ok_and(|e| e.as_secs() > 3600));
-    let missing = if stale { vec![] } else { dir.as_deref().map(|d| models::missing_keyed_lists(d, |var| models::key(var).is_some())).unwrap_or_default() };
-    if stale || !missing.is_empty() {
-        let tx = tx.clone();
-        std::thread::spawn(move || {
-            if stale {
-                models::refresh_mortera();
-                models::refresh_openrouter();
-            } else {
-                models::refresh_lists(&missing);
-            }
-            let _ = tx.send(json!({"type": "tazuna_lists"}));
-        });
-    }
+    let mut pending_lists = HashSet::new();
+    let lists = models::configured_keyed_lists(dir.as_deref(), |var| models::key(var).is_some()).into_iter()
+        .filter_map(|(l, cached)| (stale || !cached).then_some(l));
+    app_refresh_lists(lists, stale, &mut pending_lists, &tx);
     // the model servers on this machine, at each start (a refused port answers at once); claude's login, for the pickers
     std::thread::spawn(models::refresh_local);
     accounts::recheck_claude_login(None, || {});
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 50] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo", "retry",
+        const OPS: [&str; 51] = ["send", "interrupt", "new", "profile", "models", "refresh_model_list", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo", "retry",
             "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork", "usage", "spend_cap",
             "worktree_new", "worktrees", "worktree_remove", "pr", "create", "create_enable", "create_discard", "mcp", "mcp_on", "mcp_add", "mcp_remove", "mcp_check", "hook", "setup", "gallery", "gallery_get", "accounts", "complete", "agent", "task_stop"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
@@ -1540,10 +1535,10 @@ fn app_server(a: &Args) -> Result<()> {
                                 // no sign of the code: the router's check decides, off this thread (the terminal's flow); the
                                 // message shows at once
                                 s.apply(&json!({"type": "harness_user", "text": text}), at);
-                                let (c, tx, last, msg, chat) = (RouteCtx::of(&live), tx.clone(), last_reply.clone(), text.to_string(), chat_last.is_some());
+                                let (c, tx, last, msg, chat, draft) = (RouteCtx::of(&live), tx.clone(), last_reply.clone(), text.to_string(), chat_last.is_some(), cmd["draft"].clone());
                                 std::thread::spawn(move || {
                                     let general = route_general(&c, &last, &msg, chat);
-                                    let _ = tx.send(json!({"op": "routed", "general": general, "text": msg}));
+                                    let _ = tx.send(json!({"op": "routed", "general": general, "text": msg, "draft": draft}));
                                 });
                                 true
                             } else if forced && live.profile == route::Profile::Chat {
@@ -1720,14 +1715,22 @@ fn app_server(a: &Args) -> Result<()> {
                         }
                         Some("routed") => {
                             let text = cmd["text"].as_str().unwrap_or_default().to_string();
-                            if let Some(why) = untrusted_in_use(&live) {
+                            // the agent can still refuse it here (claude not found): the draft goes back as from "send"
+                            let accepted = if let Some(why) = untrusted_in_use(&live) {
                                 s.apply(&not_started(why), at); // on screen since it was sent
+                                false
                             } else if cmd["general"] == true && live.idle() {
                                 // shown since the send: recorded now
                                 live.note(json!({"type": "harness_user", "text": text}));
                                 chat_answer(&mut live, &mut s, text, "answered as a chat: not about this project", chat_last.clone(), &tx);
+                                true
                             } else {
-                                agent_send(&mut live, &mut s, &text, &cwd, &mut turn, &mut undo_note, false);
+                                agent_send(&mut live, &mut s, &text, &cwd, &mut turn, &mut undo_note, false)
+                            };
+                            if !accepted && let Some(text) = cmd["draft"].as_str() {
+                                let mut o = out.lock();
+                                let _ = writeln!(o, "{}", json!({"type": "send_rejected", "text": text}));
+                                let _ = o.flush();
                             }
                         }
                         // SubRouter's balance, read on a thread
@@ -1823,8 +1826,10 @@ fn app_server(a: &Args) -> Result<()> {
                             // by the call that started it (the step in the transcript): its task where claude made one, else
                             // the call's own messages (a subagent that ran inside the reply has no task)
                             let call = cmd["call"].as_str().unwrap_or_default();
+                            // answered at once, before the subagent has said anything (its task, what it was asked): the
+                            // panel waited on "Reading what it has done so far…" until its first event
                             let task = live.bg.iter().find(|t| t.calls.iter().any(|c| c.0 == call)).cloned().or_else(|| s.blocks.iter().find_map(|b| match b {
-                                session::Block::Tool(t) if t.id == call && s.sub_events.contains_key(call) => Some(live::BgTask {
+                                session::Block::Tool(t) if t.id == call && matches!(t.name.as_str(), "Agent" | "Task") => Some(live::BgTask {
                                     id: String::new(), kind: "local_agent".into(), description: t.input["description"].as_str().unwrap_or_default().into(),
                                     status: if t.error { "failed" } else if t.done_ms.is_some() { "completed" } else { "running" }.into(), started: Instant::now(),
                                     ended: t.done_ms.map(|_| Instant::now()), output: String::new(), agent: t.input["subagent_type"].as_str().unwrap_or_default().into(),
@@ -1845,8 +1850,22 @@ fn app_server(a: &Args) -> Result<()> {
                         Some("tazuna_chat_event") => chat_event(&mut live, &mut s, &cmd, &mut chat_last, &mut last_reply),
                         // the model picker: the catalog as the terminal's /model shows it, answered as a `models` line
                         // a provider's list arrived after its key was saved (login_save): the picker's rows again
-                        Some("models" | "tazuna_lists") => {
-                            models::refresh_omniroute(); // on this machine: its list as it is now
+                        Some("models" | "tazuna_lists" | "tazuna_list_finished" | "refresh_model_list" | "tazuna_fetch_list") => {
+                            let dir = labels::dir()?;
+                            let lists = models::configured_keyed_lists(Some(&dir), |var| models::key(var).is_some());
+                            match cmd["op"].as_str().or(cmd["type"].as_str()) {
+                                Some("refresh_model_list" | "tazuna_fetch_list") => {
+                                    let only_missing = cmd["op"] == "refresh_model_list";
+                                    let providers = lists.iter().filter(|(l, cached)| cmd["provider"] == l.name && (!only_missing || !cached)).map(|(l, _)| *l);
+                                    app_refresh_lists(providers, false, &mut pending_lists, &tx);
+                                }
+                                Some("tazuna_list_finished") => {
+                                    if let Some(name) = cmd["provider"].as_str() {
+                                        pending_lists.remove(name);
+                                    }
+                                }
+                                _ => models::refresh_omniroute(),
+                            }
                             // claude signed in or out since: read off this thread, the rows again when it changed
                             if cmd["op"] == "models" {
                                 let tx = tx.clone();
@@ -1854,10 +1873,13 @@ fn app_server(a: &Args) -> Result<()> {
                             }
                             let cs = app_catalog()?;
                             let (rows, cautions) = app_models(&cs, &live);
+                            let catalogs: Vec<_> = lists.into_iter().map(|(l, cached)| json!({
+                                "provider": l.name, "state": if cached { "ready" } else if pending_lists.contains(l.name) { "loading" } else { "unavailable" },
+                            })).collect();
                             // a Claude switch in a long conversation re-reads it without the cache: said before the user picks
                             let rebuild = rebuild_text(&s).filter(|_| live.provider.is_none());
                             let mut o = out.lock();
-                            let _ = writeln!(o, "{}", json!({"type": "models", "choices": rows, "rebuild": rebuild, "cautions": cautions}));
+                            let _ = writeln!(o, "{}", json!({"type": "models", "choices": rows, "rebuild": rebuild, "cautions": cautions, "catalogs": catalogs}));
                             let _ = o.flush();
                         }
                         // a model picked: {"op":"model","model":..,"url":..,"key_env":..,"effort":..} (url and key_env null for
@@ -2805,7 +2827,7 @@ fn accounts_panel(v: Option<&serde_json::Value>) -> ui::ListPanel {
         details: vec![None; rows.len()],
         rows,
         scroll: 0,
-        link_from: accounts::LINK_FROM,
+        link_from: v.map_or(22, accounts::link_from),
         hscroll: 0,
         open: Default::default(),
     }
@@ -3428,6 +3450,8 @@ fn run_live(
     let (mut tool_rows, mut tokens_area, mut bars): (Vec<(ratatui::layout::Rect, String)>, Option<ratatui::layout::Rect>, Option<(ratatui::layout::Rect, usize)>) = (vec![], None, None);
     // a list modal's place and its link rows: a click inside stays, on a link opens it, outside closes the list
     let (mut list_area, mut list_links): (Option<ratatui::layout::Rect>, Vec<(ratatui::layout::Rect, String)>) = (None, vec![]);
+    // the open list's last scroll that still fills its panel (ui draw_list): its scroll is held to it
+    let mut list_top: Option<usize> = None;
     let mut list_rows: Vec<(ratatui::layout::Rect, usize)> = vec![];
     // the transcript line on its first row (a selection holds lines), and when a drag past an edge last scrolled
     let (mut top_line, mut edge_scrolled) = (0usize, Instant::now());
@@ -3730,6 +3754,7 @@ fn run_live(
             cost_area = areas.cost;
             (tool_rows, tokens_area, bars, top_line) = (areas.tool_rows, areas.tokens, areas.bars, areas.top_line);
             (list_area, list_links, list_rows, task_rows) = (areas.list, areas.list_links, areas.list_rows, areas.task_rows);
+            list_top = areas.list_top;
             composer_area = areas.composer;
             if let Some(sel) = sel.as_mut() {
                 // a drag held past an edge: the head moves with the scroll
@@ -3740,6 +3765,9 @@ fn run_live(
                 }
             }
         })?;
+        if let (Some(l), Some(top)) = (v.list.as_mut(), list_top) {
+            l.scroll = l.scroll.min(top);
+        }
         if let Some(text) = copied.take() {
             // said in the composer for a moment, not in the transcript (a "copied 0 chars" line after every stray drag,
             // 2026-11-02); a selection of blank cells copies nothing; the highlight stays until the next key or click
@@ -5180,6 +5208,26 @@ fn agent_send(live: &mut live::Live, s: &mut Session, text: &str, cwd: &std::pat
             false
         }
     }
+}
+
+#[inline(never)]
+fn app_refresh_lists(providers: impl IntoIterator<Item = &'static models::Login>, refresh_public: bool,
+                     pending: &mut HashSet<&'static str>, tx: &std::sync::mpsc::Sender<serde_json::Value>) {
+    let lists: Vec<_> = providers.into_iter().filter(|l| pending.insert(l.name)).collect();
+    if !refresh_public && lists.is_empty() { return; }
+    let tx = tx.clone();
+    std::thread::spawn(move || {
+        if refresh_public { models::refresh_omniroute(); }
+        for l in lists {
+            models::refresh_lists(l.vars);
+            let _ = tx.send(json!({"type": "tazuna_list_finished", "provider": l.name}));
+        }
+        if refresh_public {
+            oauth::refresh_models();
+            models::refresh_openrouter();
+            let _ = tx.send(json!({"type": "tazuna_lists"}));
+        }
+    });
 }
 
 /// The app picker's rows: a row that can be picked whole; one that cannot (a key missing, a host not trusted) only what a
