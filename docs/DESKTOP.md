@@ -625,6 +625,14 @@ when the window narrows; outside the app (the browser demo) everything says it i
 0.1.113 (with tazuna 0.1.213; PRs #19, #22): a message the core refuses comes back into the box, as it was typed; a
 jump from the narrow work panel closes it and shows the message it went to.
 
+0.1.114 (with tazuna 0.1.214): Cmd-V of an image (a screenshot, or an image file copied in Finder) attaches it, with its
+thumbnail, as a picked or dropped one does; the paste went nowhere before. The bytes are saved in a private temp folder
+(src-tauri paste_image) and the message names that file; a Finder copy's name is not typed in as text. The design sweep
+pastes one (d-paste-image).
+Also from Devin's runs (PRs #26, #27, #29): the sidebar reads the run log once per refresh (20 folders: 1.1 s to 34 ms);
+the model picker loads a newly configured provider's model list instead of waiting for the hourly refresh; the narrow
+conversations drawer is a real dialog (focus stays in it, Esc closes it, a close button).
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

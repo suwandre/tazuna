@@ -379,6 +379,22 @@ const log = [];
       if (await box.inputValue()) throw new Error("a queued send left its draft in the box");
     });
     await ctx.close(); }
+  // Cmd-V of an image (a screenshot, or an image file copied in Finder, which brings its name as text too): an attachment
+  { const [ctx, p] = await ctxOf({});
+    const box = p.getByRole("textbox", { name: "Message" });
+    await step(p, "d-paste-image", async () => {
+      await box.fill("what is wrong here?");
+      await p.evaluate(() => {
+        const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="), (c) => c.charCodeAt(0));
+        const dt = new DataTransfer();
+        dt.items.add(new File([png], "image.png", { type: "image/png" }));
+        dt.setData("text/plain", "Screenshot 2026-11-24 at 10.00.00.png");
+        document.querySelector('textarea[aria-label="Message"]').dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      });
+      await p.getByText("paste-1.png").waitFor({ state: "visible", timeout: 4000 });
+      if (await box.inputValue() !== "what is wrong here?") throw new Error("the pasted file's name went into the draft");
+    });
+    await ctx.close(); }
   // the model picker's search takes the typing as it opens (0.1.74 to 0.1.76 it did not)
   { const [ctx, p] = await ctxOf({});
     await p.getByTitle("Model and effort").click(); await p.waitForTimeout(400);

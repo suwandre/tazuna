@@ -254,6 +254,9 @@ export const core = {
   onComplete: (cb: (c: { commands: [string, string][]; files: string[] }, tid: string) => void) => on<{ commands: [string, string][]; files: string[] }>("complete", cb),
   /** an image file as a data URL (the page may not read files): `cwd` for a path an answer gives from its folder */
   imageData: (path: string, cwd?: string) => invoke<string>("image_data", { path, cwd }),
+  /** a pasted image's bytes saved as a file (src-tauri paste_image): its path, for the message */
+  pasteImage: async (f: File) => invoke<string>("paste_image", new Uint8Array(await f.arrayBuffer()),
+    { headers: { "x-ext": (f.type.split("/")[1] ?? "png").replace("jpeg", "jpg") } }),
   /** files dropped on the window, as paths */
   onDrop: (cb: (paths: string[]) => void) => import("@tauri-apps/api/webview").then(({ getCurrentWebview }) =>
     getCurrentWebview().onDragDropEvent((e) => { if (e.payload.type === "drop") cb(e.payload.paths); })),

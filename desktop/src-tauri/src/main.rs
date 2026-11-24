@@ -571,6 +571,27 @@ async fn image_data(path: String, cwd: Option<String>) -> Result<String, String>
     Ok(format!("data:{mime};base64,{}", base64(&std::fs::read(&p).map_err(|e| e.to_string())?)))
 }
 
+/// A pasted image (Cmd-V of a screenshot, or of an image file copied in Finder) saved as a file the message can name: the
+/// window has its bytes, not a path. The bytes come raw (the request's body), the kind in an `x-ext` header; up to 20 MB,
+/// in a folder of this app's own in the temp folder, readable by this user alone.
+#[tauri::command]
+fn paste_image(request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("no image in the paste".into()) };
+    if bytes.is_empty() || bytes.len() > 20 << 20 { return Err("an image up to 20 MB".into()); }
+    let ext = match request.headers().get("x-ext").and_then(|v| v.to_str().ok()).map(str::to_ascii_lowercase).as_deref() {
+        Some(e @ ("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "avif")) => e.to_string(),
+        _ => "png".into(),
+    };
+    let dir = std::env::temp_dir().join("tazuna-desktop-images");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700)).map_err(|e| e.to_string())?;
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos();
+    let path = dir.join(format!("paste-{nanos}.{ext}"));
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 /// Standard base64 with padding (the one use here does not earn a dependency).
 fn base64(bytes: &[u8]) -> String {
     const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -702,7 +723,7 @@ fn main() {
             Ok(())
         })
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, image_data, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, plugins_export, plugins_import, plugins_import_file, hotkey, update_check, update_install, interrupt, new_chat, set_profile])
+        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, image_data, paste_image, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, plugins_export, plugins_import, plugins_import_file, hotkey, update_check, update_install, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
                 stop_all(&w.state::<Core>());

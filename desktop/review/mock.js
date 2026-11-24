@@ -267,6 +267,8 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
     const m = (msg) => setTimeout(() => T.emit("tazuna-view", { tid: args.tid, msg }), 20);
     if (cmd === "image_data") { if (/ci-time\.svg$|\.png$/.test(args.path)) return chart; throw "no such file"; }
     if (cmd === "pick_files") return ["/Users/x/Desktop/Screenshot 2026-11-19 at 21.04.png", "/Users/x/api-gateway/docs/retry-policy.md"];
+    // a pasted image: its bytes come raw (args is the Uint8Array), saved as a file the message names
+    if (cmd === "paste_image") return args instanceof Uint8Array && args.length ? "/tmp/tazuna-desktop-images/paste-1.png" : Promise.reject("no image in the paste");
     if (cmd === "op" && args.msg.op === "resume" && args.msg.id === "p3") { m(p3); return null; }
     if (cmd === "op" && args.msg.op === "agent") { m({ type: "agent", call: args.msg.call, view: { ...p3, session_id: null, tasks: [], activity: "Tool", blocks: [
       { kind: "prompt", text: "Review tools/ci-chart.mjs: does it read the timings correctly, and is the SVG it writes valid? Report what you find; change nothing." },
