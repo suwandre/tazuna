@@ -1535,10 +1535,10 @@ fn app_server(a: &Args) -> Result<()> {
                                 // no sign of the code: the router's check decides, off this thread (the terminal's flow); the
                                 // message shows at once
                                 s.apply(&json!({"type": "harness_user", "text": text}), at);
-                                let (c, tx, last, msg, chat) = (RouteCtx::of(&live), tx.clone(), last_reply.clone(), text.to_string(), chat_last.is_some());
+                                let (c, tx, last, msg, chat, draft) = (RouteCtx::of(&live), tx.clone(), last_reply.clone(), text.to_string(), chat_last.is_some(), cmd["draft"].clone());
                                 std::thread::spawn(move || {
                                     let general = route_general(&c, &last, &msg, chat);
-                                    let _ = tx.send(json!({"op": "routed", "general": general, "text": msg}));
+                                    let _ = tx.send(json!({"op": "routed", "general": general, "text": msg, "draft": draft}));
                                 });
                                 true
                             } else if forced && live.profile == route::Profile::Chat {
@@ -1715,14 +1715,22 @@ fn app_server(a: &Args) -> Result<()> {
                         }
                         Some("routed") => {
                             let text = cmd["text"].as_str().unwrap_or_default().to_string();
-                            if let Some(why) = untrusted_in_use(&live) {
+                            // the agent can still refuse it here (claude not found): the draft goes back as from "send"
+                            let accepted = if let Some(why) = untrusted_in_use(&live) {
                                 s.apply(&not_started(why), at); // on screen since it was sent
+                                false
                             } else if cmd["general"] == true && live.idle() {
                                 // shown since the send: recorded now
                                 live.note(json!({"type": "harness_user", "text": text}));
                                 chat_answer(&mut live, &mut s, text, "answered as a chat: not about this project", chat_last.clone(), &tx);
+                                true
                             } else {
-                                agent_send(&mut live, &mut s, &text, &cwd, &mut turn, &mut undo_note, false);
+                                agent_send(&mut live, &mut s, &text, &cwd, &mut turn, &mut undo_note, false)
+                            };
+                            if !accepted && let Some(text) = cmd["draft"].as_str() {
+                                let mut o = out.lock();
+                                let _ = writeln!(o, "{}", json!({"type": "send_rejected", "text": text}));
+                                let _ = o.flush();
                             }
                         }
                         // SubRouter's balance, read on a thread
