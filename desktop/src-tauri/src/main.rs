@@ -575,15 +575,20 @@ async fn image_data(path: String, cwd: Option<String>) -> Result<String, String>
 fn paste_bytes(body: &tauri::ipc::InvokeBody) -> Result<Cow<'_, [u8]>, String> {
     use tauri::ipc::InvokeBody::{Json, Raw};
 
-    let len = match body {
-        Raw(bytes) => bytes.len(),
-        Json(serde_json::Value::Array(bytes)) => bytes.len(),
-        Json(_) => return Err("no image in the paste".into()),
+    let check_size = |len| {
+        if len == 0 || len > 20 << 20 { Err("an image up to 20 MB".to_string()) } else { Ok(()) }
     };
-    if len == 0 || len > 20 << 20 { return Err("an image up to 20 MB".into()); }
     match body {
-        Raw(bytes) => Ok(Cow::Borrowed(bytes)),
-        Json(value) => serde::Deserialize::deserialize(value).map(Cow::Owned).map_err(|_| "no image in the paste".into()),
+        Raw(bytes) => {
+            check_size(bytes.len())?;
+            Ok(Cow::Borrowed(bytes))
+        }
+        Json(serde_json::Value::Array(bytes)) => {
+            check_size(bytes.len())?;
+            bytes.iter().map(|byte| byte.as_u64().and_then(|n| u8::try_from(n).ok())
+                .ok_or_else(|| "no image in the paste".into())).collect::<Result<_, _>>().map(Cow::Owned)
+        }
+        Json(_) => Err("no image in the paste".into()),
     }
 }
 
