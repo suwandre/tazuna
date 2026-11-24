@@ -450,6 +450,21 @@ const log = [];
     await p.getByTitle("Model and effort").click(); await p.waitForTimeout(400);
     log.push(`picker focus: ${await p.evaluate(() => document.activeElement?.getAttribute("placeholder") || document.activeElement?.tagName)}`);
     await ctx.close(); }
+  { const [ctx, p] = await ctxOf({ w: 1024, h: 768 });
+    await step(p, "d-project-model-picker-fits", async () => {
+      await side(p).locator('button[title="/Users/x/api-gateway"]').click();
+      await p.getByTitle("Model and effort").click();
+      await p.getByLabel("Search models and providers").fill("opus");
+      const price = p.getByText("$ per M, in / out", { exact: true });
+      await price.waitFor({ state: "visible", timeout: 4000 });
+      await p.waitForFunction(() => {
+        const picker = document.querySelector('[aria-label="Search models and providers"]')?.closest(".tz-pop");
+        if (!picker) return false;
+        const frame = picker.closest("main").getBoundingClientRect(), pop = picker.getBoundingClientRect();
+        return pop.left >= frame.left && pop.right <= frame.right && pop.width >= 459;
+      }, null, { timeout: 4000 });
+    });
+    await ctx.close(); }
   { const [ctx, p] = await ctxOf({ setup: false }); await step(p, "first-run-setup", async () => { await p.waitForTimeout(600); }); await ctx.close(); }
   fs.writeFileSync(`${OUT}/log.txt`, log.join("\n"));
   console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok", `· ${log.length} steps in ${OUT}`);

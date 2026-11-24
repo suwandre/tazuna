@@ -4,6 +4,7 @@
 // user's input back as JSON lines. docs/DESKTOP.md.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::borrow::Cow;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -576,17 +577,28 @@ async fn image_data(path: String, cwd: Option<String>) -> Result<String, String>
     Ok(format!("data:{mime};base64,{}", base64(&std::fs::read(&p).map_err(|e| e.to_string())?)))
 }
 
+fn paste_bytes(body: &tauri::ipc::InvokeBody) -> Result<Cow<'_, [u8]>, String> {
+    use tauri::ipc::InvokeBody::{Json, Raw};
+
+    match body {
+        Raw(bytes) => Ok(Cow::Borrowed(bytes)),
+        Json(serde_json::Value::Array(bytes)) => bytes.iter().map(|byte| byte.as_u64().and_then(|n| u8::try_from(n).ok())
+            .ok_or_else(|| "no image in the paste".into())).collect::<Result<_, _>>().map(Cow::Owned),
+        Json(_) => Err("no image in the paste".into()),
+    }
+}
+
 /// A pasted image (Cmd-V of a screenshot, or of an image file copied in Finder) saved as a file the message can name: the
-/// window has its bytes, not a path. The bytes come raw (the request's body), the kind in an `x-ext` header; up to 20 MB,
-/// in a folder of this app's own in the temp folder, readable by this user alone.
+/// window has its bytes, not a path. Tauri delivers raw bytes or a JSON byte array via its fallback IPC; the kind is in
+/// an `x-ext` header. Saves up to 20 MB in the app's own temp folder, readable by this user alone.
 #[tauri::command]
 fn paste_image(request: tauri::ipc::Request<'_>) -> Result<String, String> {
-    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("no image in the paste".into()) };
+    let bytes = paste_bytes(request.body())?;
     let ext = match request.headers().get("x-ext").and_then(|v| v.to_str().ok()).map(str::to_ascii_lowercase).as_deref() {
         Some(e @ ("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "avif")) => e.to_string(),
         _ => "png".into(),
     };
-    save_pasted_image(bytes, &ext)
+    save_pasted_image(&bytes, &ext)
 }
 
 /// WebKitGTK can deliver an empty paste event even when the system clipboard holds an image.
@@ -799,6 +811,19 @@ mod tests {
         let t = std::time::Instant::now();
         super::quit_core(child, stdin);
         assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
+    }
+
+    #[test]
+    fn pasted_image_bytes_can_arrive_as_raw_or_json() {
+        use tauri::ipc::InvokeBody::{Json, Raw};
+
+        let png_signature = [137, 80, 78, 71, 13, 10, 26, 10];
+        for body in [Raw(png_signature.to_vec()), Json(serde_json::json!(png_signature))] {
+            assert_eq!(super::paste_bytes(&body).unwrap().as_ref(), &png_signature);
+        }
+        assert_eq!(super::paste_bytes(&Json(serde_json::json!([256]))).unwrap_err(), "no image in the paste");
+        let empty = Json(serde_json::json!([]));
+        assert_eq!(super::save_pasted_image(&super::paste_bytes(&empty).unwrap(), "png").unwrap_err(), "an image up to 20 MB");
     }
 
     #[test]

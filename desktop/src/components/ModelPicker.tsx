@@ -9,28 +9,46 @@ import { Segmented } from "./Controls";
 /** Where a popover on the composer opens: above the whole message box where it fits, else below it, as tall as the page
  * around it has room for. Every menu there uses it: the start page's box sits high, and the model picker (desktop 0.1.73)
  * and then the permission menu were cut off at the top; above a conversation's box a menu covered its text. */
-export function usePlace(box: RefObject<HTMLElement | null>, want = 420): { style: CSSProperties; side: string } {
-  const [p, setP] = useState<{ down: boolean; lift: number; max: number } | null>(null);
+export function usePlace(box: RefObject<HTMLElement | null>, want = 420, width?: number): { style: CSSProperties; side: string } {
+  const [p, setP] = useState<{ down: boolean; lift: number; max: number; horizontal?: CSSProperties } | null>(null);
   useLayoutEffect(() => {
     const el = box.current, anchor = el?.parentElement;
     if (!el || !anchor) return;
     const card = anchor.closest("[data-composer]") ?? anchor;
     let clip: Element | null = card.parentElement;
     while (clip && clip !== document.body && !/auto|scroll|hidden/.test(getComputedStyle(clip).overflowY)) clip = clip.parentElement;
-    const a = anchor.getBoundingClientRect(), b = card.getBoundingClientRect(), v = (clip ?? document.body).getBoundingClientRect();
-    const above = b.top - v.top - 12, below = v.bottom - b.bottom - 12, need = Math.min(want, el.scrollHeight);
-    const down = above < need && below > above;
-    setP({ down, lift: Math.max(0, down ? b.bottom - a.bottom : a.top - b.top), max: Math.max(120, Math.min(want, down ? below : above)) });
+    const boundary = clip ?? document.body;
+    const measure = () => {
+      const a = anchor.getBoundingClientRect(), b = card.getBoundingClientRect(), v = boundary.getBoundingClientRect();
+      const above = b.top - v.top - 12, below = v.bottom - b.bottom - 12, need = Math.min(want, el.scrollHeight);
+      const down = above < need && below > above;
+      let horizontal: CSSProperties | undefined;
+      if (width != null) {
+        const left = Math.max(v.left, 0) + 12, right = Math.min(v.right, window.innerWidth) - 12;
+        const fit = Math.min(width, Math.max(0, right - left));
+        horizontal = { width: fit, marginLeft: Math.max(left, Math.min(a.left, right - fit)) - a.left };
+      }
+      setP({ down, lift: Math.max(0, down ? b.bottom - a.bottom : a.top - b.top), max: Math.max(120, Math.min(want, down ? below : above)), horizontal });
+    };
+    measure();
+    const resized = width == null ? undefined : new ResizeObserver(measure);
+    resized?.observe(boundary);
+    if (resized) window.addEventListener("resize", measure);
     // closed: focus back on the button that opened it (it fell to the page)
     // (after the commit, and only if it is really gone: a development remount ran this and took the focus from its search)
-    return () => queueMicrotask(() => {
-      if (!el.isConnected && (!document.activeElement || document.activeElement === document.body)) anchor.querySelector("button")?.focus();
-    });
-  }, [box, want]);
+    return () => {
+      resized?.disconnect();
+      if (resized) window.removeEventListener("resize", measure);
+      queueMicrotask(() => {
+        if (!el.isConnected && (!document.activeElement || document.activeElement === document.body)) anchor.querySelector("button")?.focus();
+      });
+    };
+  }, [box, want, width]);
   // measured before it shows: transparent, not hidden, so its search field can take the focus (hidden, it could not, and
   // typing after a click went nowhere, design review 5)
-  if (!p) return { style: { opacity: 0 }, side: "bottom-full" };
-  return p.down ? { style: { marginTop: p.lift + 8, maxHeight: p.max }, side: "top-full origin-top" } : { style: { marginBottom: p.lift + 8, maxHeight: p.max }, side: "bottom-full origin-bottom" };
+  if (!p) return { style: { opacity: 0, width }, side: "bottom-full" };
+  const style = { maxHeight: p.max, ...p.horizontal };
+  return p.down ? { style: { ...style, marginTop: p.lift + 8 }, side: "top-full origin-top" } : { style: { ...style, marginBottom: p.lift + 8 }, side: "bottom-full origin-bottom" };
 }
 
 /** "$ per M in / out" said evenly: "0.021 / 0.064" for "0.0213 / 0.0639", "1.4 / 4.4", "free" for "0 / 0". */
@@ -63,7 +81,7 @@ export function ModelPicker({ models, onPick, onClose, onKey, onRefreshModelList
   const [seenPending, setSeenPending] = useState<Set<string>>(() => new Set());
   const box = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
-  const place = usePlace(box);
+  const place = usePlace(box, 420, 460);
   useEffect(() => {
     const away = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) onClose(); };
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -88,7 +106,7 @@ export function ModelPicker({ models, onPick, onClose, onKey, onRefreshModelList
   const catalogs = models?.catalogs?.filter(({ provider, state }) =>
     state !== "ready" || seenPending.has(provider) || (!!query && (matchesWords(query, provider) || groups.some(([name]) => name === provider)))) ?? [];
   return (
-    <div ref={box} style={place.style} className={`tz-pop absolute ${place.side} left-0 z-10 flex w-[460px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer`}>
+    <div ref={box} style={place.style} className={`tz-pop absolute ${place.side} left-0 z-10 flex flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer`}>
       <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2 text-muted">
         <Search size={14} strokeWidth={1.5} />
         <input ref={search} autoFocus aria-label="Search models and providers" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search models and providers" className="min-w-0 flex-1 bg-transparent text-ink outline-none placeholder:text-faint" />
