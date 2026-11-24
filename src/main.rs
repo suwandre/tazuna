@@ -3348,6 +3348,7 @@ fn restart_session(live: &mut live::Live, s: &mut Session, earlier: Option<&Earl
             live.set_earlier(&e.ids[..e.ids.len().saturating_sub(1)]);
         }
         s.model = live.model.clone();
+        s.mode = if live.reviewer { "review" } else { session::mode_name(&live.permission_mode) }.into();
     }
     // the plan's windows as last read anywhere: the replay above applied the conversation's own last reading as if it came
     // now, so an old conversation showed its days-old 5 hours and week as current (design review 5)
@@ -6376,6 +6377,37 @@ not json"#;
         live.send_typed("and in Fahrenheit?").unwrap();
         assert_eq!(live::stub::flag(&live::stub::started(&dir), "--resume").as_deref(), Some("chat-0"));
         assert!(live::stub::sent(&dir, "Earlier in this chat you were asked: question 0\nYou answered: answer 0\n\nThe new message: and in Fahrenheit?"));
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_resumed_conversation_displays_the_live_permission_mode() {
+        let (mut live, dir) = live::stub::live("resume-permission-mode");
+        let recording = dir.join("earlier.jsonl");
+        let events = [
+            json!({"type": "system", "subtype": "init", "session_id": "earlier"}),
+            json!({"type": "harness_mode", "mode": "default"}),
+            json!({"type": "harness_user", "text": "First message"}),
+            json!({"type": "harness_permission_done", "tool": "write", "allow": true, "mode": "default"}),
+        ];
+        let lines: String = events.into_iter().enumerate().map(|(t, e)| format!("{}\n", json!({"t": t, "e": e}))).collect();
+        std::fs::write(&recording, lines).unwrap();
+        let earlier = Earlier {
+            id: "earlier".into(), ids: vec!["earlier".into()], model: live.model.clone(), provider: String::new(),
+            key_env: String::new(), first: "First message".into(), last_at: 0, messages: 1, recordings: vec![recording], named: false,
+        };
+        let mut s = Session::new("", "high");
+        for (mode, permission_mode, shown) in [("auto", "auto", "auto"), ("review", "acceptEdits", "review")] {
+            let (t, e) = live.set_mode(mode);
+            s.apply(&e, t);
+            restart_session(&mut live, &mut s, Some(&earlier)).unwrap();
+            assert_eq!(s.view()["mode"], shown);
+            assert_eq!(live.permission_mode, permission_mode);
+            assert_eq!(live.reviewer, mode == "review");
+            assert!(s.blocks.iter().any(|b| matches!(b, session::Block::Prompt(p) if p == "First message")));
+        }
         drop(live);
         std::fs::remove_dir_all(&dir).ok();
     }
