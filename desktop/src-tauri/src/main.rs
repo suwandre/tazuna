@@ -630,7 +630,7 @@ fn op(core: State<Core>, tid: String, msg: serde_json::Value) -> Result<(), Stri
 }
 
 fn is_window_op(msg: &serde_json::Value) -> bool {
-    msg.get("type").is_none() && matches!(msg["op"].as_str(), Some("models" | "refresh_model_list" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route" | "full" | "rename" | "hide" | "rewind" | "mcp" | "mcp_on" | "mcp_add" | "mcp_remove" | "mcp_check" | "hook" | "setup" | "gallery" | "gallery_get" | "accounts" | "review" | "piece" | "allow_root" | "fork" | "usage" | "spend_cap" | "worktree_new" | "worktrees" | "worktree_remove" | "pr" | "create" | "create_enable" | "create_discard" | "retry" | "complete"))
+    msg.get("type").is_none() && matches!(msg["op"].as_str(), Some("models" | "refresh_model_list" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route" | "full" | "rename" | "hide" | "rewind" | "mcp" | "mcp_on" | "mcp_add" | "mcp_remove" | "mcp_check" | "hook" | "setup" | "gallery" | "gallery_get" | "accounts" | "review" | "piece" | "allow_root" | "fork" | "usage" | "spend_cap" | "worktree_new" | "worktrees" | "worktree_remove" | "pr" | "create" | "create_enable" | "create_discard" | "retry" | "complete" | "agent" | "task_stop"))
 }
 
 #[tauri::command]
@@ -739,6 +739,19 @@ mod tests {
     fn the_window_can_request_completions() {
         assert!(super::is_window_op(&serde_json::json!({"op": "complete"})));
         assert!(!super::is_window_op(&serde_json::json!({"type": "complete", "op": "complete"})));
+    }
+
+    /// Every request the window's code sends (lib/tazuna.ts) passes: a missing one was refused without a word, and its
+    /// feature looked stuck (the `@` menu until 0.1.112; a subagent's Watch, "Reading what it has done so far…" for good,
+    /// and its Stop until 0.1.117).
+    #[test]
+    fn every_op_the_window_sends_passes() {
+        let ts = include_str!("../../src/lib/tazuna.ts");
+        let ops: Vec<&str> = ts.match_indices("msg: { op: \"").map(|(i, m)| &ts[i + m.len()..]).map(|r| &r[..r.find('"').unwrap()]).collect();
+        assert!(ops.len() > 20, "{ops:?}");
+        for op in ops {
+            assert!(super::is_window_op(&serde_json::json!({"op": op})), "the window sends {op:?} and the bridge refuses it");
+        }
     }
 
     #[test]

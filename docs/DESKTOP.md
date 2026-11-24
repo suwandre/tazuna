@@ -646,6 +646,13 @@ fetches a missing one again; unused code and a dependency went.
 0.1.116 (with tazuna 0.1.216): in full mode a question a chat hands to the agent runs without asking too, as every other
 turn in full does.
 
+0.1.117 (with tazuna 0.1.217): a subagent's Watch showed "Reading what it has done so far…" for good, and its Stop did
+nothing: the window's bridge refused both requests ("agent", "task_stop") and the error went nowhere, as "complete" did
+until 0.1.112. A test now reads every request lib/tazuna.ts sends and fails on one the bridge would refuse. A message's
+attachments show as tiles under it, not as paths in its text: an image as a thumbnail that opens whole over the window
+(a click or Esc closes it), another file by its name; the conversation's title leaves the paths out too. The design
+sweep covers it (d-message-attachment).
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
