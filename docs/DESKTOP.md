@@ -653,6 +653,12 @@ attachments show as tiles under it, not as paths in its text: an image as a thum
 (a click or Esc closes it), another file by its name; the conversation's title leaves the paths out too. The design
 sweep covers it (d-message-attachment).
 
+0.1.118 (with tazuna 0.1.218): a mode picked (shift-tab, the mode menu) shows at once and reaches the agent 0.7 s after
+the last pick, so one passed on the way never judges a call; switching to full or auto answers the question waiting
+where the new mode would not have asked. From Devin's runs (PRs #36 to #39, #41): a pasted image attaches on macOS in
+every form Tauri hands it over, and on Linux; a refused routed message comes back into the box; a saved model whose list
+is still loading is put back once it is; the model picker stays inside the conversation.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
