@@ -16,6 +16,19 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.217 (2026-11-24): a message claude folds into a running turn counts with it; /usage without cut-offs
+
+- A message sent while a turn runs: claude takes it into that turn at its next tool call and ends both with one result,
+  or answers it as a turn of its own when the reply was plain text (tried on Haiku 5.5). tazuna counted every message as
+  its own run, so a folded one waited for a result that never came: the run log put later costs on the wrong message,
+  and the session never went idle (the router and hand-offs wait for idle). claude now echoes each message as it takes
+  it (`--replay-user-messages`); an echo before the running turn's result joins that run. The echoes are not shown.
+- /usage (the user: "these are subtle but very important"): a provider's name column is as wide as its longest name,
+  where "Qwen Cloud Token Plan" ran into its link; a note longer than the panel wraps under its own text, where "…8 or
+  m…" was cut; and a list scrolls to its last page, not on to its last row and a page of empty space under it. The
+  scroll limit and the wrapping are the list panel's own, so every list (/usage, the tool and model-call lists) has them.
+- The desktop app's Watch on a subagent shows what it was asked at once, before it has said anything.
+
 ## 0.1.216 (2026-11-24): full never asks, in a chat's hand-off too
 
 The user, in full mode: "still somehow requires access for bash? i thought full access means basically near if not full

@@ -1818,8 +1818,10 @@ fn app_server(a: &Args) -> Result<()> {
                             // by the call that started it (the step in the transcript): its task where claude made one, else
                             // the call's own messages (a subagent that ran inside the reply has no task)
                             let call = cmd["call"].as_str().unwrap_or_default();
+                            // answered at once, before the subagent has said anything (its task, what it was asked): the
+                            // panel waited on "Reading what it has done so far…" until its first event
                             let task = live.bg.iter().find(|t| t.calls.iter().any(|c| c.0 == call)).cloned().or_else(|| s.blocks.iter().find_map(|b| match b {
-                                session::Block::Tool(t) if t.id == call && s.sub_events.contains_key(call) => Some(live::BgTask {
+                                session::Block::Tool(t) if t.id == call && matches!(t.name.as_str(), "Agent" | "Task") => Some(live::BgTask {
                                     id: String::new(), kind: "local_agent".into(), description: t.input["description"].as_str().unwrap_or_default().into(),
                                     status: if t.error { "failed" } else if t.done_ms.is_some() { "completed" } else { "running" }.into(), started: Instant::now(),
                                     ended: t.done_ms.map(|_| Instant::now()), output: String::new(), agent: t.input["subagent_type"].as_str().unwrap_or_default().into(),
@@ -2817,7 +2819,7 @@ fn accounts_panel(v: Option<&serde_json::Value>) -> ui::ListPanel {
         details: vec![None; rows.len()],
         rows,
         scroll: 0,
-        link_from: accounts::LINK_FROM,
+        link_from: v.map_or(22, accounts::link_from),
         hscroll: 0,
         open: Default::default(),
     }
@@ -3440,6 +3442,8 @@ fn run_live(
     let (mut tool_rows, mut tokens_area, mut bars): (Vec<(ratatui::layout::Rect, String)>, Option<ratatui::layout::Rect>, Option<(ratatui::layout::Rect, usize)>) = (vec![], None, None);
     // a list modal's place and its link rows: a click inside stays, on a link opens it, outside closes the list
     let (mut list_area, mut list_links): (Option<ratatui::layout::Rect>, Vec<(ratatui::layout::Rect, String)>) = (None, vec![]);
+    // the open list's last scroll that still fills its panel (ui draw_list): its scroll is held to it
+    let mut list_top: Option<usize> = None;
     let mut list_rows: Vec<(ratatui::layout::Rect, usize)> = vec![];
     // the transcript line on its first row (a selection holds lines), and when a drag past an edge last scrolled
     let (mut top_line, mut edge_scrolled) = (0usize, Instant::now());
@@ -3742,6 +3746,7 @@ fn run_live(
             cost_area = areas.cost;
             (tool_rows, tokens_area, bars, top_line) = (areas.tool_rows, areas.tokens, areas.bars, areas.top_line);
             (list_area, list_links, list_rows, task_rows) = (areas.list, areas.list_links, areas.list_rows, areas.task_rows);
+            list_top = areas.list_top;
             composer_area = areas.composer;
             if let Some(sel) = sel.as_mut() {
                 // a drag held past an edge: the head moves with the scroll
@@ -3752,6 +3757,9 @@ fn run_live(
                 }
             }
         })?;
+        if let (Some(l), Some(top)) = (v.list.as_mut(), list_top) {
+            l.scroll = l.scroll.min(top);
+        }
         if let Some(text) = copied.take() {
             // said in the composer for a moment, not in the transcript (a "copied 0 chars" line after every stray drag,
             // 2026-11-02); a selection of blank cells copies nothing; the highlight stays until the next key or click
