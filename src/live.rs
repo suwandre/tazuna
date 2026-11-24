@@ -163,8 +163,10 @@ pub fn hands_off(reply: &str) -> bool {
 /// A chat message with the exchanges before it that its conversation does not hold (question, answer): a router chat
 /// answer's follow-up (main.rs), and a chat's next message after the agent answered in its place (`start_run`).
 pub fn with_earlier(text: &str, earlier: &[(String, String)]) -> String {
-    let mut m: String = earlier.iter().map(|(q, a)| format!("Earlier in this chat you were asked: {}\nYou answered: {}\n\n",
-        q.chars().take(1500).collect::<String>(), a.chars().take(3000).collect::<String>())).collect();
+    let mut m: String = earlier.iter().map(|(q, a)| match a.as_str() {
+        "" => format!("Earlier in this chat you were asked: {}\nYou were stopped before you answered.\n\n", q.chars().take(1500).collect::<String>()),
+        a => format!("Earlier in this chat you were asked: {}\nYou answered: {}\n\n", q.chars().take(1500).collect::<String>(), a.chars().take(3000).collect::<String>()),
+    }).collect();
     if !m.is_empty() {
         m.push_str("The new message: ");
     }
@@ -904,6 +906,10 @@ impl Live {
         match (a, e["tazuna_handoff"] == true) {
             // the agent's answer in the chat's place: not in the chat's conversation yet
             (Some(a), true) => self.said.push((q.to_string(), a.to_string())),
+            // stopped (or failed) before its answer: kept with none, so a "please continue" after it carries the question
+            // (`with_earlier`). Left out, the next hand-off's agent had "nothing from it carried over… I don't know what
+            // the task was" (the user, 2026-11-24)
+            (None, true) => self.said.push((q.to_string(), String::new())),
             // the chat's answer, or its [[agent]]: its conversation holds the message, and the answers that went with it
             (Some(a), false) => {
                 if !hands_off(a) {
@@ -3486,6 +3492,18 @@ mod tests {
         assert!(sent.contains(r#""request_id":"q-1""#) && sent.matches(r#""behavior":"allow""#).count() == 2, "{sent}");
         drop(live);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A hand-off stopped before its answer stays in the chat's exchanges, so "please continue" after it carries the
+    /// question to the next hand-off's agent (it said "nothing from it carried over").
+    #[test]
+    fn a_stopped_hand_off_carries_its_question_to_the_next() {
+        let mut live = Live::new("", "").unwrap();
+        live.heard(&json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "tazuna_q": "plan our team lunch from bellabona", "tazuna_handoff": true}));
+        let sent = with_earlier("sorry, I stopped you, please continue", live.earlier());
+        assert!(sent.contains("plan our team lunch from bellabona") && sent.contains("You were stopped before you answered")
+            && sent.ends_with("The new message: sorry, I stopped you, please continue"), "{sent}");
+        std::fs::remove_file(&live.rec_path).ok();
     }
 
     /// A chat outside git keeps auto; leaving it for an agent profile there drops to ask, as starting in one would have.

@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.222 (2026-11-24): "please continue" after a stopped hand-off carries its question
+
+The user stopped a question a chat had handed to the agent, then wrote "sorry, accidentally stopped it. please
+continue"; the next hand-off's agent answered "nothing from it carried over… I don't know what the task was". A hand-off
+starts a fresh conversation with the chat's earlier exchanges in front of its message, and only answered ones were kept.
+A stopped (or failed) one is kept now too, with "You were stopped before you answered", so the next carries its question.
+
 ## 0.1.221 (2026-11-24): leaving a chat outside git for an agent profile drops to ask
 
 An automated security review of 0.1.220: a plain chat outside git keeps auto or full, and a switch from it to an agent
