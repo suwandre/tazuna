@@ -80,15 +80,24 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     }
 
     let tools = tool_tally(s);
+    let tools_height = tools.len().max(1) as u16 + if s.turn_usage.is_empty() { 3 } else { 2 };
+    let accounts = account_rows(s, th);
+    let cache_life = s.cache_left(v.clock_ms).zip(s.cache_ttl_ms);
+    // Reclaim genuinely empty rows before the layout compresses the chart and pace summary. In a live rail with
+    // several tool types, reserving absent cache-life and second-account rows clipped both the zero axis and TTFT.
+    // Keep the usual spacing when there is room, and never remove a populated cache/account row.
+    let crowded = !s.turn_usage.is_empty() && side.height < 5 + 6 + 9 + 5 + tools_height + 3;
+    let context_rows = if crowded && cache_life.is_none() { 3 } else { 4 };
+    let cost_rows = if crowded && accounts.1.width() == 0 { 2 } else { 3 };
     let [p_session, p_context, p_tokens, p_cost, p_tools, p_files] = Layout::vertical([
         Constraint::Length(5),
-        Constraint::Length(6),
+        Constraint::Length(context_rows + 2),
         // the tokens chart once there are calls: before the first, one line (an empty chart with a lone "0" read as broken)
         Constraint::Length(if s.turn_usage.is_empty() { 3 } else { 9 }),
-        Constraint::Length(5),
+        Constraint::Length(cost_rows + 2),
         // Give the pace summary its extra row instead of leaving a blank row below the tools. The chart keeps its
         // height (and zero axis label) even when the rail has to compress at 120×34.
-        Constraint::Length(tools.len().max(1) as u16 + if s.turn_usage.is_empty() { 3 } else { 2 }),
+        Constraint::Length(tools_height),
         Constraint::Min(3),
     ])
     .areas(side);
@@ -114,7 +123,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let b = panel("context", th);
     let a = b.inner(p_context).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(b, p_context);
-    let [g1, g2, g3, g4] = Layout::vertical([Constraint::Length(1); 4]).areas(a);
+    let [g1, g2, g3, g4] = Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(context_rows - 3)]).areas(a);
     // the window as the model reports it: none until claude's first result, none on the own loop, and then the count alone,
     // no gauge (the window stood at "1% of 200k" for a local model, review 12)
     match s.context_window {
@@ -137,7 +146,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     gauge(f, g2, s.usage.cache_hit(), &format!("{:<12}{} {:.0}%{last}", "cache read", human(s.usage.cache_read), s.usage.cache_hit() * 100.0), if misses == 0 { th.accent } else { th.warn }, th);
     f.render_widget(Paragraph::new(Line::from(vec![Span::styled(format!("{:<12}", "cache write"), st(th.text)), Span::styled(human(s.usage.cache_write), st(th.text)), Span::styled(miss, st(th.warn))])), g3);
     // how long the cache stays warm: after that the next call writes the whole context again
-    if let (Some(left), Some(ttl)) = (s.cache_left(v.clock_ms), s.cache_ttl_ms) {
+    if let Some((left, ttl)) = cache_life {
         let life = if ttl >= 3_600_000.0 { "1h" } else { "5m" };
         // expired: what the next message costs, before it is sent (Session::rebuild)
         let cold = s.rebuild().map_or(String::new(), |(t, _)| format!(" · next re-reads {}", human(t)));
@@ -233,7 +242,6 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     }
 
     // cost
-    let accounts = account_rows(s, th);
     let b = hot_panel("cost · click: all accounts", th, under_mouse(v, p_cost));
     let a = b.inner(p_cost).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(b, p_cost);
