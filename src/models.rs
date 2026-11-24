@@ -912,27 +912,34 @@ pub fn refresh_mortera() {
     crate::oauth::refresh_models();
 }
 
-fn keyed_lists() -> impl Iterator<Item = (&'static str, String, String)> {
-    [("MORTERA_API_KEY", "https://mortera.cloud/v1/models".into(), "mortera-models.json".into()),
-     ("CHEAPER_INFERENCE_API_KEY", "https://api.cheaperinference.com/v1/models".into(), "cheaperinference-models.json".into())].into_iter()
-        .chain(LOGINS.iter().filter(|l| l.source == Source::List).map(|l| (l.vars[0], format!("{}/models", l.url), list_file(l))))
+fn keyed_lists() -> impl Iterator<Item = (&'static Login, String)> {
+    LOGINS.iter().filter_map(|l| {
+        let name = match l.vars[0] {
+            "MORTERA_API_KEY" => "mortera-models.json".into(),
+            "CHEAPER_INFERENCE_API_KEY" => "cheaperinference-models.json".into(),
+            _ if l.source == Source::List => list_file(l),
+            _ => return None,
+        };
+        Some((l, name))
+    })
 }
 
-pub(crate) fn missing_keyed_lists(dir: &Path, has_key: impl Fn(&str) -> bool) -> Vec<&'static str> {
-    keyed_lists().filter(|(var, _, name)| !dir.join(name).is_file() && has_key(var)).map(|(var, _, _)| var).collect()
+pub(crate) fn configured_keyed_lists(dir: Option<&Path>, has_key: impl Fn(&str) -> bool) -> Vec<(&'static Login, bool)> {
+    keyed_lists().filter(|(l, _)| has_key(l.vars[0]))
+        .map(|(l, name)| (l, dir.is_some_and(|d| d.join(name).is_file()))).collect()
 }
 
 /// The model lists that need a key, each whose variable is in `only` (all of them when empty): a key just saved fetches
 /// its provider's list alone.
 pub fn refresh_lists(only: &[&str]) {
-    for (var, url, name) in keyed_lists().filter(|(var, ..)| only.is_empty() || only.contains(var)) {
-        let Some(k) = key(var) else { continue };
+    for (l, name) in keyed_lists().filter(|(l, _)| only.is_empty() || only.contains(&l.vars[0])) {
+        let Some(k) = key(l.vars[0]) else { continue };
         let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(15))).build().into();
-        let Ok(mut r) = http.get(&url).header("Authorization", format!("Bearer {}", k.trim())).call() else { continue };
+        let Ok(mut r) = http.get(format!("{}/models", l.url)).header("Authorization", format!("Bearer {}", k.trim())).call() else { continue };
         let Ok(body) = r.body_mut().with_config().limit(20 << 20).read_to_string() else { continue };
         let ok = serde_json::from_str::<Value>(&body).is_ok_and(|v| v["data"].as_array().is_some_and(|d| !d.is_empty()));
         if let (true, Ok(dir)) = (ok, crate::labels::dir()) {
-            let tmp = dir.join(format!("{name}.tmp"));
+            let tmp = dir.join(format!("{name}.{}.tmp", std::process::id()));
             if std::fs::write(&tmp, body).is_ok() {
                 let _ = std::fs::rename(&tmp, dir.join(name));
             }
@@ -2846,15 +2853,16 @@ mod tests {
     }
 
     #[test]
-    fn missing_keyed_lists_are_independent_of_the_public_catalog() {
+    fn configured_keyed_lists_are_independent_of_the_public_catalog() {
         let dir = std::env::temp_dir().join(format!("tazuna-keyed-lists-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("openrouter-models.json"), r#"{"data":[]}"#).unwrap();
         let mortera_only = |var: &str| var == "MORTERA_API_KEY";
-        assert_eq!(missing_keyed_lists(&dir, mortera_only), ["MORTERA_API_KEY"]);
-        assert!(missing_keyed_lists(&dir, |_| false).is_empty());
+        let status = || configured_keyed_lists(Some(&dir), mortera_only).into_iter().map(|(l, cached)| (l.name, cached)).collect::<Vec<_>>();
+        assert_eq!(status(), [("Mortera", false)]);
+        assert!(configured_keyed_lists(Some(&dir), |_| false).is_empty());
         std::fs::write(dir.join("mortera-models.json"), r#"{"data":[{"id":"model"}]}"#).unwrap();
-        assert!(missing_keyed_lists(&dir, mortera_only).is_empty());
+        assert_eq!(status(), [("Mortera", true)]);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

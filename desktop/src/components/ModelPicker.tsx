@@ -46,14 +46,23 @@ const NO_KEY: Record<string, string> = { "no key": "No key yet · add one in Set
   "plan use not allowed": "Plan use not allowed · allow it in Settings", "model list not loaded": "Its model list has not loaded yet",
   "which key": "Same key as Mistral or Mistral Vibe · say which in Settings" };
 
-export function ModelPicker({ models, onPick, onClose, onKey, efforts = [], effort, onEffort }: { models: Models | null; onPick: (c: ModelChoice) => void; onClose: () => void;
+const CATALOG_STATUS = {
+  loading: { label: "Loading model list", detail: "A key is configured. Models will appear when the list is ready.", tone: "bg-accent" },
+  ready: { label: "Models ready", detail: "", tone: "bg-ok" },
+  unavailable: { label: "Model list unavailable", detail: "A key is configured, but the list couldn’t load.", tone: "bg-warn" },
+};
+
+export function ModelPicker({ models, onPick, onClose, onKey, onRefreshModelList, efforts = [], effort, onEffort }: { models: Models | null; onPick: (c: ModelChoice) => void; onClose: () => void;
   /** a row whose provider has no key: Settings on that provider, its key field open */
   onKey?: (provider: string) => void;
+  onRefreshModelList?: (provider: string) => void;
   /** the current model's effort levels, chosen at the top (one pill for model and effort since desktop 0.1.70, as Claude,
    * MonoCode and DeepSeek Harness have it) */
   efforts?: string[]; effort?: string; onEffort?: (e: string) => void }) {
   const [q, setQ] = useState("");
+  const [seenPending, setSeenPending] = useState<Set<string>>(() => new Set());
   const box = useRef<HTMLDivElement>(null);
+  const search = useRef<HTMLInputElement>(null);
   const place = usePlace(box);
   useEffect(() => {
     const away = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) onClose(); };
@@ -62,6 +71,10 @@ export function ModelPicker({ models, onPick, onClose, onKey, efforts = [], effo
     document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", esc); };
   }, [onClose]);
+  useEffect(() => {
+    const pending = models?.catalogs?.filter(({ state }) => state !== "ready").map(({ provider }) => provider);
+    if (pending?.length) setSeenPending((seen) => pending.every((p) => seen.has(p)) ? seen : new Set([...seen, ...pending]));
+  }, [models?.catalogs]);
   const { groups, hidden } = useMemo(() => {
     const all = models?.choices ?? [], f = q.trim().toLowerCase();
     const rows = f ? all.filter((c) => matchesWords(f, [modelLabel(c.model), c.label, c.model, c.place, c.provider].join(" "))) : all.filter((c) => !c.why_not);
@@ -71,11 +84,14 @@ export function ModelPicker({ models, onPick, onClose, onKey, efforts = [], effo
   }, [models, q]);
   // the score column only where a row has one (a "Score" header stood over an empty column, design review 12)
   const scored = groups.some(([, rows]) => rows.some((c) => c.bench));
+  const query = q.trim().toLowerCase();
+  const catalogs = models?.catalogs?.filter(({ provider, state }) =>
+    state !== "ready" || seenPending.has(provider) || (!!query && (matchesWords(query, provider) || groups.some(([name]) => name === provider)))) ?? [];
   return (
     <div ref={box} style={place.style} className={`tz-pop absolute ${place.side} left-0 z-10 flex w-[460px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer`}>
       <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2 text-muted">
         <Search size={14} strokeWidth={1.5} />
-        <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search models and providers" className="flex-1 bg-transparent text-ink outline-none placeholder:text-faint" />
+        <input ref={search} autoFocus aria-label="Search models and providers" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search models and providers" className="min-w-0 flex-1 bg-transparent text-ink outline-none placeholder:text-faint" />
       </div>
       {efforts.length > 1 && onEffort && (
         <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2 text-[12px]">
@@ -90,6 +106,7 @@ export function ModelPicker({ models, onPick, onClose, onKey, efforts = [], effo
           <span className="flex-1" />{scored && <span className="w-[64px] text-right" title="tazuna bench: judge score out of 10 (runs)">Score</span>}
           <span className="w-[112px] text-right" title="dollars per million tokens: input / output">$ per M, in / out</span></div>}
         {!models && <div className="px-3 py-2 text-[12.5px] text-faint">Loading…</div>}
+        {models && query && groups.length === 0 && <div className="px-3 py-2 text-[12.5px] text-muted">No known models match this search.</div>}
         {groups.map(([provider, rows]) => { const caution = models?.cautions?.[provider]; return (
           <div key={provider}>
             <div className="px-3 pb-0.5 pt-2 text-[11.5px] font-medium text-faint">{provider}</div>
@@ -115,6 +132,30 @@ export function ModelPicker({ models, onPick, onClose, onKey, efforts = [], effo
         ); })}
         {hidden > 0 && <div className="px-3 py-2 text-[11.5px] text-faint">{q ? `${hidden.toLocaleString("en-US")} more: narrow the search` : `${hidden.toLocaleString("en-US")} more models: type to search them`}</div>}
       </div>
+      {catalogs.length > 0 && (
+        <div className="max-h-32 shrink-0 divide-y divide-line-soft overflow-auto border-t border-line-soft" aria-live="polite">
+          {catalogs.map(({ provider, state }) => {
+            const { label, detail, tone } = CATALOG_STATUS[state];
+            return (
+              <div key={provider} className="flex items-center gap-3 px-3 py-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5 text-[11.5px] font-medium text-ink">
+                    <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${tone}`} />
+                    <span>{provider} · {label}</span>
+                  </div>
+                  {detail && <p className="ml-3 mt-0.5 text-[11.5px] text-muted">{detail}</p>}
+                </div>
+                {state === "unavailable" && onRefreshModelList && (
+                  <button type="button" aria-label={`Retry ${provider} model list`} onClick={() => { search.current?.focus(); onRefreshModelList(provider); }}
+                    className="shrink-0 rounded-md border border-line px-2 py-1 text-[11.5px] text-ink hover:bg-hover focus-visible:outline focus-visible:outline-accent">
+                    Retry list
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
