@@ -663,6 +663,9 @@ is still loading is put back once it is; the model picker stays inside the conve
 asks"), but a question a chat hands to the agent asks for each command in every mode but full, and a chat in the home
 folder (not a repo) starts in ask: the user got 17 questions in one chat with no way to see or change the mode.
 
+0.1.120 (with tazuna 0.1.219): in auto, a question a chat hands to the agent asks only before a destructive command, as
+every turn in auto does; ask, edits, review and plan keep its once-only questions.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
