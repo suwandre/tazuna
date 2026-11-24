@@ -246,6 +246,18 @@ pub fn notify(title: &str, text: &str) {
 
 /// Saves the clipboard's image as a PNG at `path` (macOS: osascript; Windows: PowerShell). Nothing is written when the
 /// clipboard holds no image.
+/// The file a Finder copy put on the clipboard (macOS), where it still exists; None elsewhere or for none.
+pub fn clipboard_file() -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        let out = Command::new("osascript").args(["-e", "POSIX path of (the clipboard as «class furl»)"]).output().ok()?;
+        let p = std::path::PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+        (out.status.success() && p.is_file()).then_some(p)
+    }
+    #[cfg(not(target_os = "macos"))]
+    None
+}
+
 pub fn clipboard_image(path: &Path) -> std::io::Result<()> {
     #[cfg(target_os = "macos")]
     {

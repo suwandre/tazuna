@@ -16,12 +16,19 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
-## Unreleased
+## 0.1.214 (2026-11-24): a pasted screenshot comes in as an image
 
+The user: "i still cannot upload images to both CLI and the desktop harness as an attachment … cmd c, cmd v, nothing
+happens." A terminal pastes text only, so Cmd-V of an image reached tazuna as nothing or as a file's bare name; images
+pasted with ctrl-v alone, which the box never said.
+- A paste with nothing in it (some terminals send that for an image) takes the clipboard's image, as ctrl-v does.
+- A file copied in Finder pastes as its name alone in Terminal.app: when the clipboard's file has that name, its whole
+  path goes in, quoted, and the image goes with the message.
+- The box's hints say "ctrl-v image". Where the terminal sends nothing at all for Cmd-V, ctrl-v is the way.
 - The desktop sidebar reads the run log once per refresh, not once per folder, and resolves each logged path once per
   scan. On an M4 Pro Mac VM with 6,001 synthetic run rows (30 warm runs per build, `bench/local_latency.py`), median/p95
   for 20 folders dropped from 1,129/1,322 ms to 34/37 ms; for one folder, from 79/92 ms to 33/40 ms. This keeps each
-  requested folder's session summaries in memory until the reply; no persistent cache. The release binary grew 16.1 KiB.
+  requested folder's session summaries in memory until the reply; no persistent cache. The release binary grew 16.1 KiB. (Devin, PR #26)
 
 ## 0.1.213 (2026-11-24): edits mode asks before a write outside the project; replay reads as replay
 

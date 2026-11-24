@@ -2795,7 +2795,7 @@ pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
         } else {
             let used: usize = spans.iter().map(|s| s.content.width()).sum::<usize>() + 3;
             // two hints and the way to the rest: seven of them read as a manual in the message box (design review 4)
-            let keys = if v.live { fitted_keys("shift-tab mode · @ files · /keys all", (width as usize).saturating_sub(used)) } else { REPLAY_KEYS.to_string() };
+            let keys = if v.live { fitted_keys("shift-tab mode · @ files · ctrl-v image · /keys all", (width as usize).saturating_sub(used)) } else { REPLAY_KEYS.to_string() };
             spans.push(Span::styled(format!("   {keys}"), st(th.faint)));
         }
     }

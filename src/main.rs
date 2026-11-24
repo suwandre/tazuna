@@ -2585,6 +2585,22 @@ fn pasted(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
+/// What a paste puts in the draft. A terminal pastes text only, and Cmd-V of an image went nowhere (the user,
+/// 2026-11-24): with an image alone on the clipboard some terminals send an empty paste, which takes the image (`image`,
+/// as ctrl-v does), and a file copied in Finder comes as its name alone (Terminal.app), which takes its whole path
+/// (`file`), quoted for the spaces in "Screenshot 2026-11-24 at 10.00.00.png" (live.rs `words`).
+fn paste_text(text: &str, image: impl FnOnce() -> Option<std::path::PathBuf>, file: impl FnOnce() -> Option<std::path::PathBuf>) -> String {
+    let t = text.trim();
+    if t.is_empty() {
+        return image().map(|p| format!("@{} ", p.display())).unwrap_or_default();
+    }
+    let picture = ["png", "jpg", "jpeg", "gif", "webp", "heic", "tiff", "bmp"].iter().any(|e| t.to_ascii_lowercase().ends_with(&format!(".{e}")));
+    if picture && !t.contains(['/', '\\', '\n']) && let Some(p) = file().filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy() == t)) {
+        return format!("\"{}\" ", p.display());
+    }
+    pasted(text)
+}
+
 /// Saves the clipboard's image (macOS) as a PNG in a private temp folder.
 fn paste_image() -> Result<std::path::PathBuf> {
     let dir = std::env::temp_dir().join(format!("tazuna-images-{}", std::process::id()));
@@ -3764,7 +3780,7 @@ fn run_live(
             Event::Paste(text) => {
                 match login.as_mut().and_then(|l| l.form.as_mut()) {
                     Some(typed) => typed.push_str(text.trim()),
-                    None => ed.insert(&pasted(&text)),
+                    None => ed.insert(&paste_text(&text, || paste_image().ok(), platform::clipboard_file)),
                 }
                 continue;
             }
@@ -6199,6 +6215,19 @@ not json"#;
 
     /// A lean tool's question and its answer's line name it as the user knows it: "bash", not "mcp__lean__bash"; in a turn a
     /// chat handed over the question offers no "always" (the window's card hides it for `once`).
+    #[test]
+    fn a_paste_takes_the_image_or_the_copied_files_whole_path() {
+        use std::path::PathBuf;
+        let shot = || Some(PathBuf::from("/tmp/paste-1.png"));
+        let file = || Some(PathBuf::from("/Users/me/Desktop/Screenshot 2026-11-24 at 10.00.00.png"));
+        assert_eq!(super::paste_text("", shot, || None), "@/tmp/paste-1.png ", "an empty paste: the clipboard's image");
+        assert_eq!(super::paste_text(" ", || None, || None), "", "no image either: nothing");
+        assert_eq!(super::paste_text("Screenshot 2026-11-24 at 10.00.00.png", || None, file),
+            "\"/Users/me/Desktop/Screenshot 2026-11-24 at 10.00.00.png\" ", "a Finder copy's name: its whole path, quoted");
+        assert_eq!(super::paste_text("other.png", || None, file), "other.png", "a name that is not the copied file stays text");
+        assert_eq!(super::paste_text("fn main() {}\r\n", || None, file), "fn main() {}\n", "text as before");
+    }
+
     #[test]
     fn a_lean_tools_question_names_it_plainly() {
         let mut req = json!({"request_id": "p", "request": {"subtype": "can_use_tool", "tool_name": "mcp__lean__bash", "input": {"command": "df -h"}}});
