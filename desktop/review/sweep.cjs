@@ -424,6 +424,33 @@ const log = [];
       if (await box.inputValue() !== "what is wrong here?") throw new Error("the fallback changed the draft");
     });
     await ctx.close(); }
+  // the saved conversation clicked is its row from the start (no "New conversation" of its own while its messages come), and
+  // removing the one on screen closes it (it stayed, and a message sent there brought it back)
+  { const slow = "window.addEventListener('DOMContentLoaded', () => { const T = window.__TAURI_INTERNALS__; const v = T.view.bind(T); T.view = (tid, x) => setTimeout(() => v(tid, x), x && x.session_id ? 1500 : 0); });";
+    const [ctx, p] = await ctxOf({ extra: slow });
+    const side = p.locator('aside[aria-label="Conversations"]');
+    await step(p, "d-open-saved-no-new-row", async () => {
+      await side.locator("a").filter({ hasText: "Fix the flaky retry test" }).first().click();
+      await p.waitForTimeout(2500);
+      await side.locator("a").filter({ hasText: "What is a haiku?" }).first().click();
+      for (let i = 0; i < 10; i++) {
+        if (await side.getByText("New conversation", { exact: true }).count()) throw new Error("a \"New conversation\" row while the saved one opened");
+        await p.waitForTimeout(100);
+      }
+    });
+    await ctx.close(); }
+  { const [ctx, p] = await ctxOf({});
+    const side = p.locator('aside[aria-label="Conversations"]');
+    await step(p, "d-remove-open-conversation", async () => {
+      const row = side.locator("a").filter({ hasText: "What is a haiku?" }).first();
+      await row.click();
+      await p.waitForTimeout(800);
+      await row.hover();
+      await row.getByTitle("Remove from the list (its recording stays)").click();
+      await side.getByRole("button", { name: "Remove", exact: true }).click();
+      await p.getByText("What are we working on?").waitFor({ state: "visible", timeout: 4000 });
+    });
+    await ctx.close(); }
   // a sent message's attachments: a thumbnail under it (not its path in the text), whole over the window on a click
   { const [ctx, p] = await ctxOf({ extra: "window.__DRAFT_SEND_SUCCESS__ = true;" });
     const box = p.getByRole("textbox", { name: "Message" });

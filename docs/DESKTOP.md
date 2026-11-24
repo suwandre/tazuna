@@ -671,6 +671,12 @@ not a repo, and the rule for a project outside git made every chat start in ask.
 
 0.1.122 (with tazuna 0.1.221): a chat outside git switched to an agent profile drops to ask, as a project there starts.
 
+0.1.123 (with tazuna 0.1.222): removing the conversation on screen from the list closes it, and a new one takes its place;
+it stayed, and a message sent there put it back in the list (the user, 2026-11-24). A saved conversation clicked is its
+row from the first frame: until its messages came it matched no row and showed as a "New conversation" of its own for a
+second or two whenever another conversation was still working. The design sweep covers both (d-remove-open-conversation,
+d-open-saved-no-new-row). After a stopped hand-off, "please continue" carries its question (tazuna 0.1.222).
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

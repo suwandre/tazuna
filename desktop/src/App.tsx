@@ -299,7 +299,9 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
   }, [threads, held, tick]);
   /** The id the saved lists know a conversation by: its session's, else an earlier one's they still hold. */
   const listed = new Set(Object.values(sessions).flatMap((rows) => rows.map((r) => r.id)));
-  const listedId = (t?: Thread) => (t ? idsOf(t).find((id) => listed.has(id)) ?? t.view?.session_id ?? undefined : undefined);
+  // a saved one being opened is the row clicked from the start (`resume`): until its messages came it matched no row, and
+  // showed for a second or two as a "New conversation" of its own (the user, 2026-11-24)
+  const listedId = (t?: Thread) => (t ? idsOf(t).find((id) => listed.has(id)) ?? t.view?.session_id ?? t.resume ?? undefined : undefined);
   return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, restoreDraft, side, openSide, closeSide, forget, resuming, held: (held[active] ?? []).map((w) => w.text), hold, unhold, sendHeldNow, listedId };
 }
 
@@ -926,7 +928,13 @@ export default function App() {
       state: t.error ? "stopped" : t.view?.asking ? "asking" : busyView(t.view) ? "working" : "idle" })) : []}
     activeTid={active} onSwitch={show} onClose={close}
     onRename={inTauri ? (t, title) => core.rename(t.id, title).then(refreshSessions) : undefined}
-    onHide={inTauri ? (t) => core.hide(t.id).then(refreshSessions) : undefined}
+    // the conversation removed is closed where it is open: it stayed on screen, and a message sent there brought it back to
+    // the list (the user, 2026-11-24); on screen, a new one in its place takes over
+    onHide={inTauri ? (t) => core.hide(t.id).then(() => {
+      const shown = threads.find((x) => listedId(x) === t.id);
+      if (shown) { const was = shown.tid === active; close(shown.tid); if (was) open(shown.folder ?? null); }
+      refreshSessions();
+    }) : undefined}
     onDismiss={narrow ? () => setNavOpen(false) : undefined}
     planLeft={view?.limits ? `${Math.round(100 - view.limits[0])}% left` : inTauri ? "" : "Max · 62% left"} />;
   return (
