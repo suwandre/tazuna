@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.219 (2026-11-24): in auto, a chat's hand-off asks only before a destructive command
+
+A desktop chat asked 17 times in one conversation: a question a chat hands to the agent ran in a turn that asked before
+every command and file read in every mode but full (security review, 2026-11-21: a fetched page could steer it). The
+user chose auto's rule there: in auto it now asks only before the destructive commands auto asks about anywhere (risky.rs),
+and switching to auto answers such a question waiting. Ask, edits, review and plan keep its once-only questions. A chat
+in the home folder (not a repo) still starts in ask; its mode shows under the box in the desktop app since 0.1.119.
+
 ## 0.1.218 (2026-11-24): a picked mode reaches the agent once you stop picking; a switch answers the waiting question
 
 The user: shift-tab from ask to full "goes through plan, auto, etc. im assuming this will impact the calls". It did: each
