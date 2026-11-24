@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.223 (2026-11-24): 0.1.220 to 0.1.222 for every platform
+
+None of 0.1.220, 0.1.221 and 0.1.222 was published: GitHub had no macOS runner for one of 0.1.220's builds, and a test
+0.1.221 added used a Unix-only stand-in, so the Windows build could not compile its tests (Devin, PR #49: it runs on Unix
+only now). Each stayed a draft, as releases do since 0.1.212 until every platform is built. This one carries all three:
+a plain chat starting in its mode (0.1.220), the drop to ask when it leaves for an agent profile outside git (0.1.221),
+and "please continue" after a stopped hand-off (0.1.222).
+
 ## 0.1.222 (2026-11-24): "please continue" after a stopped hand-off carries its question
 
 The user stopped a question a chat had handed to the agent, then wrote "sorry, accidentally stopped it. please
