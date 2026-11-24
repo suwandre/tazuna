@@ -1439,6 +1439,31 @@ impl Live {
         mine && self.provider.is_none() && !matches!(req["request"]["tool_name"].as_str(), Some("AskUserQuestion" | "ExitPlanMode"))
     }
 
+    /// The questions waiting when the mode changes, answered where the new mode would not have asked them: in full each
+    /// one, in auto each but a destructive command (risky.rs); the user's own questions, calls written as text and a plan
+    /// to approve still wait. From the front, up to the first that still asks (the screen shows the front one). Switching
+    /// to full left "allow bash?" on screen, waiting for a yes full would have given (the user, 2026-11-24).
+    pub fn answer_for_mode(&mut self) -> Vec<(f64, Value)> {
+        let mut out = vec![];
+        while let Some(req) = self.pending.front() {
+            let r = &req["request"];
+            let tool = r["tool_name"].as_str().unwrap_or_default().to_string();
+            let theirs = !matches!(tool.as_str(), "AskUserQuestion" | "ExitPlanMode") && r["from_text"] != true;
+            let free = theirs && match self.permission_mode.as_str() {
+                "bypassPermissions" => true,
+                "auto" => r["handoff"] != true && r["outside"] != true && self.risky(req).0.is_none(),
+                _ => false,
+            };
+            if !free {
+                break;
+            }
+            let req = self.pending.pop_front().expect("the front, read above");
+            self.respond(&req, true, None);
+            out.push(self.record(json!({"type": "harness_permission_done", "tool": tool, "allow": true, "always": false, "mode": self.permission_mode})));
+        }
+        out
+    }
+
     /// Switches the permission mode (also mid-run). Before the process starts it only sets the starting mode.
     pub fn set_mode(&mut self, mode: &str) -> (f64, Value) {
         self.reviewer = mode == "review";
@@ -3419,6 +3444,32 @@ mod tests {
         assert!(got(r#""mode":"bypassPermissions""#), "full: claude's own");
         live.set_mode("auto");
         assert!(got(r#""mode":"acceptEdits""#), "auto reaches claude as acceptEdits");
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A switch to full answers the questions waiting; to auto, all but a destructive command, which stays on screen.
+    #[cfg(unix)]
+    #[test]
+    fn a_mode_switch_answers_the_questions_it_would_not_have_asked() {
+        let (mut live, dir) = stub::live("mode-answers");
+        live.permission_mode = "default".into();
+        live.send_typed("check the disk").unwrap();
+        stub::started(&dir);
+        let ask = |live: &Live, id: &str, cmd: &str| stub::feed(live, json!({"type": "control_request", "request_id": id,
+            "request": {"subtype": "can_use_tool", "tool_name": "Bash", "input": {"command": cmd}}}));
+        ask(&live, "q-1", "df -h");
+        ask(&live, "q-2", "git push --force");
+        live.poll();
+        assert_eq!(live.pending.len(), 2, "ask mode: both wait");
+        live.set_mode("auto");
+        let done = live.answer_for_mode();
+        assert_eq!((done.len(), live.pending.len()), (1, 1), "auto: df answered, the force push still asks");
+        assert_eq!(live.pending.front().unwrap()["request_id"], "q-2");
+        live.set_mode("bypassPermissions");
+        assert_eq!((live.answer_for_mode().len(), live.pending.len()), (1, 0), "full: it goes too");
+        let sent = (0..80).find_map(|_| std::fs::read_to_string(dir.join("stdin")).ok().filter(|t| t.contains("q-2")).or_else(|| { std::thread::sleep(Duration::from_millis(25)); None })).unwrap();
+        assert!(sent.contains(r#""request_id":"q-1""#) && sent.matches(r#""behavior":"allow""#).count() == 2, "{sent}");
         drop(live);
         std::fs::remove_dir_all(&dir).ok();
     }

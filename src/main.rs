@@ -1510,7 +1510,10 @@ fn app_server(a: &Args) -> Result<()> {
     // allowed without asking. Decided here on the call's real path, resolved, never on the question's display text.
     let mut allow_root: Option<PathBuf> = None;
     let (mut changed, mut last) = (false, Instant::now());
+    // a mode picked but not yet given to the agent (`choose_mode`)
+    let mut pending_mode: Option<(String, Instant)> = None;
     loop {
+        changed |= settle_mode(&mut live, &mut s, &mut pending_mode, false);
         loop {
             match rx.try_recv() {
                 Ok(cmd) => {
@@ -1519,6 +1522,8 @@ fn app_server(a: &Args) -> Result<()> {
                     // the window's commands carry "op"; chat_turn's events carry their own "type"
                     match cmd["op"].as_str().or(cmd["type"].as_str()) {
                         Some("send") => {
+                            // a mode just picked goes first: the message runs in it
+                            settle_mode(&mut live, &mut s, &mut pending_mode, true);
                             let text = cmd["text"].as_str().unwrap_or_default();
                             let (text, forced) = match text.strip_prefix("/agent ") {
                                 Some(rest) => (rest.trim(), true),
@@ -1567,10 +1572,7 @@ fn app_server(a: &Args) -> Result<()> {
                         // edits refused)
                         Some("mode") => {
                             match cmd["mode"].as_str().and_then(session::mode_from) {
-                                Some(m) => {
-                                    let (t, e) = live.set_mode(m);
-                                    s.apply(&e, t);
-                                }
+                                Some(m) => choose_mode(&live, &mut s, &mut pending_mode, m),
                                 None => info(&mut s, "mode: auto, full, ask, edits, review or plan".into()),
                             }
                         }
@@ -2687,6 +2689,47 @@ fn question_parts(req: &serde_json::Value) -> (String, String, String) {
     (tool, what, note)
 }
 
+/// How long mode picks must stop before the mode reaches the agent: shift-tab from ask to full stepped through edits,
+/// review and plan, each given to the running agent at once, so a call could be judged by one passed on the way (plan
+/// refused an edit, review sent a command to the reviewer; the user, 2026-11-24).
+const MODE_SETTLE: Duration = Duration::from_millis(700);
+
+/// The mode after `cur` (Live::set_mode's names) in shift-tab's order; full last: it never asks, so it is a choice made
+/// on purpose, not a stop on the way from auto to ask.
+fn next_mode(cur: &str) -> &'static str {
+    match cur {
+        "auto" => "default",
+        "default" => "acceptEdits",
+        "acceptEdits" => "review",
+        "review" => "plan",
+        "plan" => "bypassPermissions",
+        _ => "auto",
+    }
+}
+
+/// A mode picked: shown at once, given to the agent once the picks stop (`settle_mode`).
+fn choose_mode(live: &live::Live, s: &mut Session, pending: &mut Option<(String, Instant)>, mode: &str) {
+    s.apply(&json!({"type": "harness_mode", "mode": mode}), live.elapsed_ms());
+    *pending = Some((mode.to_string(), Instant::now()));
+}
+
+/// The mode picked goes to the agent once MODE_SETTLE has passed since the last pick, or `now` (a message about to go).
+/// True when it went.
+fn settle_mode(live: &mut live::Live, s: &mut Session, pending: &mut Option<(String, Instant)>, now: bool) -> bool {
+    let Some((mode, _)) = pending.take_if(|p| now || p.1.elapsed() >= MODE_SETTLE) else { return false };
+    apply_mode(live, s, &mode);
+    true
+}
+
+/// Gives the agent `mode`, and answers the questions waiting that it would not have asked (Live::answer_for_mode).
+fn apply_mode(live: &mut live::Live, s: &mut Session, mode: &str) {
+    let (t, e) = live.set_mode(mode);
+    s.apply(&e, t);
+    for (t, e) in live.answer_for_mode() {
+        s.apply(&e, t);
+    }
+}
+
 /// The latest session this repo ran (or the one whose id starts with `id`): claude's session id and tazuna's recording.
 /// The files changed since `start` (the work tree when the conversation began), with git's line counts against HEAD;
 /// a new, untracked file counts its lines as added.
@@ -3463,6 +3506,8 @@ fn run_live(
     let (mut list_area, mut list_links): (Option<ratatui::layout::Rect>, Vec<(ratatui::layout::Rect, String)>) = (None, vec![]);
     // the open list's last scroll that still fills its panel (ui draw_list): its scroll is held to it
     let mut list_top: Option<usize> = None;
+    // a mode picked with shift-tab, not yet given to the agent (`choose_mode`)
+    let mut pending_mode: Option<(String, Instant)> = None;
     let mut list_rows: Vec<(ratatui::layout::Rect, usize)> = vec![];
     // the transcript line on its first row (a selection holds lines), and when a drag past an edge last scrolled
     let (mut top_line, mut edge_scrolled) = (0usize, Instant::now());
@@ -3758,6 +3803,7 @@ fn run_live(
             s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
         }
         v.clock_ms = live.elapsed_ms();
+        settle_mode(live, &mut s, &mut pending_mode, false);
         let drawn = viewing.as_ref().map_or(&s, |w| &w.2);
         term.draw(|f| {
             let areas = fx.frame(f, drawn, &v, dt);
@@ -4348,17 +4394,8 @@ fn run_live(
         }
         match key.code {
             KeyCode::BackTab => {
-                // full last: it never asks, so it is a choice made on purpose, not a stop on the way from auto to ask
-                let next = match (live.permission_mode.as_str(), live.reviewer) {
-                    ("auto", _) => "default",
-                    ("default", _) => "acceptEdits",
-                    ("acceptEdits", false) => "review",
-                    ("acceptEdits", true) => "plan",
-                    ("plan", _) => "bypassPermissions",
-                    _ => "auto",
-                };
-                let (t, e) = live.set_mode(next);
-                s.apply(&e, t);
+                let cur = pending_mode.as_ref().map(|p| p.0.clone()).unwrap_or_else(|| if live.reviewer { "review".into() } else { live.permission_mode.clone() });
+                choose_mode(&live, &mut s, &mut pending_mode, next_mode(&cur));
             }
             // ctrl-c stops a run in progress; when idle it quits
             KeyCode::Char('c') if ctrl => match busy(&s).then(|| live.interrupt()).flatten() {
@@ -4450,6 +4487,8 @@ fn run_live(
                 if ed.text.trim().is_empty() {
                     continue;
                 }
+                // a mode just picked goes first: the message runs in it
+                settle_mode(live, &mut s, &mut pending_mode, true);
                 // the command menu is open: its selected command runs (the first one unless the arrows moved)
                 if !v.menu.is_empty() {
                     let pick = v.menu[v.menu_sel.min(v.menu.len() - 1)].0.clone();
@@ -4497,8 +4536,8 @@ fn run_live(
                     let want = text["/mode".len()..].trim();
                     match session::mode_from(want) {
                         Some(m) => {
-                            let (t, e) = live.set_mode(m);
-                            s.apply(&e, t);
+                            pending_mode = None;
+                            apply_mode(live, &mut s, m);
                         }
                         None => {
                             let msg = format!("mode: {} · /mode auto (asks only before destructive commands), full (never asks), ask, edits, review or plan", s.mode);
@@ -6343,6 +6382,27 @@ not json"#;
 
     /// A lean tool's question and its answer's line name it as the user knows it: "bash", not "mcp__lean__bash"; in a turn a
     /// chat handed over the question offers no "always" (the window's card hides it for `once`).
+    /// shift-tab's order, full last; a pick shows at once and reaches the agent only once the picks stop (or a message goes):
+    /// stepping from ask to full gave edits, review and plan to the running agent on the way.
+    #[test]
+    fn a_picked_mode_shows_at_once_and_reaches_the_agent_once_the_picks_stop() {
+        let mut m = "auto";
+        let order: Vec<&str> = (0..6).map(|_| { m = super::next_mode(m); m }).collect();
+        assert_eq!(order, ["default", "acceptEdits", "review", "plan", "bypassPermissions", "auto"]);
+        let mut live = live::Live::new("", "").unwrap();
+        live.permission_mode = "default".into();
+        let mut s = Session::new("", "high");
+        let mut pending = None;
+        for step in ["acceptEdits", "review", "plan", "bypassPermissions"] {
+            super::choose_mode(&live, &mut s, &mut pending, step);
+            assert!(!super::settle_mode(&mut live, &mut s, &mut pending, false), "picked {step}: not given yet");
+        }
+        assert_eq!((s.mode.as_str(), live.permission_mode.as_str(), live.reviewer), ("full", "default", false), "shown, not given: nothing passed through");
+        assert!(super::settle_mode(&mut live, &mut s, &mut pending, true) && pending.is_none());
+        assert_eq!(live.permission_mode, "bypassPermissions", "a message about to go: the mode landed on goes first");
+        std::fs::remove_file(&live.rec_path).ok();
+    }
+
     #[test]
     fn a_paste_takes_the_image_or_the_copied_files_whole_path() {
         use std::path::PathBuf;
