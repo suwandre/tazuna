@@ -15,7 +15,7 @@ export type Where = { label: string; folder: boolean; choices: { label: string; 
 export type ComposerBag = {
   readOnly?: boolean;
   where?: Where;
-  /** a plain chat (no project): the model alone, so no permission pill (design review 10) */
+  /** a plain chat (no project): the model alone; its permission pill shows too (its hand-offs ask) */
   chat?: boolean;
   session: Session; busy?: boolean; sendBlocked?: boolean; models?: Models | null; onModels?: () => void; onPickModel?: (c: ModelChoice) => void;
   onRefreshModelList?: (provider: string) => void;
@@ -339,8 +339,9 @@ export function WherePill({ composer: c }: { composer: ComposerBag }) {
 
 export function ModePill({ composer: c }: { composer: ComposerBag }) {
   const [open, setOpen] = useState(false);
-  // a plain chat runs the model alone: nothing there asks for a permission (shift-tab and the palette still reach it)
-  if (c.chat) return null;
+  // in a plain chat too: a question it hands to the agent asks for each command (in every mode but full), and a chat in
+  // the home folder, not a repo, starts in ask; hidden there, 17 questions came with no way to see or change the mode
+  // (the user, 2026-11-24)
   return (
     <span className="relative">
       <button disabled={!c.onMode} onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open} title={c.readOnly ? "Permission mode — available in the desktop app" : "Permission mode (shift-tab)"} className={pill}>

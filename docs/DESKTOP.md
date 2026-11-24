@@ -659,6 +659,10 @@ where the new mode would not have asked. From Devin's runs (PRs #36 to #39, #41)
 every form Tauri hands it over, and on Linux; a refused routed message comes back into the box; a saved model whose list
 is still loading is put back once it is; the model picker stays inside the conversation.
 
+0.1.119: a plain chat shows its permission mode too, under the box and in Cmd-K. It was hidden there ("nothing there
+asks"), but a question a chat hands to the agent asks for each command in every mode but full, and a chat in the home
+folder (not a repo) starts in ask: the user got 17 questions in one chat with no way to see or change the mode.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
