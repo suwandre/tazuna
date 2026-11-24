@@ -196,7 +196,7 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
   const open = (path: string | null, resume?: string, opts: { creator?: "new" | "edit"; then?: (tid: string) => void } = {}) => {
     if (path && !opts.creator) setProjects((p) => { const next = [path, ...p.filter((x) => x !== path)].slice(0, 12); localStorage.setItem(RECENT, JSON.stringify(next)); return next; });
     const already = !opts.creator && Object.values(live.current).find((t) => resume ? idsOf(t).includes(resume)
-      : t.folder === path && !t.creator && !t.view?.blocks.some((b) => b.kind === "prompt") && !t.error);
+      : t.folder === path && !t.creator && !t.resume && !t.view?.blocks.some((b) => b.kind === "prompt") && !t.error);
     // an open one is reused; what was to follow its start (`then`) follows now
     if (already) { show(already.tid); opts.then?.(already.tid); return; }
     // messages it had queued when the window last closed were never sent: they go back in its box
