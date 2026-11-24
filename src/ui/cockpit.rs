@@ -9,6 +9,7 @@ use ratatui::{
 
 pub(super) const OPTS: Opts = Opts { prompt: PromptStyle::Bar, group_tools: false, durations: true };
 const SIDEBAR: u16 = 38;
+const READING_WIDTH: u16 = 88;
 
 fn panel<'a>(title: &'a str, th: &Theme) -> Panel<'a> {
     hot_panel(title, th, false)
@@ -58,7 +59,13 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
 
     let [main, side] = Layout::horizontal([Constraint::Min(40), Constraint::Length(if narrow { 0 } else { SIDEBAR })]).areas(body);
     let frame = panel("transcript", th);
-    let inner = frame.inner(main).inner(Margin { horizontal: 1, vertical: 0 });
+    let mut inner = frame.inner(main).inner(Margin { horizontal: 1, vertical: 0 });
+    // Direction A: keep the full transcript frame and instruments, but give wide prose a bounded reading measure.
+    // Use this same rect for wrapping, selection and hit targets. The rail-hidden narrow layout keeps all its room.
+    if !narrow && inner.width > READING_WIDTH {
+        inner.x += (inner.width - READING_WIDTH) / 2;
+        inner.width = READING_WIDTH;
+    }
     f.render_widget(frame, main);
     let (last_block, trows, top_line) = render_transcript(f, inner, transcript(s, v, th, &OPTS, inner.width as usize), v.scroll, th);
     if narrow {

@@ -3867,6 +3867,35 @@ mod tests {
     }
 
     #[test]
+    fn cockpit_centers_its_reading_lane_and_hit_targets_inside_the_original_frame() {
+        let mut s = Session::new("", "medium");
+        s.blocks.push(Block::Text { text: "Read [the guide](https://example.com/guide).\n\n```rust\nlet answer = 42;\n```".into(), live: false });
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        for width in [80, 109, 110, 120, 130, 131, 132, 175] {
+            for live in [true, false] {
+                v.live = live;
+                let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 34)).unwrap();
+                let mut areas = Areas::default();
+                term.draw(|f| { areas = draw(f, &s, &v); }).unwrap();
+                let lane = areas.transcript;
+                let frame_width = width - if width < 110 { 0 } else { 38 };
+                let expected_width = if width < 110 { frame_width - 4 } else { (frame_width - 4).min(88) };
+                assert_eq!(lane.width, expected_width, "reading width at {width}, live={live}");
+                assert_eq!(lane.x, (frame_width - lane.width) / 2, "center inside the transcript frame, not the window");
+                let buf = term.backend().buffer();
+                assert_eq!(buf[(0, lane.y - 1)].symbol(), "╭");
+                assert_eq!(buf[(frame_width - 1, lane.y - 1)].symbol(), "╮", "do not shrink the frame");
+                assert_eq!(areas.tokens.map(|r| r.x), (width >= 110).then_some(width - 38), "keep the rail in place");
+                assert!(areas.last_block.is_some_and(|r| r.x == lane.x && r.width == lane.width));
+                assert_eq!(areas.links.len(), 1);
+                let (link, url) = &areas.links[0];
+                assert_eq!(url, "https://example.com/guide");
+                assert!(link.x >= lane.x && link.right() <= lane.right(), "link hit targets follow the reading lane");
+            }
+        }
+    }
+
+    #[test]
     fn cockpit_tools_show_the_average_and_tokens_an_axis() {
         let mut s = Session::new("", "medium");
         for i in 0..14 {
