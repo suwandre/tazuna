@@ -6,14 +6,14 @@
 <title>tazuna — Logo directions</title>
 <style>
 :root {
-  color-scheme: light;
-  --desk: #eeeae2;
-  --paper: #fbfaf6;
-  --ink: #26241f;
-  --muted: #605a50;
-  --line: #dbd4c8;
-  --accent: #414b79;
-  --accent-wash: #e9eaf2;
+  color-scheme: dark;
+  --desk: #111113;
+  --panel: #18181b;
+  --ink: #f0f0f2;
+  --muted: #a9a9af;
+  --line: #38383e;
+  --accent: #8f9bf0;
+  --accent-wash: #272a44;
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
 }
 * { box-sizing: border-box; }
@@ -24,16 +24,16 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .bank { position: absolute; width: 0; height: 0; overflow: hidden; }
 .page-bar, .section-head, .card-id, .context, .foot { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 .page-bar { border-bottom: 1px solid var(--line); padding: 20px 0; }
-.page-bar strong { font-size: 19px; letter-spacing: -.055em; }
+.page-bar strong { font: 700 17px/1 var(--mono); letter-spacing: -.05em; }
 .meta { margin: 0; font: 11px/1.5 var(--mono); text-transform: uppercase; letter-spacing: .12em; }
 .hero { display: grid; grid-template-columns: 1.05fr 1fr; align-items: end; gap: 44px; padding: 54px 0 40px; }
 .kicker { color: var(--accent); }
-h1, h2, h3 { font-family: Georgia, serif; font-weight: 400; margin: 0; letter-spacing: -.045em; }
-h1 { font-size: clamp(52px, 6.4vw, 94px); line-height: .98; margin: 12px 0 18px; }
-h2 { font-size: clamp(31px, 3.4vw, 48px); line-height: 1.07; }
-h3 { font-size: 33px; line-height: 1.08; }
+h1, h2, h3 { font-weight: 650; margin: 0; letter-spacing: -.055em; }
+h1 { font-size: clamp(47px, 6.4vw, 88px); line-height: .98; margin: 12px 0 18px; }
+h2 { font-size: clamp(29px, 3.4vw, 43px); line-height: 1.07; }
+h3 { font-size: 29px; line-height: 1.1; }
 .subtitle { max-width: 39ch; margin: 0; color: var(--muted); font-size: 17px; }
-.take { padding: 24px 27px; background: var(--paper); border: 1px solid var(--line); border-radius: 16px; }
+.take { padding: 24px 27px; background: var(--panel); border: 1px solid var(--line); border-left: 2px solid var(--accent); }
 .take p:not(.meta) { margin: 10px 0 0; max-width: 65ch; }
 .take a { display: inline-block; margin-top: 13px; font-weight: 650; }
 .readings { margin: 0 0 36px; padding: 20px 0; border-block: 1px solid var(--line); display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 28px; }
@@ -41,26 +41,25 @@ h3 { font-size: 33px; line-height: 1.08; }
 .section-head { margin-bottom: 17px; align-items: end; }
 .section-head p { margin: 0 0 3px; color: var(--muted); }
 .board { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
-.card { display: flex; flex-direction: column; min-width: 0; background: var(--paper); border: 1px solid var(--line); border-radius: 17px; overflow: hidden; scroll-margin-top: 18px; }
-.card.recommended { border-color: #888faf; box-shadow: 0 0 0 1px #888faf; }
+.card { display: flex; flex-direction: column; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; scroll-margin-top: 18px; }
+.card.recommended { border-color: var(--accent); }
 .card-head { padding: 19px 22px 15px; }
 .card-id { color: var(--muted); min-height: 23px; margin-bottom: 7px; }
-.badge { border-radius: 4px; padding: 3px 7px; background: #efece4; color: var(--muted); }
+.badge { padding: 3px 7px; background: #252529; color: var(--muted); }
 .recommended .badge { background: var(--accent-wash); color: var(--accent); }
 .rationale { margin: 6px 0 0; color: var(--muted); }
-.samples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0 12px; overflow: hidden; border: 1px solid #ded7cb; border-radius: 10px; }
-.surface { --stage: #eae5da; --stage-ink: #514b42; min-width: 0; background: var(--stage); color: var(--stage-ink); text-align: center; padding: 12px 8px 14px; }
-.surface.dark { --stage: #252421; --stage-ink: #ddd6ca; }
+.samples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0 12px; overflow: hidden; border: 1px solid var(--line); }
+.surface { --stage: #e8e8eb; --stage-ink: #37373e; min-width: 0; background: var(--stage); color: var(--stage-ink); text-align: center; padding: 12px 8px 14px; }
+.surface.dark { --stage: #222225; --stage-ink: #c7c7ce; }
 .icon { display: block; flex: none; }
 .app-preview { max-width: 100%; height: auto; aspect-ratio: 1; margin: 0 auto; }
 .sizes { min-height: 88px; display: flex; justify-content: center; align-items: end; gap: clamp(8px, 1.6vw, 22px); }
 .scale { display: grid; justify-items: center; align-content: end; gap: 4px; }
 .scale span { font: 10px/1.2 var(--mono); }
 .placements { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 9px 12px 0; }
-.context { justify-content: flex-start; gap: 8px; min-width: 0; min-height: 38px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 7px; background: #f2efe8; }
-.context.terminal { background: #242320; color: #ece7dd; border-color: #242320; font: 12px/1 var(--mono); }
+.context { justify-content: flex-start; gap: 8px; min-width: 0; min-height: 38px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 2px; background: #222225; }
+.context.terminal { background: #101012; font: 12px/1 var(--mono); }
 .context small { margin-left: auto; color: var(--muted); font: 10px/1 var(--mono); }
-.terminal small { color: #c3bbaf; }
 .wordmark { font-weight: 700; letter-spacing: -.045em; }
 .trade { display: grid; grid-template-columns: max-content 1fr; gap: 5px 12px; margin: 0; padding: 14px 22px 18px; font-size: 13px; }
 .trade dt { color: var(--accent); font-weight: 650; }
@@ -99,16 +98,13 @@ h3 { font-size: 33px; line-height: 1.08; }
     <linearGradient id="ink" x2="0" y2="1">
       <stop stop-color="#2a2824"/><stop offset="1" stop-color="#1d1c19"/>
     </linearGradient>
-    <linearGradient id="paper" x2="0" y2="1">
-      <stop stop-color="#fbf5e8"/><stop offset="1" stop-color="#e7dbc3"/>
-    </linearGradient>
-    <mask id="underpass" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
-      <rect width="1024" height="1024" fill="#fff"/>
-      <path d="M463 477l108 83" stroke="#000" stroke-width="134"/>
-    </mask>
     <g id="tile">
       <rect x="100" y="100" width="824" height="824" rx="186" filter="url(#shadow)"/>
       <rect x="100.5" y="100.5" width="823" height="823" rx="185.5" fill="none" stroke="#fff" stroke-opacity=".08"/>
+    </g>
+    <g id="graphite">
+      <rect x="100" y="100" width="824" height="824" rx="186" fill="#111113" filter="url(#shadow)"/>
+      <rect x="104" y="104" width="816" height="816" rx="182" fill="none" stroke="#fff" stroke-width="8" stroke-opacity=".18"/>
     </g>
     <g id="pixel" fill="currentColor" shape-rendering="crispEdges">
       <rect x="610" y="250" width="44" height="44"/>
@@ -142,80 +138,75 @@ h3 { font-size: 33px; line-height: 1.08; }
       <rect x="430" y="730" width="44" height="44"/>
       <rect x="490" y="730" width="44" height="44"/>
     </g>
-    <g id="steady" fill="currentColor">
-      <path d="M356 314h166v-25h109v-27h65v70H542v44H356z"/>
-      <path d="M326 438h372v66H326zM253 568h518v70H253z"/>
-      <path d="M478 353h64v356q0 71-70 71h-76q-77 0-77-76v-23h66v17q0 18 19 18h52q22 0 22-24z"/>
+    <g id="grid" fill="currentColor" shape-rendering="crispEdges">
+      <path d="M384 320h192v-64h128v64h-128v64H384zM320 448h384v64H320zM256 576h512v64H256z"/>
+      <path d="M512 384h64v384H320V640h64v64h128z"/>
     </g>
-    <g id="brush" fill="currentColor">
-      <path d="M326 355q203-30 339-114 41 10 58 52-33 34-147 61-142 34-250 21z"/>
-      <path d="M320 448q181-29 358-32l26 43-24 25q-178-8-368 19z"/>
-      <path d="M252 580q233-38 489-44l35 50-29 30q-264-17-507 33z"/>
-      <path d="M460 337q49-18 72 9 38 165 19 350-12 103-108 105-63 2-107-67 73 22 101-2 27-22 34-99 9-171-11-296z"/>
+    <g id="tty" fill="currentColor">
+      <path d="M192 320h64v-64h64v512h-64v-64h-64zM832 320h-64v-64h-64v512h64v-64h64z"/>
+      <path d="M320 320h384v384H320z"/>
+      <use href="#grid" transform="translate(173 173) scale(.66)" color="#111113"/>
     </g>
-    <g id="twin" fill="none" stroke="currentColor" stroke-width="67" stroke-linecap="round">
-      <path d="M266 554c169 0 188-255 358-255h130"/>
-      <path d="M266 725c174 0 200-255 371-255h117"/>
+    <g id="cursor" fill="currentColor">
+      <use href="#grid" transform="translate(-64 64) scale(.875)"/>
+      <path d="M640 640h128v128H640z" fill="var(--cursor, currentColor)"/>
     </g>
-    <g id="seal" fill="currentColor">
-      <path d="M337 334q18-15 48-5l292-5q24 0 29 28l-1 308q1 34-35 40l-316 1q-34-4-33-34l5-303q0-22 11-30z"/>
-      <use href="#steady" transform="translate(207 207) scale(.596)" color="var(--seal-cutout, #f6ecda)"/>
+    <g id="raster" fill="none" stroke="currentColor" stroke-width="64" stroke-linejoin="bevel">
+      <path d="M353 352h208l80-64h75M320 467h384M256 588h512"/>
+      <path d="M512 352v352l-48 48h-94l-42-42"/>
     </g>
-    <g id="letter" fill="none" stroke="currentColor" stroke-width="82" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M442 273v338c0 90 54 134 122 134 78 0 115-92 186-92"/>
-      <path d="M307 436h322"/>
+    <g id="tension" fill="none" stroke="currentColor" stroke-width="77" stroke-linejoin="bevel">
+      <path d="M416 256v392l96 96h256M272 448h384"/>
+      <path d="M544 528v64l40 40h184"/>
     </g>
-    <g id="knot" fill="none" stroke="currentColor" stroke-width="77" stroke-linecap="round" stroke-linejoin="round">
-      <path mask="url(#underpass)" d="M271 731c182 0 308-183 362-277 73-128 32-177-36-177-68 0-102 61-137 121-44 75-83 117-163 117"/>
-      <path d="M297 515c110-3 131-66 208-17l97 75c44 33 88 33 151 33"/>
+    <g id="command" fill="currentColor">
+      <path d="M320 256H192v512h128v-64h-64V320h64zM704 256h128v512H704v-64h64V320h-64z"/>
+      <use href="#grid" transform="translate(225 225) scale(.56)"/>
     </g>
     <symbol id="icon-pixel" viewBox="0 0 1024 1024">
       <use href="#tile" fill="url(#ink)"/><use href="#pixel" color="#ece8df"/>
     </symbol>
-    <symbol id="icon-steady" viewBox="0 0 1024 1024">
-      <use href="#tile" fill="url(#ink)"/><use href="#steady" color="#f4ebdc"/>
+    <symbol id="icon-grid" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#grid" color="#f0f0f2"/>
     </symbol>
-    <symbol id="icon-brush" viewBox="0 0 1024 1024">
-      <use href="#tile" fill="url(#paper)"/><use href="#brush" color="#322e29"/>
+    <symbol id="icon-tty" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#tty" color="#f0f0f2"/>
     </symbol>
-    <symbol id="icon-twin" viewBox="0 0 1024 1024">
-      <use href="#tile" fill="#343e4b"/><use href="#twin" color="#ede9db"/>
+    <symbol id="icon-cursor" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#cursor" color="#f0f0f2" style="--cursor: #8f9bf0"/>
     </symbol>
-    <symbol id="icon-seal" viewBox="0 0 1024 1024">
-      <use href="#tile" fill="url(#paper)"/>
-      <path d="M681 181v144h145z" fill="#b6a686" fill-opacity=".32"/>
-      <path d="M681 181l145 144H681z" fill="#fffdf7" fill-opacity=".46" transform="translate(-5 -5)"/>
-      <use href="#seal" color="#9d3e32"/>
+    <symbol id="icon-raster" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#raster" color="#f0f0f2"/>
     </symbol>
-    <symbol id="icon-letter" viewBox="0 0 1024 1024">
-      <use href="#tile" fill="#3f466b"/><use href="#letter" color="#f3eadd"/>
+    <symbol id="icon-tension" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#tension" color="#f0f0f2"/>
     </symbol>
-    <symbol id="icon-knot" viewBox="0 0 1024 1024">
-      <use href="#tile" fill="#32423b"/><use href="#knot" color="#eee9da"/>
+    <symbol id="icon-command" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#command" color="#f0f0f2"/>
     </symbol>
   </defs>
 </svg>
 <main>
   <header class="page-bar">
     <strong>tazuna</strong>
-    <p class="meta">Identity study &nbsp; / &nbsp; 01–07</p>
+    <p class="meta">Identity study / Round 02</p>
   </header>
   <section class="hero" aria-labelledby="title">
     <div>
-      <p class="meta kicker">The hand and the reins</p>
-      <h1 id="title">A steady hand.</h1>
-      <p class="subtitle">Six new logo directions for tazuna, a quiet coding agent named for the Japanese word for reins.</p>
+      <p class="meta kicker">tazuna / agentic coding</p>
+      <h1 id="title">A mark for<br>the terminal.</h1>
+      <p class="subtitle">Six sharper directions. One question: how much code does the hand need?</p>
     </div>
     <aside class="take" aria-labelledby="take-title">
-      <p class="meta kicker" id="take-title">My take on the current icon</p>
-      <p><strong>I like it. I’d keep the hand.</strong> The Japanese character for “hand” ties directly to the name, and its square pixels feel at home in a terminal. The loop is a clever detail, but the grid gets in its way at small sizes.</p>
-      <a href="#steady-hand">My pick: 02 Steady Hand ↓</a>
+      <p class="meta kicker" id="take-title">My take</p>
+      <p><strong>I mostly agree about round one.</strong> Cream tiles, ink brushwork and soft colors made it feel more like a journal than a coding tool. But the shipped icon already has the right idea: a bitmap hand is specific to tazuna and looks at home in a terminal. What I’d change is the 16 px drawing, not the symbol.</p>
+      <a href="#hard-grid">My pick: 02 Hard Grid ↓</a>
     </aside>
   </section>
   <dl class="readings">
-    <div><dt class="meta">256 &amp; 64 px / Dock</dt><dd>The paper-on-ink contrast and deliberate margins work. On charcoal, the dark tile edge is quieter than the mark itself.</dd></div>
-    <div><dt class="meta">32 &amp; 16 px / Small UI</dt><dd>At 32 px the bars still hold; at 16 px the gaps lose their rhythm and the tiny hook stops reading as a loop.</dd></div>
-    <div><dt class="meta">Among coding agents</dt><dd>The hand has more to do with the name than Claude’s burst, Codex’s prompt-cloud or Cursor’s faceted block. Its pixel texture is closer to opencode’s; the hand, not the grid, is what makes it tazuna.</dd></div>
+    <div><dt class="meta">What the category gets right</dt><dd>Zed’s angular geometry and opencode’s pixel lettering feel native to developer tools before you read their names.</dd></div>
+    <div><dt class="meta">Where I’d diverge</dt><dd>Claude Code’s pixel mascot and Codex’s rounded prompt motif show it’s not a rule about sharp corners. A generic prompt would give away tazuna’s most recognizable shape.</dd></div>
+    <div><dt class="meta">What this round tests</dt><dd>The hand is the first character in the Japanese name for reins. Start with that shape, square it up, and see what a cursor, terminal cell or bracket adds. Only the cursor uses tazuna’s indigo.</dd></div>
   </dl>
   <section aria-labelledby="board-title">
     <div class="section-head">
@@ -233,33 +224,33 @@ h3 { font-size: 33px; line-height: 1.08; }
 <script>
 const directions = [
   { mark: 'pixel', name: 'Pixel Hand', label: 'Current',
-    rationale: 'A nine-by-nine bitmap of the hand character, with a rein loop at its foot.',
+    rationale: 'The shipped nine-by-nine bitmap hand, with a rein loop at its foot.',
     gain: 'Terminal-native texture and a direct link to the name.',
-    cost: 'The gaps and small loop compete for the same pixels at 16 px.' },
-  { mark: 'steady', id: 'steady-hand', name: 'Steady Hand', label: 'Recommended',
-    rationale: 'Join the pixels into solid strokes, but keep the stepped crown and the open hook.',
-    gain: 'Keeps the silhouette and makes the three strokes and hook easier to follow at small sizes.',
-    cost: 'Less obviously a terminal bitmap; keep that texture in the existing working animation.' },
-  { mark: 'brush', name: 'Dry Ink', label: 'Calligraphy',
-    rationale: 'Draw the hand with uneven stroke weight, like ink set down on warm paper.',
-    gain: 'The most human take on the hand, and a clear shift away from generic terminal badges.',
-    cost: 'The tapered tips soften at 16 px; a warmer, less technical voice.' },
-  { mark: 'twin', name: 'Parallel Reins', label: 'Reins',
-    rationale: 'Two separate lines turn together: a small gesture of guidance, not a horse illustration.',
-    gain: 'An open silhouette with no crossings to lose at small sizes.',
-    cost: 'Without the wordmark, the curves could read as waves or a road.' },
-  { mark: 'seal', name: 'Paper Seal', label: 'Maker’s mark',
-    rationale: 'Set the hand in a vermilion stamp on a folded cream sheet.',
-    gain: 'Takes the paper-on-desk idea literally and adds one warm accent.',
-    cost: 'At 16 px the seal reads before the hand; the fold is a large-size detail.' },
-  { mark: 'letter', name: 'Rein Letter', label: 'Monogram',
-    rationale: 'Let the tail of a lowercase t pull out like a rein held under light tension.',
-    gain: 'An immediate connection to the Latin wordmark, without requiring the name to be read.',
-    cost: 'A lowercase t is familiar territory; it gives up the Japanese hand.' },
-  { mark: 'knot', name: 'The Hitch', label: 'Abstract',
-    rationale: 'Cross one strand over itself so that a single line feels held without being tied down.',
-    gain: 'A compact, asymmetric loop with a distinct silhouette.',
-    cost: 'At 16 px the crossing is the first detail to go, and the link to the name needs explaining.' },
+    cost: 'At 16 px, most of the hand breaks into specks and the loop all but disappears.' },
+  { mark: 'grid', id: 'hard-grid', name: 'Hard Grid', label: 'Recommended',
+    rationale: 'Redraw the hand as connected cells on a grid that snaps at 16 px.',
+    gain: 'The 8 px-wide hand keeps its step, bars and square hook without hairline gaps.',
+    cost: 'Less bitmap texture up close; leave the individual pixels to the working animation.' },
+  { mark: 'tty', name: 'TTY Hand', label: 'Terminal cell',
+    rationale: 'Turn the terminal welcome’s filled cell and half-block edges into the app badge.',
+    gain: 'Makes the CLI and desktop marks look like the same product.',
+    cost: 'At the smallest size the tile reads before the hand, like a status badge.' },
+  { mark: 'cursor', name: 'Input Cursor', label: 'Prompt',
+    rationale: 'Follow the hand with one indigo block, like a terminal waiting for input.',
+    gain: 'The most immediate coding cue here; position still carries it without color.',
+    cost: 'The block takes room from the hand and reads as a dot at very small sizes.' },
+  { mark: 'raster', name: 'Line Hand', label: 'Box drawing',
+    rationale: 'Build the hand from equal-weight strokes and beveled, box-drawing-style joins.',
+    gain: 'Reads as a single engineered glyph rather than an illustration.',
+    cost: 'The bevels soften at 16 px; the pixel-snapped Hard Grid stays sharper.' },
+  { mark: 'tension', name: 'Tension', label: 'Rein monogram',
+    rationale: 'A lowercase t with two hard-edged tracks pulling out from its foot.',
+    gain: 'The cleanest break from the original, with the fewest forms to recognize.',
+    cost: 'Loses the Japanese hand; the second track can look like a circuit trace.' },
+  { mark: 'command', name: 'Command Frame', label: 'Syntax',
+    rationale: 'Set the hand inside square brackets, like an argument passed to a command.',
+    gain: 'Reads as syntax without a cursor, color, or a miniature terminal window.',
+    cost: 'The brackets consume space at 16 px and are less ownable than the hand.' },
 ];
 
 const icon = (mark, size, className = '') =>
@@ -281,13 +272,12 @@ document.querySelector('#board').innerHTML = directions.map(({mark, id, name, la
       <h3 id="name-${mark}">${name}</h3>
       <p class="rationale">${rationale}</p>
     </header>
-    <div class="samples">${surface(mark, 'light')}${surface(mark, 'dark')}</div>
+    <div class="samples">${surface(mark, 'dark')}${surface(mark, 'light')}</div>
     <div class="placements">
       <div class="context" aria-label="Desktop titlebar wordmark">${icon(mark, 24)}<span class="wordmark">tazuna</span><small class="place-label">titlebar</small></div>
       <div class="context terminal" aria-label="Terminal welcome wordmark">
         <svg class="icon" width="20" height="20" viewBox="0 0 1024 1024" aria-hidden="true">
-          <rect x="24" y="24" width="976" height="976" rx="120" fill="#bfc6e5"/>
-          <use href="#${mark}" color="#242320" style="--seal-cutout:#bfc6e5"/>
+          <use href="#${mark}" color="#f0f0f2" style="--cursor: #8f9bf0"/>
         </svg><span>tazuna</span><small class="place-label">TUI</small>
       </div>
     </div>
@@ -298,10 +288,10 @@ document.querySelector('#board').innerHTML = directions.map(({mark, id, name, la
   </article>`).join('') + `
   <aside class="decision" aria-labelledby="decision-title">
     <p class="meta kicker">Design recommendation</p>
-    <h2 id="decision-title">Keep the hand.<br>Lose the gaps.</h2>
-    <p>Try Steady Hand first as the static app icon. Keep the bitmap for the animated working indicator: the pixels earn their place when they spell out the strokes over time.</p>
-    <p>If we want to change the tone as well as the drawing, Dry Ink is the strongest alternative. It keeps the name in the mark without looking like another terminal badge.</p>
-    <a href="#steady-hand">Back to Steady Hand ↑</a>
+    <h2 id="decision-title">Use the grid.<br>Skip the prompt.</h2>
+    <p>Pick Hard Grid as the static icon. It feels more like developer tooling because the drawing behaves like a terminal glyph, not because it adds generic terminal decoration.</p>
+    <p>TTY Hand is my runner-up if matching the terminal welcome is more important than keeping the standalone silhouette. Keep the shipped animation either way.</p>
+    <a href="#hard-grid">Back to Hard Grid ↑</a>
   </aside>`;
 </script>
 </body>
