@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tazuna — Logo directions</title>
+<style>
+:root {
+  color-scheme: dark;
+  --desk: #111113;
+  --panel: #18181b;
+  --ink: #f0f0f2;
+  --muted: #a9a9af;
+  --line: #38383e;
+  --accent: #8f9bf0;
+  --accent-wash: #272a44;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--desk); color: var(--ink); font: 15px/1.5 system-ui, sans-serif; }
+main { max-width: 1408px; padding: 0 36px; margin: auto; }
+a { color: var(--accent); text-underline-offset: .22em; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.bank { position: absolute; width: 0; height: 0; overflow: hidden; }
+.page-bar, .section-head, .card-id, .context, .foot { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.page-bar { border-bottom: 1px solid var(--line); padding: 20px 0; }
+.page-bar strong { font: 700 17px/1 var(--mono); letter-spacing: -.05em; }
+.meta { margin: 0; font: 11px/1.5 var(--mono); text-transform: uppercase; letter-spacing: .12em; }
+.hero { display: grid; grid-template-columns: 1.05fr 1fr; align-items: end; gap: 44px; padding: 54px 0 40px; }
+.kicker { color: var(--accent); }
+h1, h2, h3 { font-weight: 650; margin: 0; letter-spacing: -.055em; }
+h1 { font-size: clamp(47px, 6.4vw, 88px); line-height: .98; margin: 12px 0 18px; }
+h2 { font-size: clamp(29px, 3.4vw, 43px); line-height: 1.07; }
+h3 { font-size: 29px; line-height: 1.1; }
+.subtitle { max-width: 39ch; margin: 0; color: var(--muted); font-size: 17px; }
+.take { padding: 24px 27px; background: var(--panel); border: 1px solid var(--line); border-left: 2px solid var(--accent); }
+.take p:not(.meta) { margin: 10px 0 0; max-width: 65ch; }
+.take a { display: inline-block; margin-top: 13px; font-weight: 650; }
+.readings { margin: 0 0 36px; padding: 20px 0; border-block: 1px solid var(--line); display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 28px; }
+.readings dd { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+.section-head { margin-bottom: 17px; align-items: end; }
+.section-head p { margin: 0 0 3px; color: var(--muted); }
+.board { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.card { display: flex; flex-direction: column; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; overflow: hidden; scroll-margin-top: 18px; }
+.card.recommended { border-color: var(--accent); }
+.card-head { padding: 19px 22px 15px; }
+.card-id { color: var(--muted); min-height: 23px; margin-bottom: 7px; }
+.badge { padding: 3px 7px; background: #252529; color: var(--muted); }
+.recommended .badge { background: var(--accent-wash); color: var(--accent); }
+.rationale { margin: 6px 0 0; color: var(--muted); }
+.samples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0 12px; overflow: hidden; border: 1px solid var(--line); }
+.surface { --stage: #e8e8eb; --stage-ink: #37373e; min-width: 0; background: var(--stage); color: var(--stage-ink); text-align: center; padding: 12px 8px 14px; }
+.surface.dark { --stage: #222225; --stage-ink: #c7c7ce; }
+.icon { display: block; flex: none; }
+.app-preview { max-width: 100%; height: auto; aspect-ratio: 1; margin: 0 auto; }
+.sizes { min-height: 88px; display: flex; justify-content: center; align-items: end; gap: clamp(8px, 1.6vw, 22px); }
+.scale { display: grid; justify-items: center; align-content: end; gap: 4px; }
+.scale span { font: 10px/1.2 var(--mono); }
+.placements { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 9px 12px 0; }
+.context { justify-content: flex-start; gap: 8px; min-width: 0; min-height: 38px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 2px; background: #222225; }
+.context.terminal { background: #101012; font: 12px/1 var(--mono); }
+.context small { margin-left: auto; color: var(--muted); font: 10px/1 var(--mono); }
+.wordmark { font-weight: 700; letter-spacing: -.045em; }
+.trade { display: grid; grid-template-columns: max-content 1fr; gap: 5px 12px; margin: 0; padding: 14px 22px 18px; font-size: 13px; }
+.trade dt { color: var(--accent); font-weight: 650; }
+.trade dd { margin: 0; color: var(--muted); }
+.decision { padding: clamp(22px, 4vw, 52px); display: flex; flex-direction: column; justify-content: center; }
+.decision h2 { margin-top: 14px; }
+.decision p:not(.meta) { color: var(--muted); max-width: 43ch; margin: 14px 0 0; }
+.decision a { align-self: flex-start; margin-top: 15px; }
+.list-two { margin-top: 48px; padding-top: 29px; border-top: 1px solid var(--line); }
+.list-two .section-head { flex-wrap: wrap; }
+.list-two .section-head .kicker { color: var(--accent); }
+.list-two .decision { margin-top: 18px; padding: 22px; border: 1px solid var(--line); background: var(--panel); }
+.list-two .decision p:not(.meta) { max-width: 72ch; }
+.foot { align-items: start; border-top: 1px solid var(--line); margin: 32px 0 0; padding: 17px 0 27px; color: var(--muted); font-size: 12px; }
+.foot p { margin: 0; max-width: 68ch; }
+@media (max-width: 1170px) {
+  .board { max-width: 700px; margin: auto; }
+  .board, .hero { grid-template-columns: 1fr; }
+  .hero { gap: 26px; }
+  .decision { padding-inline: 0; }
+  .place-label { display: none; }
+}
+@media (max-width: 650px) {
+  main { padding: 0 15px; }
+  .hero { padding-top: 34px; }
+  .readings { grid-template-columns: 1fr; gap: 13px; }
+  .section-head { display: block; }
+  .section-head p { margin-top: 6px; }
+  .page-bar, .foot { flex-wrap: wrap; gap: 5px 16px; }
+  .card-head, .trade { padding-inline: 15px; }
+  .surface .meta { letter-spacing: .07em; }
+}
+</style>
+</head>
+<body>
+<svg class="bank" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-opacity=".28"/>
+    </filter>
+    <linearGradient id="ink" x2="0" y2="1">
+      <stop stop-color="#2a2824"/><stop offset="1" stop-color="#1d1c19"/>
+    </linearGradient>
+    <g id="tile">
+      <rect x="100" y="100" width="824" height="824" rx="186" filter="url(#shadow)"/>
+      <rect x="100.5" y="100.5" width="823" height="823" rx="185.5" fill="none" stroke="#fff" stroke-opacity=".08"/>
+    </g>
+    <g id="graphite">
+      <rect x="100" y="100" width="824" height="824" rx="186" fill="#111113" filter="url(#shadow)"/>
+      <rect x="104" y="104" width="816" height="816" rx="182" fill="none" stroke="#fff" stroke-width="8" stroke-opacity=".18"/>
+    </g>
+    <g id="pixel" fill="currentColor" shape-rendering="crispEdges">
+      <rect x="610" y="250" width="44" height="44"/>
+      <rect x="670" y="250" width="44" height="44"/>
+      <rect x="430" y="310" width="44" height="44"/>
+      <rect x="490" y="310" width="44" height="44"/>
+      <rect x="550" y="310" width="44" height="44"/>
+      <rect x="490" y="370" width="44" height="44"/>
+      <rect x="310" y="430" width="44" height="44"/>
+      <rect x="370" y="430" width="44" height="44"/>
+      <rect x="430" y="430" width="44" height="44"/>
+      <rect x="490" y="430" width="44" height="44"/>
+      <rect x="550" y="430" width="44" height="44"/>
+      <rect x="610" y="430" width="44" height="44"/>
+      <rect x="670" y="430" width="44" height="44"/>
+      <rect x="490" y="490" width="44" height="44"/>
+      <rect x="250" y="550" width="44" height="44"/>
+      <rect x="310" y="550" width="44" height="44"/>
+      <rect x="370" y="550" width="44" height="44"/>
+      <rect x="430" y="550" width="44" height="44"/>
+      <rect x="490" y="550" width="44" height="44"/>
+      <rect x="550" y="550" width="44" height="44"/>
+      <rect x="610" y="550" width="44" height="44"/>
+      <rect x="670" y="550" width="44" height="44"/>
+      <rect x="730" y="550" width="44" height="44"/>
+      <rect x="490" y="610" width="44" height="44"/>
+      <rect x="490" y="670" width="44" height="44"/>
+      <rect x="310" y="670" width="44" height="44"/>
+      <rect x="310" y="730" width="44" height="44"/>
+      <rect x="370" y="730" width="44" height="44"/>
+      <rect x="430" y="730" width="44" height="44"/>
+      <rect x="490" y="730" width="44" height="44"/>
+    </g>
+    <g id="grid" fill="currentColor" shape-rendering="crispEdges">
+      <path d="M384 320h192v-64h128v64h-128v64H384zM320 448h384v64H320zM256 576h512v64H256z"/>
+      <path d="M512 384h64v384H320V640h64v64h128z"/>
+    </g>
+    <g id="tty" fill="currentColor">
+      <path d="M192 320h64v-64h64v512h-64v-64h-64zM832 320h-64v-64h-64v512h64v-64h64z"/>
+      <path d="M320 320h384v384H320z"/>
+      <use href="#grid" transform="translate(173 173) scale(.66)" color="#111113"/>
+    </g>
+    <g id="cursor" fill="currentColor">
+      <use href="#grid" transform="translate(-64 64) scale(.875)"/>
+      <path d="M640 640h128v128H640z" fill="var(--cursor, currentColor)"/>
+    </g>
+    <g id="raster" fill="none" stroke="currentColor" stroke-width="64" stroke-linejoin="bevel">
+      <path d="M353 352h208l80-64h75M320 467h384M256 588h512"/>
+      <path d="M512 352v352l-48 48h-94l-42-42"/>
+    </g>
+    <g id="tension" fill="none" stroke="currentColor" stroke-width="77" stroke-linejoin="bevel">
+      <path d="M416 256v392l96 96h256M272 448h384"/>
+      <path d="M544 528v64l40 40h184"/>
+    </g>
+    <g id="command" fill="currentColor">
+      <path d="M320 256H192v512h128v-64h-64V320h64zM704 256h128v512H704v-64h64V320h-64z"/>
+      <use href="#grid" transform="translate(225 225) scale(.56)"/>
+    </g>
+    <symbol id="icon-pixel" viewBox="0 0 1024 1024">
+      <use href="#tile" fill="url(#ink)"/><use href="#pixel" color="#ece8df"/>
+    </symbol>
+    <symbol id="icon-grid" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#grid" color="#f0f0f2"/>
+    </symbol>
+    <symbol id="icon-tty" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#tty" color="#f0f0f2"/>
+    </symbol>
+    <symbol id="icon-cursor" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#cursor" color="#f0f0f2" style="--cursor: #8f9bf0"/>
+    </symbol>
+    <symbol id="icon-raster" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#raster" color="#f0f0f2"/>
+    </symbol>
+    <symbol id="icon-tension" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#tension" color="#f0f0f2"/>
+    </symbol>
+    <symbol id="icon-command" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#command" color="#f0f0f2"/>
+    </symbol>
+    <g id="led-array" fill="currentColor" transform="scale(64)">
+      <circle cx="8.5" cy="4.5" r=".55"/><circle cx="10.5" cy="4.5" r=".55"/><circle cx="12.5" cy="4.5" r=".55" fill="#8f9bf0"/>
+      <circle cx="6.5" cy="6.5" r=".55"/><circle cx="8.5" cy="6.5" r=".55"/><circle cx="10.5" cy="6.5" r=".55"/>
+      <circle cx="4.5" cy="8.5" r=".55"/><circle cx="6.5" cy="8.5" r=".55"/><circle cx="8.5" cy="8.5" r=".55"/><circle cx="10.5" cy="8.5" r=".55"/><circle cx="12.5" cy="8.5" r=".55"/>
+      <circle cx="4.5" cy="10.5" r=".55"/><circle cx="8.5" cy="10.5" r=".55"/>
+      <circle cx="4.5" cy="12.5" r=".55"/><circle cx="6.5" cy="12.5" r=".55"/><circle cx="8.5" cy="12.5" r=".55"/>
+    </g>
+    <g id="scanline" fill="currentColor" transform="scale(64)">
+      <path d="M4 5.25 10.5 4l1.75.5v.875L4 6.375zM5 7h7.25v1H5zM3.75 8.75h8.75v1.125H3.75z"/>
+      <path d="M7.375 6h1.25v2h-1.25zM8 8.75h1.25v1.125H8zM7.375 10.5h1.25v1L7.5 12.625H5.625L4.5 11.5l.875-.875.875.875H7z"/>
+    </g>
+    <g id="switchback-mark" fill="currentColor" transform="scale(64)">
+      <path d="M4 4h6L6 8v1l3 3H4zM12 4v8h-1.5L7 8.5z"/>
+    </g>
+    <g id="inference-stack" fill="currentColor" transform="scale(64)">
+      <path opacity=".55" d="M3.5 8.875 8 10.5l4.5-1.625v1.25L8 11.75l-4.5-1.625z"/>
+      <path opacity=".78" d="M3.5 7.125 8 8.75l4.5-1.625v1.25L8 10l-4.5-1.625z"/>
+      <path d="M3.5 6.25 8 4.625l4.5 1.625-2 .725L8 6.05l-1.5.55L9 7.525 8 7.875z"/>
+    </g>
+    <g id="stroke-order" fill="currentColor" transform="scale(64)">
+      <path d="M5 5h3V4h3v1H8v1H5zM5 7h3v1H5zM4 9h4v1H4zM9 6h1v6H6v-1h3z"/>
+    </g>
+    <g id="terminal-id" fill="none" stroke="currentColor" stroke-width="1.15" transform="scale(64)">
+      <path d="M4.75 4v3.5h2.5M3.5 5.25h3.75M8.5 5.25h3.75L8.5 7.5h3.75"/>
+      <path d="M4 9.125 6.75 10.625 4 12.125M8.75 11.875h3.75"/>
+    </g>
+    <symbol id="icon-led-array" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#led-array" color="#f0f0f2"/>
+    </symbol>
+    <symbol id="icon-scanline" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#scanline" color="#f0f0f2"/>
+    </symbol>
+    <symbol id="icon-switchback-mark" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#switchback-mark" color="#f0f0f2"/>
+    </symbol>
+    <symbol id="icon-inference-stack" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#inference-stack" color="#f0f0f2"/>
+    </symbol>
+    <symbol id="icon-stroke-order" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#stroke-order" color="#f0f0f2"/>
+    </symbol>
+    <symbol id="icon-terminal-id" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#terminal-id" color="#f0f0f2"/>
+    </symbol>
+  </defs>
+</svg>
+<main>
+  <header class="page-bar">
+    <strong>tazuna</strong>
+    <p class="meta">Identity study / Round 02</p>
+  </header>
+  <section class="hero" aria-labelledby="title">
+    <div>
+      <p class="meta kicker">tazuna / agentic coding</p>
+      <h1 id="title">A mark for<br>the terminal.</h1>
+      <p class="subtitle">Six sharper directions. One question: how much code does the hand need?</p>
+    </div>
+    <aside class="take" aria-labelledby="take-title">
+      <p class="meta kicker" id="take-title">My take</p>
+      <p><strong>I mostly agree about round one.</strong> Cream tiles, ink brushwork and soft colors made it feel more like a journal than a coding tool. But the shipped icon already has the right idea: a bitmap hand is specific to tazuna and looks at home in a terminal. What I’d change is the 16 px drawing, not the symbol.</p>
+      <a href="#hard-grid">My pick: 02 Hard Grid ↓</a>
+    </aside>
+  </section>
+  <dl class="readings">
+    <div><dt class="meta">What the category gets right</dt><dd>Zed’s angular geometry and opencode’s pixel lettering feel native to developer tools before you read their names.</dd></div>
+    <div><dt class="meta">Where I’d diverge</dt><dd>Claude Code’s pixel mascot and Codex’s rounded prompt motif show it’s not a rule about sharp corners. A generic prompt would give away tazuna’s most recognizable shape.</dd></div>
+    <div><dt class="meta">What this round tests</dt><dd>The hand is the first character in the Japanese name for reins. Start with that shape, square it up, and see what a cursor, terminal cell or bracket adds. Only the cursor uses tazuna’s indigo.</dd></div>
+  </dl>
+  <section aria-labelledby="board-title">
+    <div class="section-head">
+      <h2 id="board-title">The comparison board</h2>
+      <p class="meta">Same grid · Same sizes · Both surfaces</p>
+    </div>
+    <div class="board" id="board"></div>
+    <noscript><p>Enable JavaScript to render the inline comparison samples.</p></noscript>
+  </section>
+  <section class="list-two" id="list-two" aria-labelledby="list-two-title">
+    <div class="section-head">
+      <div>
+        <p class="meta kicker">Six additional directions</p>
+        <h2 id="list-two-title">List 2</h2>
+      </div>
+      <p class="meta">Same grid · Same sizes · Both surfaces</p>
+    </div>
+    <div class="board" id="board-two"></div>
+    <aside class="decision" aria-labelledby="list-two-pick">
+      <p class="meta kicker">List 2 / Design recommendation</p>
+      <h2 id="list-two-pick">Pick Stroke Order.</h2>
+      <p><strong>Stroke Order</strong> keeps the hand that ties the icon to tazuna’s name. Its four separate strokes also give the working animation a clear order to draw them in.</p>
+      <p><strong>Switchback</strong> is my runner-up: the rein-shaped cut holds up at 16 px, but at a glance it can read as a capital K or a back arrow, neither of which points to tazuna.</p>
+      <a href="#stroke-order-card">Back to Stroke Order ↑</a>
+    </aside>
+  </section>
+  <footer class="foot">
+    <p>01 copies the shipped <code>app-icon.svg</code> artwork. The wordmarks and titlebar/TUI strips are context studies, not changes to the app. The live terminal draws its own font glyph.</p>
+    <p class="meta">tazuna / desktop mockups</p>
+  </footer>
+</main>
+<script>
+const directions = [
+  { mark: 'pixel', name: 'Pixel Hand', label: 'Current',
+    rationale: 'The shipped nine-by-nine bitmap hand, with a rein loop at its foot.',
+    gain: 'Terminal-native texture and a direct link to the name.',
+    cost: 'At 16 px, most of the hand breaks into specks and the loop all but disappears.' },
+  { mark: 'grid', id: 'hard-grid', name: 'Hard Grid', label: 'Recommended',
+    rationale: 'Redraw the hand as connected cells on a grid that snaps at 16 px.',
+    gain: 'The 8 px-wide hand keeps its step, bars and square hook without hairline gaps.',
+    cost: 'Less bitmap texture up close; leave the individual pixels to the working animation.' },
+  { mark: 'tty', name: 'TTY Hand', label: 'Terminal cell',
+    rationale: 'Turn the terminal welcome’s filled cell and half-block edges into the app badge.',
+    gain: 'Makes the CLI and desktop marks look like the same product.',
+    cost: 'At the smallest size the tile reads before the hand, like a status badge.' },
+  { mark: 'cursor', name: 'Input Cursor', label: 'Prompt',
+    rationale: 'Follow the hand with one indigo block, like a terminal waiting for input.',
+    gain: 'The most immediate coding cue here; position still carries it without color.',
+    cost: 'The block takes room from the hand and reads as a dot at very small sizes.' },
+  { mark: 'raster', name: 'Line Hand', label: 'Box drawing',
+    rationale: 'Build the hand from equal-weight strokes and beveled, box-drawing-style joins.',
+    gain: 'Reads as a single engineered glyph rather than an illustration.',
+    cost: 'The bevels soften at 16 px; the pixel-snapped Hard Grid stays sharper.' },
+  { mark: 'tension', name: 'Tension', label: 'Rein monogram',
+    rationale: 'A lowercase t with two hard-edged tracks pulling out from its foot.',
+    gain: 'The cleanest break from the original, with the fewest forms to recognize.',
+    cost: 'Loses the Japanese hand; the second track can look like a circuit trace.' },
+  { mark: 'command', name: 'Command Frame', label: 'Syntax',
+    rationale: 'Set the hand inside square brackets, like an argument passed to a command.',
+    gain: 'Reads as syntax without a cursor, color, or a miniature terminal window.',
+    cost: 'The brackets consume space at 16 px and are less ownable than the hand.' },
+];
+
+const moreDirections = [
+  { mark: 'led-array', name: 'LED Array', label: 'Agent activity',
+    rationale: 'Map the hand to a five-by-five LED display with one lit status dot.',
+    gain: 'Makes the brand feel like an instrument panel that can show work in progress.',
+    cost: 'The dots read as a pattern before they read as a hand at 16 px.' },
+  { mark: 'scanline', name: 'Scanline', label: 'Display raster',
+    rationale: 'Break the hand into four offset bands, like a terminal drawn a line at a time.',
+    gain: 'Keeps the glyph recognizable while making the display itself part of the mark.',
+    cost: 'The gaps are less clear at 16 px; the effect works best in motion or at Dock size.' },
+  { mark: 'switchback-mark', name: 'Switchback', label: 'Runner-up',
+    rationale: 'Cut the turn of a rein out of a solid square; the gap is the mark.',
+    gain: 'Two bold pieces and one clean cut give it a strong silhouette at 16 px.',
+    cost: 'At a glance, the cut can read as a capital K or a back arrow.' },
+  { mark: 'inference-stack', name: 'Inference Stack', label: 'Layers',
+    rationale: 'Cut a route into three stacked planes, with each pass visible in cross-section.',
+    gain: 'Suggests layers of work rather than a single prompt, with no lettering to resolve.',
+    cost: 'Layered tiles are familiar infrastructure imagery; the top cut is the detail that makes this one different.' },
+  { mark: 'stroke-order', id: 'stroke-order-card', name: 'Stroke Order', label: 'Recommended',
+    rationale: 'Separate the hand into four gestures, from the stepped crown to the hook.',
+    gain: 'Keeps the hand and gives each stroke a clean, independent shape to animate.',
+    cost: 'At a glance the detached bars can look like a list next to an arrow.' },
+  { mark: 'terminal-id', name: 'Terminal ID', label: 'Type lockup',
+    rationale: 'Put a compact tz above a prompt, like a two-line terminal signature.',
+    gain: 'The initials do the branding and the prompt explains the category.',
+    cost: 'It’s closer to a wordmark than a symbol; the letters are the first thing to soften.' },
+];
+
+const icon = (mark, size, className = '') =>
+  `<svg class="icon ${className}" width="${size}" height="${size}" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#icon-${mark}"/></svg>`;
+
+const surface = (mark, theme) => `
+  <div class="surface ${theme}" role="img" aria-label="${theme} surface: 256, 64, 32 and 16 pixel icon samples">
+    <p class="meta">${theme} / 256 px</p>
+    ${icon(mark, 256, 'app-preview')}
+    <div class="sizes">
+      ${[64, 32, 16].map(size => `<div class="scale">${icon(mark, size)}<span>${size} px</span></div>`).join('')}
+    </div>
+  </div>`;
+
+const renderCards = (list, start = 1) => list.map(({mark, id, name, label, rationale, gain, cost}, index) => `
+  <article class="card${id ? ' recommended' : ''}" ${id ? `id="${id}"` : ''} aria-labelledby="name-${mark}">
+    <header class="card-head">
+      <div class="card-id meta"><span>${String(index + start).padStart(2, '0')}</span><span class="badge">${label}</span></div>
+      <h3 id="name-${mark}">${name}</h3>
+      <p class="rationale">${rationale}</p>
+    </header>
+    <div class="samples">${surface(mark, 'dark')}${surface(mark, 'light')}</div>
+    <div class="placements">
+      <div class="context" aria-label="Desktop titlebar wordmark">${icon(mark, 24)}<span class="wordmark">tazuna</span><small class="place-label">titlebar</small></div>
+      <div class="context terminal" aria-label="Terminal welcome wordmark">
+        <svg class="icon" width="20" height="20" viewBox="0 0 1024 1024" aria-hidden="true">
+          <use href="#${mark}" color="#f0f0f2" style="--cursor: #8f9bf0"/>
+        </svg><span>tazuna</span><small class="place-label">TUI</small>
+      </div>
+    </div>
+    <dl class="trade">
+      <dt>Strength</dt><dd>${gain}</dd>
+      <dt>Trade-off</dt><dd>${cost}</dd>
+    </dl>
+  </article>`).join('');
+
+document.querySelector('#board').innerHTML = renderCards(directions) + `
+  <aside class="decision" aria-labelledby="decision-title">
+    <p class="meta kicker">Design recommendation</p>
+    <h2 id="decision-title">Use the grid.<br>Skip the prompt.</h2>
+    <p>Pick Hard Grid as the static icon. It feels more like developer tooling because the drawing behaves like a terminal glyph, not because it adds generic terminal decoration.</p>
+    <p>TTY Hand is my runner-up if matching the terminal welcome is more important than keeping the standalone silhouette. Keep the shipped animation either way.</p>
+    <a href="#hard-grid">Back to Hard Grid ↑</a>
+  </aside>`;
+document.querySelector('#board-two').innerHTML = renderCards(moreDirections, directions.length + 1);
+</script>
+</body>
+</html>
