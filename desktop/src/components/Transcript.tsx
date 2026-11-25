@@ -257,7 +257,7 @@ function WorkFold({ tools, secs, live, asking, since, out }: { tools: ToolStep[]
         <ChevronRight size={13} strokeWidth={1.5} className={`flex-none transition-transform duration-150 ${shown ? "rotate-90" : ""}`} />
         {/* the mark at work where the spinning ring was, "Working" under a slow shimmer, and its tokens so far (design review
             13, D1 of mockups/v10.html); with reduced motion the mark is drawn whole and the words plain */}
-        {live && !asking && <Mark size={MARK_AT_WORK} working />}
+        {live && !asking && <Mark size={MARK_AT_WORK} motion="write" />}
         <span className={`flex-none ${live && asking ? "font-medium text-warn" : ""}`}>{live ? (asking ? "Waiting for you" : <><span className="tz-shimmer font-medium">Working</span>{since && <> <Ticking since={since} /></>}</>) : `Worked${took}`}</span>
         {live && !asking && !!out && <span className="flex flex-none items-center text-faint"><Sep />↓ {tok(out)} tokens</span>}
         {what && <span className="flex min-w-0 items-center truncate text-faint"><Sep />{what}</span>}
@@ -273,8 +273,7 @@ function WorkFold({ tools, secs, live, asking, since, out }: { tools: ToolStep[]
   );
 }
 
-/** The working mark's tile on a 12.5 px line (18.75 px high): 10 px, as a 20 px tile would not fit it. A multiple of 10, so
- * its cells land on whole device pixels (components/Mark.tsx). */
+/** The working mark's tile on a 12.5 px line (18.75 px high): 10 px, as a 20 px tile would not fit it. */
 const MARK_AT_WORK = 10;
 
 /** Under a reply that is still going: the mark at work, what it is doing with dots that count, how long the reply has run
@@ -283,7 +282,7 @@ function Working({ what, since, out }: { what: string; since?: number; out?: num
   const [start] = useState(() => since ?? Date.now());
   return (
     <div role="status" className="mx-auto flex max-w-[756px] items-center gap-2 px-7 text-[12.5px] text-muted">
-      <Mark size={MARK_AT_WORK} working />
+      <Mark size={MARK_AT_WORK} motion="write" />
       <span className="tz-shimmer font-medium">{what}</span><span className="tz-dots -ml-2" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>
       <span className="tabular-nums text-faint"><Ticking since={start} />{!!out && <><Sep />↓ {tok(out)} tokens</>}</span>
     </div>

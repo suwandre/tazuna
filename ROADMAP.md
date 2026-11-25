@@ -302,6 +302,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-25: replace the desktop's Pixel Hand with Stroke Order. Four separate strokes keep 手 and give the working row
+  a clear order to write; the sidebar pulses the complete mark, and the terminal keeps its glyph and colour pulse.
+
 - 2026-11-24: permission modes. "auto" (the default) runs everything but a short list of destructive commands, which ask
   (risky.rs: rm, chmod or chown outside the project, force push, reset --hard, git clean -f, sudo, disk tools); "full" is
   the old auto and never asks. A turn a chat hands to the agent follows the session's mode in full and auto, reversing

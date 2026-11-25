@@ -90,12 +90,11 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - The sheet is lifted in dark too (design review 11, `mockups/v8.html`): `main` #211f1b on the desk #121110 is 1.15:1 (it
   was 1.08:1, and the sheet read only in light); card, field, hover and the lines each a step up with it, and `faint` too,
   so it still reads 4.6:1 on a hovered row.
-- One mark: 手 (ta, the hand of 手綱) as a 9×9 bitmap, its last stroke ending in a rein's loop, paper on ink
-  (`components/Mark.tsx`, design review 13: the user's pick of six in `mockups/logo.html`, kept there with the stroke mark
-  on indigo it replaced, `mockups/marks/a-rein-loop-indigo.svg`). The app icon (`app-icon.svg`), the sidebar (20 px tile)
-  and the terminal's welcome (two cells, `▐手▌`, in the accent: a terminal draws its own font) use it; nothing else stands
-  for tazuna. A working mark writes its pixels in stroke order: on a running reply's Working row (a 10 px tile: 20 px would
-  not fit its 12.5 px line) and in the sidebar while any reply runs (design review 13, D1 of `mockups/v10.html`).
+- One mark: 手 (ta, the hand of 手綱). Stroke Order separates it into a crown, two bars and a hook on graphite
+  (`mockups/logo-directions.html`, `app-icon.svg` and `components/Mark.tsx`). A running reply writes and holds the mark on its
+  Working row and work fold (10 px); the sidebar pulses the complete mark (20 px) while any open thread is working.
+  New chats, receipts and reduced motion use the still mark (`mockups/logo-animations.html`). The terminal draws its own
+  glyph: `▐手▌` in the welcome and a colour pulse on 手 while working.
 - Quiet structure: hairline borders, not shadows, for everything that sits on the page. What floats over it (a menu, a
   popover, a dialog, a tooltip; a toast or a card that opens by itself: `tz-float`) has the `pop` shadow, and in dark a fill one step lighter than a card: a menu over a card
   of the same fill read as part of it (design review 8, desktop 0.1.87). The composer keeps its own soft shadow.
