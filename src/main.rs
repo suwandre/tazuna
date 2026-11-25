@@ -3369,7 +3369,9 @@ fn usage_rows(log: &str, since: u64, labels: &str, recordings: bool) -> Vec<serd
         let nothing = r["secs"].as_f64().unwrap_or(0.0) < 3.0 && r["cost_usd"].as_f64().unwrap_or(0.0) == 0.0 && strong.is_empty();
         let real = m["mode"] == "live" && !realuse::skipped_folder(m["cwd"].as_str().unwrap_or_default()) && !realuse::probe(prompt) && !nothing
             && !prompt.starts_with("(claude continued") && !(prompt.starts_with('/') && prompt.split_whitespace().count() <= 2);
-        json!([r["ts"], m["model"], m["version"], plan, r["cost_usd"], t["input"], t["cache_write"], t["cache_read"],
+        // a plan's run that moved on to a billed model: its plan share (a reference price) is not paid money
+        let cost = r["cost_usd"].as_f64().map(|c| c - r["plan_cost_usd"].as_f64().unwrap_or(0.0));
+        json!([r["ts"], m["model"], m["version"], plan, cost, t["input"], t["cache_write"], t["cache_read"],
             t["output"], r["stop"], r["verify"]["status"], m["cache_ttl"], m["mode"], real, strong, soft, m["provider"]])
     }).collect()
 }
@@ -6452,8 +6454,10 @@ mod tests {
 {"ts": 200, "meta": {"claude_version": null}, "cost_usd": 0.5}
 {"ts": 200, "meta": {"claude_version": "2.1"}, "cost_usd": 9.0}
 {"ts": 200, "meta": {}, "cost_usd": 7.0}
+{"ts": 200, "meta": {"claude_version": null, "plan": true, "provider": "Mistral Vibe"}, "cost_usd": 3.0}
 broken"#;
-        assert!((crate::live::paid_since(log, 150) - 0.5).abs() < 1e-9, "the plan's runs and older ones do not count");
+        // the own loop on a plan's key logs its cost at the reference price: the plan's, not spend (the user, 2026-11-25)
+        assert!((crate::live::paid_since(log, 150) - 0.5).abs() < 1e-9, "the plans' runs and older ones do not count");
         assert!((crate::live::paid_since(log, 0) - 0.9).abs() < 1e-9);
     }
 
@@ -6504,6 +6508,9 @@ broken"#;
 {"ts": 101, "meta": {"model": "claude-opus-5-5", "claude_version": "2"}, "cost_usd": 0.3}"#;
         let rows = super::usage_rows(log, 0, "", false);
         assert_eq!((&rows[0][3], &rows[0][16], &rows[1][3]), (&json!(false), &json!("Anthropic API"), &json!(true)));
+        // a Mistral Vibe run that escalated to it: the plan's $0.30 at its reference price is not paid to Anthropic API
+        let log = r#"{"ts": 100, "meta": {"model": "claude-opus-5-5", "claude_version": "2", "plan": false, "provider": "Anthropic API"}, "cost_usd": 0.8, "plan_cost_usd": 0.3}"#;
+        assert!((super::usage_rows(log, 0, "", false)[0][4].as_f64().unwrap() - 0.5).abs() < 1e-9);
     }
 
     #[test]

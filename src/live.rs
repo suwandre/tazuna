@@ -445,11 +445,12 @@ pub fn spend_cap() -> Option<f64> {
     }
 }
 
-/// Paid spend in the run log since `since` (seconds): the own loop's runs, whose log entry says claude_version null.
+/// Paid spend in the run log since `since` (seconds): the own loop's runs, whose log entry says claude_version null, but
+/// those on a plan's key (`plan`: their cost is a reference price, the plan pays; the user, 2026-11-25).
 pub fn paid_since(log: &str, since: u64) -> f64 {
     log.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok())
-        .filter(|r| r["ts"].as_u64().is_some_and(|t| t >= since) && r["meta"].get("claude_version").is_some_and(Value::is_null))
-        .filter_map(|r| r["cost_usd"].as_f64()).sum()
+        .filter(|r| r["ts"].as_u64().is_some_and(|t| t >= since) && r["meta"].get("claude_version").is_some_and(Value::is_null) && r["meta"]["plan"] != true)
+        .filter_map(|r| Some(r["cost_usd"].as_f64()? - r["plan_cost_usd"].as_f64().unwrap_or(0.0))).sum()
 }
 
 /// A message the user sent, as a point /rewind can go back to.
@@ -1032,8 +1033,17 @@ impl Live {
         crate::behave::Scope { user: self.user_settings, project: matches!(self.profile, Profile::Repo | Profile::RepoLean) }
     }
 
-    /// The own loop's model costs nothing: its price (the catalog's route, or --price) is 0 for input and output.
+    /// The own loop runs on a plan's key (Mistral Vibe): its price is only a reference (the user, 2026-11-25).
+    fn on_plan(&self) -> bool {
+        self.provider.as_ref().is_some_and(|(u, k)| crate::models::on_plan(u, k))
+    }
+
+    /// The own loop's model costs nothing: its price (the catalog's route, or --price) is 0 for input and output, or it runs
+    /// on a plan's key.
     fn free(&self) -> bool {
+        if self.on_plan() {
+            return true;
+        }
         let p = self.price.clone().or_else(|| std::env::var("TAZUNA_PRICE").ok()).unwrap_or_default();
         let v: Vec<f64> = p.split(',').filter_map(|x| x.trim().parse().ok()).collect();
         v.len() == 3 && v[0] == 0.0 && v[2] == 0.0
@@ -2142,8 +2152,9 @@ impl Live {
             let gave_up = self.runs.front().is_some_and(|r| !r.is_interrupted() && (!success || r.changed_files(&self.cwd).is_empty()));
             if gave_up {
                 self.escalated = true;
+                let plan = self.on_plan();
                 if let Some(run) = self.runs.front_mut() {
-                    run.escalated();
+                    run.escalated(plan);
                 }
                 let mut out = vec![self.record(json!({"type": "harness_escalate", "model": m, "effort": e}))];
                 self.respawn(m, e);
@@ -2274,8 +2285,9 @@ impl Live {
             if let Some((m, e)) = self.escalate.clone().filter(|_| !self.escalated) {
                 // the cheap lane failed its tests: fix rounds run on the stronger model
                 self.escalated = true;
+                let plan = self.on_plan();
                 if let Some(run) = self.runs.front_mut() {
-                    run.escalated();
+                    run.escalated(plan);
                 }
                 out.push(self.record(json!({"type": "harness_escalate", "model": m, "effort": e})));
                 self.respawn(m, e);
@@ -2385,11 +2397,12 @@ impl Live {
             "claude_version": self.claude_version, "cwd": self.cwd, "session_id": self.session_id(), "recording": self.rec_path,
             "host": host(),
             // which API the own loop ran on, or who billed claude (none on the plan): the usage page names it. `plan`: the
-            // run log called every claude run plan, so the start page counted an API key's runs as nothing paid
+            // run log called every claude run plan, so the start page counted an API key's runs as nothing paid; the own
+            // loop on a plan's key is plan too, its cost a reference price (the user, 2026-11-25)
             "provider": self.provider.as_ref().map(|(u, k)| crate::models::provider_name(u, k)).or_else(|| self.claude_bill.1.filter(|_| !self.claude_bill.0).map(String::from)),
             // the key's variable: two providers can share an API (Mistral and Mistral Vibe), and a resume goes on on the same
             "key_env": self.provider.as_ref().map(|(_, k)| k),
-            "plan": self.provider.is_none() && self.claude_bill.0,
+            "plan": if self.provider.is_some() { self.on_plan() } else { self.claude_bill.0 },
             // the session this one continues: the lists show them as one conversation (main.rs sessions_of)
             "continues": self.continues,
         })
@@ -3926,6 +3939,18 @@ mod tests {
         assert!(stub::sent(&dir, "You answered: 12 °C and rain\n\nThe new message: and a joke about rain?"));
         drop(live);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The own loop on a plan's key (Mistral Vibe): its run log line says plan and the spend cap leaves it alone; on the
+    /// same API with a paid key, neither (the user, 2026-11-25).
+    #[test]
+    fn a_plans_key_is_plan_in_the_run_log_and_free_for_the_cap() {
+        let mut live = Live::new("deepseek-v4-1-flash-1017", "high").unwrap();
+        (live.provider, live.price) = (Some(("https://api.mistral.ai/v1".into(), "MISTRAL_VIBE_API_KEY".into())), Some("0.3,0.007,1.2".into()));
+        assert_eq!((&live.meta()["plan"], &live.meta()["provider"], live.free()), (&json!(true), &json!("Mistral Vibe"), true));
+        live.provider = Some(("https://api.mistral.ai/v1".into(), "MISTRAL_API_KEY".into()));
+        assert_eq!((&live.meta()["plan"], &live.meta()["provider"], live.free()), (&json!(false), &json!("Mistral"), false));
+        std::fs::remove_file(&live.rec_path).ok();
     }
 
     /// A paid model's handed-over turn stops at the spend cap like any message (the router's skipped it).

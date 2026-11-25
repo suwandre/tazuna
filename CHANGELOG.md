@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.226 (2026-11-25): plans priced at their API rates, not billed; TokenRouter
+
+- A run on a plan's key (Mistral Vibe first) is priced at the provider's API rates where they are known (DeepSeek V4.1
+  Flash 1017 on Mistral: $0.30 / $0.007 / $1.20 per million) and counted as plan money, billed $0: "on Mistral Vibe plan"
+  in the header and the recap ("on plans" when several mix), nothing against the $1 cap or the spend cap, `plan: true` in
+  the run log. A plan with no published price shows the plan, never "$0". The desktop gets `provider` and `price_m` on
+  the done block. A run never mixes plan and paid routes; an escalation keeps the plan's share apart (`plan_cost_usd`).
+- TokenRouter as a provider (the user's addition, `TOKENROUTER_API_KEY`): its public catalog lists the models and picks
+  each one's API (Chat, Responses or Messages); prices at the base tier; untrusted until allowed (it publishes no terms).
+
 ## 0.1.225 (2026-11-25): the terminal's new look; copy and undo in the message box
 
 Design review 13's approved prototype (desktop/mockups/v10.html, T1-T7), then two independent reviews.

@@ -29,6 +29,9 @@ pub struct Run {
     verify_rounds: Vec<(bool, f64)>,
     /// Failed tests moved this run to the stronger model.
     escalated: bool,
+    /// What the run had cost on a plan's key (Mistral Vibe) when it moved to the stronger model: its reference price, not
+    /// money, in `cost` beside the stronger model's spend (the user, 2026-11-25).
+    plan_cost: f64,
     /// The repo's type check output when the run started, so verification only fails on errors this run added. Shared:
     /// the next run on the same tree reuses it, and verification's thread waits for it, not the screen.
     pub types_before: Option<SharedBaseline>,
@@ -78,14 +81,19 @@ impl Run {
             verify_none: None,
             verify_rounds: Vec::new(),
             escalated: false,
+            plan_cost: 0.0,
             types_before: None,
             reviewed: false,
             review: None,
         }
     }
 
-    pub fn escalated(&mut self) {
+    /// `from_plan`: the cheaper lane ran on a plan's key, so what it cost so far stays apart (`plan_cost_usd`).
+    pub fn escalated(&mut self, from_plan: bool) {
         self.escalated = true;
+        if from_plan {
+            self.plan_cost = self.cost;
+        }
     }
 
     pub fn add_cost(&mut self, usd: f64) {
@@ -190,7 +198,7 @@ impl Run {
         let total_in = sum(0) + sum(1) + sum(2);
         let first_line = self.prompt.lines().next().unwrap_or_default();
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-        json!({
+        let mut line = json!({
             // what labels refer to: `tazuna --verdict good --id <id>`
             "id": format!("{:x}", now.as_millis()),
             "ts": now.as_secs(),
@@ -218,7 +226,13 @@ impl Run {
             "per_turn": self.turns,
             "tools": self.tools.iter().map(|(k, (c, f))| (k.clone(), json!({"calls": c, "failed": f}))).collect::<serde_json::Map<_, _>>(),
             "git": git_changes(cwd, self.git_before.as_ref()),
-        })
+        });
+        // the plan's share of `cost_usd`, where a plan's run moved on to a billed model: the usage page and the spend cap
+        // leave it out of the paid money
+        if self.plan_cost > 0.0 {
+            line["plan_cost_usd"] = json!((self.plan_cost * 1e6).round() / 1e6);
+        }
+        line
     }
 }
 
@@ -328,6 +342,21 @@ mod tests {
         assert_eq!(line["tokens"]["output"], 5988);
         assert!(line["cache_hit"].as_f64().unwrap() > 0.85);
         assert_eq!(line["git"], Value::Null); // not a repo
+    }
+
+    #[test]
+    fn a_plans_run_that_escalates_keeps_the_plans_share_apart() {
+        // Mistral Vibe gave up, claude on an API key took over: $0.30 at the plan's reference price is not paid money
+        let mut run = Run::new("fix it", 0.0, Path::new("/nonexistent"));
+        run.add_cost(0.3);
+        run.escalated(true);
+        run.add_cost(0.5);
+        let line = run.finish(None, 1_000.0, &json!({}), Path::new("/nonexistent"));
+        assert_eq!((line["cost_usd"].as_f64(), line["plan_cost_usd"].as_f64(), &line["escalated"]), (Some(0.8), Some(0.3), &json!(true)));
+        let mut paid = Run::new("fix it", 0.0, Path::new("/nonexistent"));
+        paid.add_cost(0.3);
+        paid.escalated(false);
+        assert!(paid.finish(None, 1_000.0, &json!({}), Path::new("/nonexistent")).get("plan_cost_usd").is_none());
     }
 
     #[test]

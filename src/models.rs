@@ -8,6 +8,8 @@
 use serde_json::Value;
 use std::path::Path;
 
+pub(crate) mod tokenrouter;
+
 pub const LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 /// The effort levels a Claude model takes and its default (Anthropic's effort docs, 2026-11-02: Opus 5.5, Sonnet 5.5,
@@ -268,6 +270,12 @@ pub fn paid_to(url: &str, var: &str) -> Option<String> {
     (url != OMNIROUTE && !own_machine(host_of(url))).then(|| provider_name(url, var))
 }
 
+/// The own loop on a plan's key (Mistral Vibe, Kimi Code, the coding plans): nothing billed per token; its calls are
+/// priced at the route's reference price, as plan money like a Claude plan run's (the user, 2026-11-25).
+pub fn on_plan(url: &str, var: &str) -> bool {
+    login_at(url, var).is_some_and(|l| l.plan)
+}
+
 /// The variables that, set where claude runs, bill its runs elsewhere than the Claude plan: tazuna writes the ones it sees
 /// set into claude's init (`tazuna_env`, the names alone) for `claude_payer`.
 pub const CLAUDE_BILLING_ENV: [&str; 5] = ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"];
@@ -384,8 +392,9 @@ fn catalog_rows(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels,
             State::Ready
         };
         let state = state_of(var);
-        // a route on a plan's key (Mistral Vibe): the plan pays, so "plan" and nothing against the $1 cap
-        let plan = login_at(url, var).is_some_and(|l| l.plan);
+        // a route on a plan's key (Mistral Vibe): the plan pays, so "plan" and nothing against the $1 cap; its route keeps
+        // the listed price as a reference, so a run shows what it would have cost at API prices (the user, 2026-11-25)
+        let plan = on_plan(url, var);
         let mut pins: Vec<Pin> = r["pinned"].as_object().into_iter().flatten().filter_map(|(g, p)| Some(Pin {
             provider: g.clone(),
             key_env: p["key_env"].as_str()?.to_string(),
@@ -396,7 +405,7 @@ fn catalog_rows(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels,
         out.push(Choice {
             model,
             label,
-            route: Some((url.to_string(), var.to_string(), if plan { route_price(0.0, 0.0, None) } else { route_price(input, output, r["price"][2].as_f64()) })),
+            route: Some((url.to_string(), var.to_string(), route_price(input, output, r["price"][2].as_f64()))),
             // another host (Mistral's API on a Vibe-plan key, 2026-11-07) is named by its host, not as SubRouter
             place: if host == "subrouter.ai" { format!("SubRouter · {}", providers.join(", ")) } else { host.to_string() },
             // only the levels that differ (DeepSeek: off, high, max); a route that names none offers them all
@@ -421,11 +430,12 @@ fn catalog_rows(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels,
         });
     }
     // Mistral Vibe: Mistral's models again on the Vibe plan's key (Mistral names no model its plans leave out), "plan" in
-    // place of the price; a user's own route of a model on that key stands instead of its copy
+    // place of the price, the API route's price kept as the reference; a user's own route of a model on that key stands
+    // instead of its copy
     let vibe = LOGINS.iter().find(|l| l.vars == [MISTRAL_PAIR[1]]).expect("Mistral Vibe is a provider");
     let copies: Vec<Choice> = out.iter().filter(|c| c.route.as_ref().is_some_and(|r| r.1 == MISTRAL_PAIR[0] && r.0.trim_end_matches('/') == vibe.url))
         .filter(|c| !out.iter().any(|o| o.model == c.model && o.route.as_ref().is_some_and(|r| r.1 == MISTRAL_PAIR[1])))
-        .map(|c| Choice { route: Some((vibe.url.to_string(), MISTRAL_PAIR[1].to_string(), route_price(0.0, 0.0, None))), price: "plan".into(),
+        .map(|c| Choice { route: c.route.clone().map(|r| (vibe.url.to_string(), MISTRAL_PAIR[1].to_string(), r.2)), price: "plan".into(),
             state: if key(MISTRAL_PAIR[1]).is_none() { State::NoKey } else if !trusted(vibe.host()) { State::Untrusted } else { State::Ready },
             pins: vec![], ..c.clone() }).collect();
     out.extend(copies);
@@ -519,7 +529,14 @@ fn catalog_rows(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels,
     out.extend(modelsdev_choices(&md, &file, &trusted));
     for l in LOGINS.iter().filter(|l| l.source == Source::List) {
         match dir.and_then(|d| std::fs::read_to_string(d.join(list_file(l))).ok()) {
-            Some(list) => out.extend(list_choices(l, &serde_json::from_str(&list).unwrap_or_default(), &md, &file, &trusted)),
+            Some(list) => {
+                let list = serde_json::from_str(&list).unwrap_or_default();
+                if l.url == tokenrouter::URL {
+                    out.extend(tokenrouter::choices(l, &list, &md, &file, &trusted));
+                } else {
+                    out.extend(list_choices(l, &list, &md, &file, &trusted));
+                }
+            }
             // no key, so no list: one greyed row, so the provider is in /model with what it needs (as Mortera's)
             None if l.vars.iter().all(|v| self::key(v).is_none()) => out.push(Choice { model: list_file(l).trim_end_matches(".json").to_string(),
                 label: format!("{}'s models", l.name), note: format!("tazuna loads {}'s model list at start once {} is set", l.name, l.vars[0]),
@@ -888,9 +905,9 @@ fn cheaper_choices(list: &Value, file: &Value, trusted: &impl Fn(&str) -> bool) 
     rows
 }
 
-/// At start: OpenRouter's and kenari's model lists and SubRouter's price list (public, no key needed) into the data
-/// folder, where `/model` reads them (a slow or absent answer leaves the last copy). SubRouter's came only with a
-/// release until 0.1.118: a model it added, or a provider's new price, waited for the next tazuna.
+/// At start: OpenRouter's and kenari's model lists, SubRouter's price list and TokenRouter's catalog (public, no key
+/// needed) into the data folder, where `/model` reads them (a slow or absent answer leaves the last copy). SubRouter's came
+/// only with a release until 0.1.118: a model it added, or a provider's new price, waited for the next tazuna.
 pub fn refresh_openrouter() {
     for (url, name) in [("https://openrouter.ai/api/v1/models", "openrouter-models.json"), ("https://kenari.id/v1/models", "kenari-models.json"),
                         ("https://subrouter.ai/api/pricing", "subrouter-pricing.json")] {
@@ -905,6 +922,7 @@ pub fn refresh_openrouter() {
             }
         }
     }
+    refresh_lists(&[tokenrouter::KEY]);
     // models.dev's catalog after the price lists: a slow models.dev held them up for up to 60 s (review 11)
     refresh_modelsdev();
 }
@@ -934,22 +952,38 @@ pub(crate) fn configured_keyed_lists(dir: Option<&Path>, has_key: impl Fn(&str) 
         .map(|(l, name)| (l, dir.is_some_and(|d| d.join(name).is_file()))).collect()
 }
 
-/// The model lists that need a key, each whose variable is in `only` (all of them when empty): a key just saved fetches
-/// its provider's list alone.
+/// The model lists for configured providers, each whose variable is in `only` (all of them when empty): a key just saved
+/// fetches its provider's list alone. TokenRouter's is its public catalog (model-specific APIs and pricing), read with no
+/// key, so /model lists its models before one is saved; the sweep of all lists leaves it to `refresh_openrouter`.
 pub fn refresh_lists(only: &[&str]) {
-    for (l, name) in keyed_lists().filter(|(l, _)| only.is_empty() || only.contains(&l.vars[0])) {
-        let Some(k) = key(l.vars[0]) else { continue };
-        let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(15))).build().into();
-        let Ok(mut r) = http.get(format!("{}/models", l.url)).header("Authorization", format!("Bearer {}", k.trim())).call() else { continue };
-        let Ok(body) = r.body_mut().with_config().limit(20 << 20).read_to_string() else { continue };
-        let ok = serde_json::from_str::<Value>(&body).is_ok_and(|v| v["data"].as_array().is_some_and(|d| !d.is_empty()));
-        if let (true, Ok(dir)) = (ok, crate::labels::dir()) {
+    for (l, name) in keyed_lists().filter(|(l, _)| if only.is_empty() { l.url != tokenrouter::URL } else { only.contains(&l.vars[0]) }) {
+        let body = if l.url == tokenrouter::URL {
+            let Ok(body) = tokenrouter::fetch() else { continue };
+            body
+        } else {
+            let Some(k) = key(l.vars[0]) else { continue };
+            let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(15))).build().into();
+            let Ok(mut r) = http.get(format!("{}/models", l.url)).header("Authorization", format!("Bearer {}", k.trim())).call() else { continue };
+            let Ok(body) = r.body_mut().with_config().limit(20 << 20).read_to_string() else { continue };
+            body
+        };
+        if let (true, Ok(dir)) = (list_ok(l, &body), crate::labels::dir()) {
             let tmp = dir.join(format!("{name}.{}.tmp", std::process::id()));
             if std::fs::write(&tmp, body).is_ok() {
                 let _ = std::fs::rename(&tmp, dir.join(name));
             }
         }
     }
+}
+
+/// A list worth keeping: TokenRouter's catalog with a text model in it (an image-only or broken one would empty /model), any
+/// other with models.
+fn list_ok(l: &Login, body: &str) -> bool {
+    serde_json::from_str::<Value>(body).is_ok_and(|v| if l.url == tokenrouter::URL {
+        tokenrouter::models(&v).next().is_some()
+    } else {
+        v["data"].as_array().is_some_and(|d| !d.is_empty())
+    })
 }
 
 /// Where a `Source::List` provider's /models is kept in the data folder.
@@ -1267,12 +1301,13 @@ fn local_choices(list: &Value, file: &Value) -> Vec<Choice> {
 }
 
 /// A row of a provider in LOGINS: the first of its key variables that holds a key, its price ("plan" on a subscription,
-/// "free" at 0, empty where none is listed: the engine reads one from the provider's list, else --price sets one), the
-/// line on its terms first in the note.
+/// with the listed price as its reference where there is one, else 0: never a made-up one; "free" at 0, empty where none
+/// is listed: the engine reads one from the provider's list, else --price sets one), the line on its terms first in the
+/// note.
 fn login_row(l: &Login, id: &str, price: Option<(f64, f64, Option<f64>)>, efforts: Vec<String>, file: &Value, trusted: &impl Fn(&str) -> bool) -> Choice {
     let var = l.vars.iter().copied().find(|v| key(v).is_some()).unwrap_or(l.vars[0]);
     let (route, shown, what) = match price {
-        _ if l.plan => (route_price(0.0, 0.0, None), "plan".to_string(), format!("on your {} subscription", l.name)),
+        _ if l.plan => (price.map_or(route_price(0.0, 0.0, None), |(i, o, c)| route_price(i, o, c)), "plan".to_string(), format!("on your {} subscription", l.name)),
         Some((i, o, c)) => (route_price(i, o, c), if i == 0.0 && o == 0.0 { "free".into() } else { format!("{} / {}", per_m(i), per_m(o)) }, String::new()),
         None => (String::new(), String::new(), "no price listed: --price IN,CACHED,OUT (USD per M) sets one for the $1 cap".into()),
     };
@@ -1736,6 +1771,11 @@ pub const LOGINS: &[Login] = &[
             place: "your OpenRouter account", example: "sk-or-v1-...", ..OWN },
     Login { name: "Kenari", vars: &["KENARI_API_KEY"], url: "https://kenari.id/v1", page: "https://kenari.id/login?next=/keys",
             place: "your kenari dashboard (Keys)", ..OWN },
+    // TokenRouter publishes no privacy policy or terms (its /api/privacy-policy and /api/user-agreement answer empty,
+    // 2026-11-25) and advertises caching with "result reuse" over upstreams it does not name: untrusted, so the code goes
+    // there only once the user allows its host
+    Login { name: "TokenRouter", vars: &[tokenrouter::KEY], url: tokenrouter::URL, page: "https://www.tokenrouter.com/console/token",
+            place: "TokenRouter's console (API Keys)", example: "sk-...", api: "", ..P },
     // one API, two ways to pay (2026-11-22): an API key bills per token, a key made under Code › Vibe CLI bills the Vibe
     // plan's usage (Mistral's docs: the plan's usage is shared across Studio, the API and Vibe Code, no model limit named),
     // so the picker says which; a user's routes read the Vibe key from MISTRAL_VIBE_API_KEY (2026-11-10)
@@ -2286,9 +2326,13 @@ mod tests {
         let zen: Vec<&str> = rows.iter().filter(|c| c.place == "OpenCode Zen").map(|c| c.model.as_str()).collect();
         assert_eq!(zen, ["plain"]);
         assert_eq!((provider_of(f).as_str(), f.state), ("DeepSeek", if key("DEEPSEEK_API_KEY").is_some() { State::Ready } else { State::NoKey }));
-        // a plan: "plan", nothing for the cap, its terms first in the note; the same model under each provider that lists it
+        // a plan: "plan", nothing for the cap, its terms first in the note; the same model under each provider that lists it.
+        // Its listed price stays as the reference a run is shown at, as plan money (the user, 2026-11-25)
         let plan = rows.iter().find(|c| c.place == "Alibaba Coding Plan").unwrap();
-        assert_eq!((plan.price.as_str(), plan.route.as_ref().unwrap().2.as_str(), plan.route.as_ref().unwrap().0.as_str()), ("plan", "0,0,0", "https://coding-intl.dashscope.aliyuncs.com/v1"));
+        assert_eq!((plan.price.as_str(), plan.route.as_ref().unwrap().2.as_str(), plan.route.as_ref().unwrap().0.as_str()), ("plan", "1,0.1,2", "https://coding-intl.dashscope.aliyuncs.com/v1"));
+        // most plan catalogs list 0: no reference, so plan and no money, never a price from elsewhere
+        let none = modelsdev_choices("=alibaba-coding-plan\nqwen-coder\t0\t0\t\t\n", &serde_json::json!({}), &|_: &str| true);
+        assert!(!none.is_empty() && none.iter().all(|c| c.price == "plan" && c.route.as_ref().unwrap().2 == "0,0,0"), "{none:?}");
         assert!(plan.note.starts_with("Alibaba allows the Coding Plan only for interactive use"), "{}", plan.note);
         assert_eq!(login_of(plan).map(|l| l.note), Some(plan.note.split(" · ").next().unwrap()));
         let n = LOGINS.iter().filter(|l| matches!(l.source, Source::ModelsDev(_))).count();
@@ -2431,9 +2475,11 @@ mod tests {
         assert_eq!((provider_name(url, "MISTRAL_API_KEY"), provider_name(url, "MISTRAL_VIBE_API_KEY")), ("Mistral".to_string(), "Mistral Vibe".to_string()));
         assert_eq!(paid_to(url, "MISTRAL_VIBE_API_KEY").as_deref(), Some("Mistral Vibe"));
         assert!(!api.plan && vibe.plan && api_of(url).is_none());
+        assert!(on_plan(url, "MISTRAL_VIBE_API_KEY") && !on_plan(url, "MISTRAL_API_KEY"), "the engine and the run log tell them apart by the key");
         assert_eq!((mistral_other(api).unwrap().name, mistral_other(vibe).unwrap().name), ("Mistral Vibe", "Mistral"));
-        // the shipped routes: per token on the API key, and each again on the Vibe key as "plan" ($0 against the cap); a
-        // user's own route on the Vibe key stands instead of its copy, as "plan" too
+        // the shipped routes: per token on the API key, and each again on the Vibe key as "plan" ($0 against the cap) with
+        // the API's price as its reference (the user, 2026-11-25); a user's own route on the Vibe key stands instead of its
+        // copy, as "plan" too
         let routes = dir.join("routes.json");
         std::fs::write(&routes, r#"{"routes": {"codestral-2508@mistral": {"url": "https://api.mistral.ai/v1", "key_env": "MISTRAL_API_KEY", "model": "codestral-2508", "price": [0.3, 0.9]},
             "glm-5.3@mistral": {"url": "https://api.mistral.ai/v1", "key_env": "MISTRAL_API_KEY", "model": "glm-5.3", "price": [1.4, 4.4]},
@@ -2444,8 +2490,8 @@ mod tests {
         let cs = catalog(&routes, |_| true, &KeyModels::new(), u64::MAX / 2);
         assert_eq!(rows(&cs, "MISTRAL_API_KEY"), [("codestral-2508".to_string(), "0.3 / 0.9".to_string(), "0.3,0.03,0.9".to_string(), State::Ready),
             ("glm-5.3".to_string(), "1.4 / 4.4".to_string(), "1.4,0.14,4.4".to_string(), State::Ready)]);
-        assert_eq!(rows(&cs, "MISTRAL_VIBE_API_KEY"), [("glm-5.3".to_string(), "plan".to_string(), "0,0,0".to_string(), State::Ready),
-            ("codestral-2508".to_string(), "plan".to_string(), "0,0,0".to_string(), State::Ready)]);
+        assert_eq!(rows(&cs, "MISTRAL_VIBE_API_KEY"), [("glm-5.3".to_string(), "plan".to_string(), "1.4,0.14,4.4".to_string(), State::Ready),
+            ("codestral-2508".to_string(), "plan".to_string(), "0.3,0.03,0.9".to_string(), State::Ready)]);
         let names: Vec<String> = providers(&cs).into_iter().map(|p| p.0).collect();
         assert!(names.iter().position(|n| n == "Mistral").unwrap() + 1 == names.iter().position(|n| n == "Mistral Vibe").unwrap(), "{names:?}");
         // before 0.1.198 /login saved a Mistral key under both: an API key or a Vibe key, the key does not say, so neither

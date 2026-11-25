@@ -3,6 +3,7 @@
 //! unchanged. Each turn is one streamed call: Chat Completions, OpenAI's Responses or Anthropic's Messages API (see `Api`).
 
 use anyhow::{Context, Result, bail};
+use crate::models::tokenrouter;
 use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
@@ -257,9 +258,16 @@ pub fn serve(args: &[String]) -> Result<()> {
     // `TAZUNA_ROUTES="url key-env; url key-env"`; their keys are read now and leave the environment like the first one
     let spec = std::env::var("TAZUNA_ROUTES").unwrap_or_default();
     let mut routes = VecDeque::new();
+    // none from a plan's key or onto one: a run is all plan money or all paid, never both under one label (the user,
+    // 2026-11-25)
+    let plan = crate::models::on_plan(&url, &key_env);
     for r in spec.split([';', '\n']) {
         let mut w = r.split_whitespace();
         if let (Some(u), Some(k)) = (w.next(), w.next()) {
+            if plan || crate::models::on_plan(u, k) {
+                eprintln!("route {u}: a plan's key on one side; left out");
+                continue;
+            }
             match std::env::var(k) {
                 Ok(key) => routes.push_back((u.trim_end_matches('/').to_string(), key)),
                 Err(_) => eprintln!("route {u}: {k} not set; left out"),
@@ -314,9 +322,11 @@ pub fn serve(args: &[String]) -> Result<()> {
     }
     let names: Vec<Value> = fns.iter().map(|t| t["function"]["name"].clone()).collect();
     // the model's prices, so the screen's running cost is this model's and not Claude's list prices (a Luna turn read
-    // ~$3 while it ran and $0.007 at its end, 2026-11-06)
+    // ~$3 while it ran and $0.007 at its end, 2026-11-06); `plan`: those prices are a reference, the plan pays (the user,
+    // 2026-11-25)
     emit(&json!({"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": cwd, "tools": names, "slash_commands": [],
-                 "price_per_m": [price.0 * 1e6, price.1 * 1e6, price.2 * 1e6], "provider": crate::models::paid_to(&url, &key_env), "mcp_servers": mcp_status(hub.as_ref())}));
+                 "price_per_m": [price.0 * 1e6, price.1 * 1e6, price.2 * 1e6], "provider": crate::models::paid_to(&url, &key_env),
+                 "plan": plan, "mcp_servers": mcp_status(hub.as_ref())}));
     let send_reasoning = reasoning_back(&url, &model);
     let mut loop_ = Loop {
         call,
@@ -343,6 +353,7 @@ pub fn serve(args: &[String]) -> Result<()> {
         send_reasoning,
         cache_key: std::env::var_os("TAZUNA_NO_CACHE_KEY").is_none(),
         routes,
+        plan,
         route_calls: vec![],
         connector: connect_key,
         out: Box::new(|e: &Value| emit(e)),
@@ -446,6 +457,9 @@ struct Loop {
     cache_key: bool,
     /// Other routes for the model as (url, key), next first (0.0.79, `TAZUNA_ROUTES`)
     routes: VecDeque<(String, String)>,
+    /// The route in use is a plan's key (Mistral Vibe): its calls are priced at the route's reference price, not billed,
+    /// and nothing counts against the dollar cap (the user, 2026-11-25).
+    plan: bool,
     /// (seconds, input, cached) of each call on the current route, for `route_trouble`
     route_calls: Vec<(f64, u64, u64)>,
     /// How a route is reached: `connect_key`; a stand-in in tests
@@ -867,7 +881,9 @@ impl Loop {
                 }
             }
             let cap = std::env::var("TAZUNA_MAX_USD").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(MAX_USD);
-            if self.cost - start >= cap {
+            // a plan's calls cost the cap nothing: their cost is the reference price, not money (the user, 2026-11-25); a plan
+            // has no fallbacks (`serve`), so a task never mixes the two
+            if !self.plan && self.cost - start >= cap {
                 return end(self, "error_max_budget_usd", format!("[stopped: ${cap:.2} spent]"), turns, usage);
             }
             // a route that has slowed down or stopped caching is left before the next call (0.0.79)
@@ -1041,9 +1057,10 @@ impl Loop {
                 (self.out)(&json!({"type": "system", "subtype": "group_switch", "message": note}));
             }
             // the billed cost when the provider reports it (CheaperInference, OpenRouter), else the price list; a cache write
-            // costs 1.25x input (Anthropic, 5 minutes). No usage at all: not known, so null on the receipt (it read "$0")
+            // costs 1.25x input (Anthropic, 5 minutes). No usage at all: not known, so null on the receipt (it read "$0").
+            // On a plan the reference price always: what the plan's API reports is its own figure, not the API price
             let reported = u["cost"].is_number() || prompt + out > 0;
-            let charged = u["cost"].as_f64().unwrap_or((prompt - cached) as f64 * self.price.0 + written as f64 * self.price.0 * 0.25
+            let charged = u["cost"].as_f64().filter(|_| !self.plan).unwrap_or((prompt - cached) as f64 * self.price.0 + written as f64 * self.price.0 * 0.25
                 + cached as f64 * self.price.1 + out as f64 * self.price.2);
             self.cost += charged;
             for (sum, n) in usage.iter_mut().zip([prompt - cached, cached, out]) {
@@ -1247,7 +1264,11 @@ fn connect(url: &str, key_env: &str, model: &str) -> Result<(Box<dyn FnMut(&Valu
 /// One call with no tools and no history: the independent reviewer on a provider's API (review.rs). The API follows the
 /// model's name as for the own loop; returns the reply's text and (input, cached, output) tokens.
 pub fn ask(url: &str, key: &str, model: &str, effort: &str, system: &str, prompt: &str) -> Result<(String, (u64, u64, u64))> {
-    let api = api_for(url).unwrap_or(if model.starts_with("claude-") { Api::Messages } else if model.starts_with("gpt-") { Api::Responses } else { Api::Chat });
+    let api = if url.trim_end_matches('/') == tokenrouter::URL {
+        tokenrouter_api(tokenrouter::model(model)?.with_context(|| format!("TokenRouter does not list {model} as a supported text model"))?.0)
+    } else {
+        api_for(url).unwrap_or(if model.starts_with("claude-") { Api::Messages } else if model.starts_with("gpt-") { Api::Responses } else { Api::Chat })
+    };
     let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(CALL_TIMEOUT)).http_status_as_error(false).build().into();
     let body = match api {
         Api::Responses => json!({"model": model, "instructions": system, "input": [{"role": "user", "content": prompt}], "store": false,
@@ -1492,6 +1513,7 @@ session: format!("explore-{}", std::process::id()),
         send_reasoning: false,
         cache_key: true,
         routes: VecDeque::new(),
+        plan: crate::models::on_plan(&url, &key_env),
         route_calls: vec![],
         connector: connect_key,
         out: Box::new(move |e: &Value| {
@@ -1882,6 +1904,7 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
         }
     }
     let model = body["model"].as_str().unwrap_or_default().to_string();
+    shape_for(url, api, &model, &mut body);
     if let Some((_, e)) = EFFORT_TAKEN.lock().unwrap().iter().find(|(m, _)| *m == model) {
         put_effort(&mut body, e.as_deref());
     }
@@ -2442,8 +2465,41 @@ fn from_gemini(events: &[Value]) -> Result<Value> {
     Ok(r)
 }
 
+/// TokenRouter's price and API for `model` from its catalog entry (`found`), the price `set` by --price over the listed one.
+fn tokenrouter_price(found: Option<(tokenrouter::Wire, Option<tokenrouter::Rates>)>, set: Option<&str>, url: &str, model: &str) -> Result<(Price, Api)> {
+    let (wire, listed) = found.ok_or_else(|| ListError(format!("TokenRouter does not list {model} as a supported text model; pick another model with /model")))?;
+    let price = match set {
+        Some(v) => price_override(v)?,
+        None => {
+            let (i, o, c) = listed.ok_or_else(|| missing_price(url, model))?;
+            (i / 1e6, c / 1e6, o / 1e6)
+        }
+    };
+    Ok((price, tokenrouter_api(wire)))
+}
+
+/// TokenRouter's Messages models: thinking and effort only where the model takes them (tokenrouter::shape_messages).
+fn shape_for(url: &str, api: Api, model: &str, body: &mut Value) {
+    if url.trim_end_matches('/') == tokenrouter::URL && api == Api::Messages {
+        tokenrouter::shape_messages(model, body);
+    }
+}
+
+fn tokenrouter_api(wire: tokenrouter::Wire) -> Api {
+    match wire {
+        tokenrouter::Wire::Chat => Api::Chat,
+        tokenrouter::Wire::Responses => Api::Responses,
+        tokenrouter::Wire::Messages => Api::Messages,
+    }
+}
+
 /// The model's prices from the provider's model list (per million tokens there, per token here), and the API it takes.
 fn price(http: &ureq::Agent, url: &str, key: &str, model: &str) -> Result<(Price, Api)> {
+    if url.trim_end_matches('/') == tokenrouter::URL {
+        // Even with --price, the catalog tells us which endpoint this model takes. A catalog that could not be read is
+        // retried as any list is (connect_key); one without the model or its price is not
+        return tokenrouter_price(tokenrouter::model(model)?, std::env::var("TAZUNA_PRICE").ok().as_deref(), url, model);
+    }
     let api = |openai: bool| api_for(url).unwrap_or(if model.starts_with("claude-") { Api::Messages } else if openai { Api::Responses } else { Api::Chat });
     // a set price needs no list: Shannon lists a model only while an account serving it is online (gpt-6-luna came and
     // went within the hour)
@@ -2456,12 +2512,14 @@ fn price(http: &ureq::Agent, url: &str, key: &str, model: &str) -> Result<(Price
     if let Some(n) = listed_max_out(m) {
         let _ = CHAT_MAX_OUT.set(n);
     }
-    let (p, openai) = parse_price(m).map_err(|_| {
-        let cap = std::env::var("TAZUNA_MAX_USD").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(MAX_USD);
-        ListError(format!("{} lists {model} without a price, which the ${cap} cap per task needs: --price IN,CACHED,OUT \
-            (USD per million) sets one, or /model picks another.", host(url)))
-    })?;
+    let (p, openai) = parse_price(m).map_err(|_| missing_price(url, model))?;
     Ok((p, api(openai)))
+}
+
+fn missing_price(url: &str, model: &str) -> ListError {
+    let cap = std::env::var("TAZUNA_MAX_USD").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(MAX_USD);
+    ListError(format!("{} lists {model} without a price, which the ${cap} cap per task needs: --price IN,CACHED,OUT \
+        (USD per million) sets one, or /model picks another.", host(url)))
 }
 
 /// A model list that answered but cannot serve the run: the model is not in it, or has no price. Not retried; its words
@@ -2727,6 +2785,7 @@ session: "s".into(),
             send_reasoning: false,
             cache_key: true,
             routes: VecDeque::from([("https://b.example/v1".to_string(), "k".to_string())]),
+            plan: false,
             route_calls: vec![],
             connector: next,
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
@@ -2780,6 +2839,7 @@ session: "s".into(),
             send_reasoning: false,
             cache_key: true,
             routes: VecDeque::new(),
+            plan: false,
             route_calls: vec![],
             connector: none,
             out: Box::new(|_: &Value| {}),
@@ -2830,6 +2890,7 @@ session: "s1".into(),
             send_reasoning: false,
             cache_key: true,
             routes: VecDeque::new(),
+            plan: false,
             route_calls: vec![],
             connector: connect_key,
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
@@ -2884,6 +2945,7 @@ session: "s1".into(),
             send_reasoning: false,
             cache_key: true,
         routes: VecDeque::new(),
+        plan: false,
         route_calls: vec![],
         connector: connect_key,
             out: Box::new(|_: &Value| {}),
@@ -2949,6 +3011,7 @@ session: "s".into(),
             send_reasoning: false,
         cache_key: true,
         routes: VecDeque::new(),
+        plan: false,
         route_calls: vec![],
         connector: connect_key,
             out: Box::new(|_: &Value| {}),
@@ -3025,6 +3088,7 @@ session: "s".into(),
             send_reasoning: true,
             cache_key: true,
             routes: VecDeque::new(),
+            plan: false,
             route_calls: vec![],
             connector: connect_key,
             out: Box::new(|_: &Value| {}),
@@ -3131,6 +3195,7 @@ session: "s".into(),
         send_reasoning: false,
         cache_key: true,
         routes: VecDeque::new(),
+        plan: false,
         route_calls: vec![],
         connector: connect_key,
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
@@ -3222,6 +3287,7 @@ session: "s".into(),
                 send_reasoning: false,
                 cache_key: true,
                 routes: VecDeque::new(),
+                plan: false,
                 route_calls: vec![],
                 connector: none,
                 out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
@@ -3867,6 +3933,7 @@ session: "s".into(),
         send_reasoning: false,
         cache_key: true,
         routes: VecDeque::new(),
+        plan: false,
         route_calls: vec![],
         connector: connect_key,
             out: Box::new(|_: &Value| {}),
@@ -3924,6 +3991,7 @@ session: "s".into(),
         send_reasoning: false,
         cache_key: true,
         routes: VecDeque::new(),
+        plan: false,
         route_calls: vec![],
         connector: connect_key,
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
@@ -4042,6 +4110,7 @@ session: "s".into(),
         send_reasoning: false,
         cache_key: true,
         routes: VecDeque::new(),
+        plan: false,
         route_calls: vec![],
         connector: connect_key,
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
@@ -4094,6 +4163,7 @@ session: "s".into(),
         send_reasoning: false,
         cache_key: true,
         routes: VecDeque::new(),
+        plan: false,
         route_calls: vec![],
         connector: connect_key,
             out: Box::new(|_: &Value| {}),
@@ -4104,6 +4174,82 @@ session: "s".into(),
         assert_eq!(*calls.borrow(), 1);
         l.run(&json!("next task"), false, &rx); // a new task: a fresh budget
         assert_eq!(*calls.borrow(), 2);
+    }
+
+    #[test]
+    fn tokenrouter_takes_its_catalogs_api_and_price() {
+        use crate::models::tokenrouter::Wire;
+        let url = crate::models::tokenrouter::URL;
+        // the catalog's API for the model, its price per token; --price over the price, the API still the catalog's
+        let (p, api) = tokenrouter_price(Some((Wire::Messages, Some((1.0, 5.0, 0.1)))), None, url, "anthropic/claude-sonnet-4.6").unwrap();
+        assert_eq!((api, p), (Api::Messages, (1.0 / 1e6, 0.1 / 1e6, 5.0 / 1e6)));
+        assert_eq!(tokenrouter_price(Some((Wire::Responses, None)), Some("2,0.5,8"), url, "openai/gpt-6.2-sol").unwrap(), ((2e-6, 5e-7, 8e-6), Api::Responses));
+        assert_eq!(tokenrouter_price(Some((Wire::Chat, Some((0.1, 0.4, 0.01)))), None, url, "m").unwrap().1, Api::Chat);
+        // no price, or not listed: said at once, not retried (a catalog that could not be read is retried: tokenrouter.rs)
+        for found in [Some((Wire::Chat, None)), None] {
+            let e = tokenrouter_price(found, None, url, "m").unwrap_err();
+            assert!(e.is::<ListError>(), "{e:#}");
+        }
+    }
+
+    #[test]
+    fn only_tokenrouters_messages_calls_are_shaped() {
+        let request = json!({"model": "anthropic/claude-haiku-4.5", "thinking": {"type": "adaptive"}, "output_config": {"effort": "high"}});
+        let shaped = |url: &str, api: Api| {
+            let mut b = request.clone();
+            shape_for(url, api, "anthropic/claude-haiku-4.5", &mut b);
+            b
+        };
+        assert_eq!(shaped(&format!("{}/", crate::models::tokenrouter::URL), Api::Messages), json!({"model": "anthropic/claude-haiku-4.5"}));
+        assert_eq!((shaped(crate::models::tokenrouter::URL, Api::Chat), shaped("https://openrouter.ai/api/v1", Api::Messages)), (request.clone(), request.clone()));
+    }
+
+    #[test]
+    fn a_plan_route_is_priced_at_its_reference_and_skips_the_cap() {
+        // Mistral Vibe (the user, 2026-11-25): each call at the route's reference price whatever the plan's API reports,
+        // and the $1 cap left alone, so $2 calls go on past it
+        let calls = Rc::new(RefCell::new(0));
+        let events = Rc::new(RefCell::new(vec![]));
+        let (c, ev) = (calls.clone(), events.clone());
+        let mut l = Loop {
+            call: Box::new(move |_: &Value| {
+                *c.borrow_mut() += 1;
+                Ok(json!({"choices": [{"message": {"content": "done"}}], "usage": {"prompt_tokens": 1_000_000, "completion_tokens": 0, "cost": 0.0}}))
+            }),
+            api: Api::Chat,
+            system: String::new(),
+            model: "deepseek-v4-1-flash-1017".into(),
+            effort: None,
+            price: (2e-6, 7e-9, 1.2e-6),
+            tools: vec![],
+            msgs: vec![],
+            marks: vec![],
+            max_out: None,
+            saved: None,
+            server: crate::mcp::Server::new(std::env::temp_dir()),
+            hub: None,
+            session: "s".into(),
+            cost: 0.0,
+            task: (std::time::Instant::now(), 0.0),
+            queued: VecDeque::new(),
+            mode: "bypassPermissions".into(),
+            asked: 0,
+            send_reasoning: false,
+            cache_key: true,
+            routes: VecDeque::new(),
+            plan: true,
+            route_calls: vec![],
+            connector: connect_key,
+            out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
+        };
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("task"), false, &rx);
+        l.run(&json!("tests fail"), true, &rx);
+        assert_eq!(*calls.borrow(), 2, "past $1 of reference price, the follow-up still runs");
+        let events = events.borrow();
+        let r: Vec<f64> = events.iter().filter(|e| e["type"] == "result").map(|e| e["total_cost_usd"].as_f64().unwrap()).collect();
+        assert_eq!(r, [2.0, 4.0], "at the reference price, not the plan's $0");
+        assert!(events.iter().filter(|e| e["event"]["type"] == "message_delta").all(|e| e["event"]["tazuna_cost"] == 2.0));
     }
 
     #[test]
@@ -4148,6 +4294,7 @@ session: "s".into(),
         send_reasoning: false,
         cache_key: true,
         routes: VecDeque::new(),
+        plan: false,
         route_calls: vec![],
         connector: connect_key,
             out: Box::new(move |e: &Value| {

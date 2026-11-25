@@ -203,6 +203,12 @@ login is never used outside the claude CLI.
   ones. Free models are rate-limited, and their providers may keep or train on your code.
 - **Kenari** (a gateway priced in rupiah): every chat model on its list that takes tools (85, Claude included, billed by
   kenari), the free ones first (5 calls a minute and 50 a day without a top-up), each with its own effort levels.
+- **TokenRouter**: create a key in [API Keys](https://www.tokenrouter.com/console/token), then choose TokenRouter in
+  `/login` or desktop **Settings → Providers**. The picker lists its text models from its public catalog, read without a
+  key, so they show before one is saved. Try `deepseek/deepseek-v4.1-flash-1017-free`, which the catalog lists as free.
+  Available models depend on your key, and picker prices are estimates from the public catalog (the base rate for tiered
+  models: long prompts cost more). TokenRouter publishes no privacy policy or terms and reuses cached results across
+  upstream providers it does not name, which may keep or train on your code: it stays untrusted until you allow it.
 - **Anything else** OpenAI-compatible: `--provider URL --key-env VAR --model ID` (its host on the trusted list, or
   `--data any`).
 

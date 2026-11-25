@@ -1694,17 +1694,42 @@ fn last_tool_name(s: &Session) -> String {
 }
 
 /// Money and plan apart: "$0.50 + $7.46 on Claude plan"; "$7.46 on Claude plan" when only claude ran, "$0.50" when only the own loop did.
+/// A plan's own loop says its plan ("$0.12 on Mistral Vibe plan"), and the plan alone where it has no reference price.
 pub fn cost_str(s: &Session) -> String {
     let (paid, plan) = s.split_cost();
     let about = if s.estimated { "≈" } else { "" };
+    let (word, unpriced) = plan_label(&s.plans);
     match s.exact_cost {
-        None => format!("≈{}", usd(s.cost())),
-        Some(_) if paid > 0.0 && plan > 0.0 => format!("{about}{} + {} on Claude plan", usd(paid), usd(plan)),
+        // before the first result: an unpriced plan's estimate is no price either
+        None => s.unpriced_plan_now().map_or_else(|| format!("≈{}", usd(s.cost())), plan_word),
+        Some(_) if paid > 0.0 && plan > 0.0 => format!("{about}{} + {} {word}", usd(paid), usd(plan)),
         Some(_) if paid > 0.0 => format!("{about}{}", usd(paid)),
-        // nothing on the plan (the own loop's free models): just the sum, which said "$0 on Claude plan" (design review 9)
-        Some(c) if plan > 0.0 => format!("{about}{} on Claude plan", usd(c)),
+        Some(c) if plan > 0.0 => format!("{about}{} {word}", usd(c)),
+        // nothing on a plan (the own loop's free models): just the sum, which said "$0 on Claude plan" (design review 9); a
+        // plan without a reference price: the plan, no money, never $0 at API prices (the user, 2026-11-25)
+        Some(_) if unpriced => word,
         Some(c) => format!("{about}{}", usd(c)),
     }
+}
+
+/// Whose plan the plan money is on, from the plans that paid (name, no reference price): "on Claude plan" (also where none
+/// is known), "on Mistral Vibe plan", "on Z.ai Coding Plan", "on plans" where several mixed; and whether one had no
+/// reference price. It said "on Claude plan" under a Mistral Vibe run (the user, 2026-11-25).
+fn plan_label(plans: &[(String, bool)]) -> (String, bool) {
+    let mut names: Vec<&str> = plans.iter().map(|p| p.0.as_str()).collect();
+    names.sort_unstable();
+    names.dedup();
+    let word = match names[..] {
+        [] => "on Claude plan".to_string(),
+        [one] => plan_word(one),
+        _ => "on plans".to_string(),
+    };
+    (word, plans.iter().any(|p| p.1))
+}
+
+/// "on Mistral Vibe plan"; a name that says plan already once: "on Alibaba Coding Plan China".
+fn plan_word(name: &str) -> String {
+    if name.split_whitespace().any(|w| w.eq_ignore_ascii_case("plan")) { format!("on {name}") } else { format!("on {name} plan") }
 }
 
 /// Dollars in cents, and below a cent in two significant digits: a cheap model's whole task ($0.00019 on DeepSeek,
@@ -2354,10 +2379,14 @@ pub fn recap(s: &Session, git: &[Changed]) -> Option<String> {
     let known: Vec<(f64, bool)> = runs.iter().filter_map(|d| d.run_cost.map(|c| (c, d.bill.as_ref().is_some_and(|b| b.plan)))).collect();
     let about = if runs.iter().any(|d| d.estimate || d.run_cost.is_none()) { "≈" } else { "" };
     let (paid, plan): (f64, f64) = (known.iter().filter(|k| !k.1).map(|k| k.0).sum(), known.iter().filter(|k| k.1).map(|k| k.0).sum());
+    let plans: Vec<(String, bool)> = runs.iter().filter_map(|d| d.bill.as_ref()).filter_map(|b| Some((b.plan_name()?.to_string(), b.unpriced_plan()))).collect();
+    let (word, unpriced) = plan_label(&plans);
     parts.push(match (known.is_empty(), paid > 0.0, plan > 0.0) {
         (true, ..) => "cost not known".to_string(),
-        (_, true, true) => format!("{about}{} + {} on Claude plan", usd(paid), usd(plan)),
-        (_, false, true) => format!("{about}{} on Claude plan", usd(plan)),
+        (_, true, true) => format!("{about}{} + {} {word}", usd(paid), usd(plan)),
+        (_, false, true) => format!("{about}{} {word}", usd(plan)),
+        // a plan without a reference price: the plan, no money (cost_str)
+        (_, false, false) if unpriced => word,
         _ => format!("{about}{}", usd(paid)),
     });
     let secs: f64 = runs.iter().map(|d| d.secs).sum();
@@ -2597,8 +2626,12 @@ fn block_lines(b: &Block, i: usize, s: &Session, v: &View, th: &Theme, o: &Opts,
             // line of numbers was the whole conversation's so far, the same under every answer and wrapping onto two
             // lines: it shows when the line is clicked, or with everything expanded.
             let took = if d.secs < 60.0 { format!("{:.0} s", d.secs) } else { format!("{} min {:02} s", d.secs as u64 / 60, d.secs as u64 % 60) };
-            // an estimate says so, and a cost nobody can tell is not shown as one (design review 12)
-            let cost = d.run_cost.map_or("cost not known".into(), |c| format!("{}{}", if d.estimate { "≈" } else { "" }, usd(c)));
+            // an estimate says so, and a cost nobody can tell is not shown as one (design review 12); a plan without a
+            // reference price: the plan, not "$0" (the user, 2026-11-25)
+            let cost = match d.bill.as_ref() {
+                Some(b) if b.unpriced_plan() => plan_word(b.plan_name().unwrap_or_default()),
+                _ => d.run_cost.map_or("cost not known".into(), |c| format!("{}{}", if d.estimate { "≈" } else { "" }, usd(c))),
+            };
             let mut first = vec![Span::styled(format!("{glyph} {word}"), st(color).add_modifier(Modifier::BOLD)), Span::styled(format!("  {}  {}", whole(&took), whole(&cost)), st(th.dim))];
             // what the run changed, file by file, without ctrl-o: it was folded into "ran 4 tools" until opened (design
             // review 13, desktop/mockups/v10.html T3). Each file whole, so the row wraps between them.
@@ -5365,6 +5398,33 @@ mod tests {
         apply(&mut one, serde_json::json!({"type": "harness_user", "text": "hi"}), 0.0);
         apply(&mut one, serde_json::json!({"type": "result", "subtype": "success", "duration_ms": 2_000, "total_cost_usd": 0.0}), 1.0);
         assert_eq!(recap(&one, &[]).as_deref(), Some("手 tazuna · 1 turn · $0 · 2 s"));
+    }
+
+    /// A plan's own loop is named in the money (the user, 2026-11-25): "plan" once whatever the name, the recap says whose
+    /// plan, and a plan without a reference price shows the plan under its answer, not "$0".
+    #[test]
+    fn plan_money_names_its_plan() {
+        assert_eq!([plan_word("Mistral Vibe"), plan_word("Alibaba Coding Plan China"), plan_word("MiniMax Plan"), plan_word("Xiaomi Token Plan Europe")],
+            ["on Mistral Vibe plan", "on Alibaba Coding Plan China", "on MiniMax Plan", "on Xiaomi Token Plan Europe"]);
+        let run = |cost: f64, provider: Option<&str>, price_m: Option<(f64, f64, f64)>| Block::Done(crate::session::Summary { ok: true, secs: 60.0, turns: 1,
+            cost: 0.0, usage: Default::default(), stopped: false, run_cost: Some(cost), run_usage: Default::default(), estimate: false, uncounted: 0, sub_calls: 0,
+            changes: vec![], bill: Some(crate::session::Bill { model: "m".into(), plan: true, provider: provider.map(String::from), price_m, providers: vec![] }) });
+        let mut s = Session::new("", "medium");
+        s.blocks.push(run(0.05, Some("Mistral Vibe"), Some((0.3, 0.007, 1.2))));
+        assert_eq!(recap(&s, &[]).as_deref(), Some("手 tazuna · 1 turn · $0.05 on Mistral Vibe plan · 1 min"));
+        s.blocks.push(run(0.4, None, Some((4.0, 0.4, 20.0))));
+        assert_eq!(recap(&s, &[]).as_deref(), Some("手 tazuna · 2 turns · $0.45 on plans · 2 min"));
+        let mut k = Session::new("", "medium");
+        k.blocks.push(run(0.0, Some("Kimi Code"), None));
+        assert_eq!(recap(&k, &[]).as_deref(), Some("手 tazuna · 1 turn · on Kimi Code plan · 1 min"));
+        // its answer line, drawn
+        let mut a = Session::new("", "medium");
+        apply(&mut a, serde_json::json!({"type": "system", "subtype": "init", "model": "kimi-k3", "price_per_m": [0, 0, 0], "provider": "Kimi Code", "plan": true}), 0.0);
+        apply(&mut a, serde_json::json!({"type": "harness_user", "text": "hi"}), 0.5);
+        apply(&mut a, serde_json::json!({"type": "result", "subtype": "success", "total_cost_usd": 0.0, "duration_ms": 12_000, "tazuna_paid": true}), 13.0);
+        let rows = rows_of(&frame(&a, &View { design: Design::Zen, ..live_view() }, 100, 30).0);
+        assert!(rows.iter().any(|r| r.trim().starts_with("✓ Done  12 s  on Kimi Code plan")), "{}", rows.join("\n"));
+        assert!(!rows.iter().any(|r| r.contains("$0")), "{}", rows.join("\n"));
     }
 
     /// T7: the terminal's background as it answers OSC 11 (any of its forms), when its answers are in, light or dark from it

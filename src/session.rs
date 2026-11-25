@@ -192,10 +192,11 @@ pub struct Summary {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Bill {
     pub model: String,
-    /// On the Claude plan: nothing billed, the cost is at API prices.
+    /// On a plan (Claude's, or the own loop on a plan's key such as Mistral Vibe): nothing billed, the cost is at API prices.
     pub plan: bool,
-    /// Who was paid (models::paid_to, models::claude_payer); None on the plan, on a machine of the user's, through a gateway
-    /// claude does not name, and in recordings from before 0.1.193.
+    /// Who was paid (models::paid_to, models::claude_payer); on a plan's own loop the plan's provider ("Mistral Vibe"); None
+    /// on the Claude plan, on a machine of the user's, through a gateway claude does not name, and in recordings from
+    /// before 0.1.193.
     pub provider: Option<String>,
     /// USD per million (uncached input, cached input, output) as the run was priced; None where the core has no prices.
     /// A cache write's surcharge is not in it (the own loop charges one at 1.25x input, Claude's list at 1.5x): a call's
@@ -204,6 +205,19 @@ pub struct Bill {
     /// The run's calls went to more than one provider (the own loop changed route inside it): their names in order, and
     /// then neither `provider` nor `price_m` stands for the whole run.
     pub providers: Vec<String>,
+}
+
+impl Bill {
+    /// Whose plan paid: the plan's provider ("Mistral Vibe"), "Claude" for claude's; None when billed.
+    pub fn plan_name(&self) -> Option<&str> {
+        self.plan.then(|| self.provider.as_deref().unwrap_or("Claude"))
+    }
+
+    /// A plan's own loop with no reference price (most plan catalogs list 0): its $0 is no price, so the plan shows alone
+    /// (the user, 2026-11-25).
+    pub fn unpriced_plan(&self) -> bool {
+        self.plan && self.provider.is_some() && self.price_m.is_none()
+    }
 }
 
 /// One model call's bill, fixed as it ran: its model, the prices and the provider in force when it began, and what the
@@ -364,6 +378,12 @@ pub struct Session {
     run_since: Option<f64>,
     /// claude's runs are billed, not on the plan: an API key, Bedrock, Vertex, a gateway (models::claude_payer).
     claude_billed: bool,
+    /// The own loop's route is a plan's key (Mistral Vibe, its init's `plan`): its calls are at a reference price, plan
+    /// money like claude's on the Claude plan (the user, 2026-11-25).
+    plan_route: bool,
+    /// The plans that paid a run, each once: its name (the plan's provider, "Claude" for claude's) and whether it had no
+    /// reference price. Kept here, not read off the receipts: after a rewind cut them the money read "on Claude plan".
+    pub plans: Vec<(String, bool)>,
     /// `call_bill`'s length at the last result: the calls from there on are the run in progress.
     billed: usize,
     /// Subagent calls already counted into a run's `sub_calls`.
@@ -511,6 +531,8 @@ impl Session {
             busy_ms: 0.0,
             run_since: None,
             claude_billed: false,
+            plan_route: false,
+            plans: vec![],
             billed: 0,
             subs_counted: 0,
             calls: vec![],
@@ -779,12 +801,17 @@ impl Session {
         marked || self.price_m.is_some() || !self.model.is_empty() && !self.model.starts_with("claude-")
     }
 
-    /// Whether the run in progress is on the Claude plan: not the own loop, and claude on its login with nothing that bills
-    /// it elsewhere (models::claude_payer). The receipt and the header's split ask this alone; the run log asks
-    /// claude_payer too (live.rs).
+    /// The plan route in use, when it has no reference price: its provider, for the header before its first result.
+    pub fn unpriced_plan_now(&self) -> Option<&str> {
+        self.provider.as_deref().filter(|_| self.plan_route && self.price_m.is_none_or(|p| p == (0.0, 0.0, 0.0)))
+    }
+
+    /// Whether the run in progress is on a plan: the own loop on a plan's key (Mistral Vibe), or claude on its login with
+    /// nothing that bills it elsewhere (models::claude_payer). The receipt and the header's split ask this alone; the run
+    /// log asks claude_payer and models::on_plan too (live.rs).
     #[inline(never)]
     fn on_plan(&self, marked: bool) -> bool {
-        !self.own_loop(marked) && !self.claude_billed
+        self.plan_route || !self.own_loop(marked) && !self.claude_billed
     }
 
     /// What was used since the last result cost, for a run that ended without a total of its own (claude's stopped turn
@@ -820,6 +847,9 @@ impl Session {
         // after a cut, from where it was cut (the Done left is older than that)
         let (run_cost, run_usage) = run_share(&self.blocks, cost, usage, self.cut_at.take());
         let bill = self.bill(marked);
+        if let Some(p) = bill.as_ref().and_then(|b| b.plan_name().map(|n| (n.to_string(), b.unpriced_plan()))).filter(|p| !self.plans.contains(p)) {
+            self.plans.push(p);
+        }
         let uncounted = self.call_bill.iter().skip(self.billed).map(|b| b.uncounted).sum::<u32>() + lost;
         let subs: usize = self.sub_events.keys().map(|id| self.sub_calls(id)).sum();
         let sub_calls = subs.saturating_sub(std::mem::replace(&mut self.subs_counted, subs));
@@ -898,9 +928,11 @@ impl Session {
             }
         }
         let mixed = paid && providers.len() > 1;
+        // a plan's own loop names its plan's provider ("Mistral Vibe", for "on Mistral Vibe plan"), and without a reference
+        // price it has none: plan, no money, never $0 at API prices (the user, 2026-11-25)
         (!self.model.is_empty()).then(|| Bill { model: self.model.clone(), plan: !paid,
-            provider: if mixed { None } else { providers.first().cloned().or_else(|| self.provider.clone()).filter(|_| paid) },
-            price_m: if mixed { None } else if own { price.or(self.price_m) } else { claude_list(&self.model) },
+            provider: if mixed { None } else { providers.first().cloned().or_else(|| self.provider.clone()).filter(|_| paid || own) },
+            price_m: if mixed { None } else if own { price.or(self.price_m).filter(|p| paid || *p != (0.0, 0.0, 0.0)) } else { claude_list(&self.model) },
             providers: if mixed { providers } else { vec![] } })
     }
 
@@ -1023,6 +1055,7 @@ impl Session {
                 let set: Vec<&str> = e["tazuna_env"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
                 let (plan, payer) = crate::models::claude_payer(e["apiKeySource"].as_str(), |k| set.contains(&k));
                 self.claude_billed = self.model.starts_with("claude-") && self.price_m.is_none() && !plan;
+                self.plan_route = e["plan"] == true;
                 self.provider = e["provider"].as_str().map(String::from).or_else(|| payer.filter(|_| self.claude_billed).map(String::from));
                 self.cwd = s(&e["cwd"]);
                 let mut cmds: Vec<String> = e["slash_commands"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(String::from)).collect();
@@ -1064,7 +1097,7 @@ impl Session {
             (Some("system"), Some(sub)) if e["message"].is_string() => {
                 // the own loop moved to another route: its prices and who is paid, for the calls from here on
                 if sub == "route_switch" && e["price_per_m"].is_array() {
-                    (self.price_m, self.provider) = (price_of(e), e["provider"].as_str().map(String::from));
+                    (self.price_m, self.provider, self.plan_route) = (price_of(e), e["provider"].as_str().map(String::from), e["plan"] == true);
                 }
                 let what = match sub {
                     "route_switch" => "route",
@@ -2741,6 +2774,62 @@ mod tests {
         assert_eq!(run(json!(["CLAUDE_CODE_USE_VERTEX"])), (json!(false), json!("Vertex"), "$0.40".to_string()));
         assert_eq!(run(json!(["ANTHROPIC_BASE_URL"])), (json!(false), Value::Null, "$0.40".to_string()), "a gateway: billed, the payer not known");
         assert_eq!(run(json!([])), (json!(true), Value::Null, "$0.40 on Claude plan".to_string()));
+    }
+
+    #[test]
+    fn a_plan_routes_run_is_plan_money_at_its_reference_price() {
+        // Mistral Vibe's DeepSeek read "$0" on every call and "Paid to Mistral Vibe $0" (the user, 2026-11-25): its calls at
+        // Mistral's API price, on the receipt as Claude plan runs are (plan, nothing paid), the header naming the plan
+        let vibe = |s: &mut Session, price: Value| {
+            s.apply(&json!({"type": "system", "subtype": "init", "model": "deepseek-v4-1-flash-1017", "price_per_m": price, "provider": "Mistral Vibe", "plan": true}), 0.0);
+            s.apply(&json!({"type": "harness_user", "text": "fix it"}), 1.0);
+        };
+        let mut s = Session::new("", "high");
+        vibe(&mut s, json!([0.3, 0.007, 1.2]));
+        paid_call(&mut s, 2.0, 100_000, 900_000, 10_000, 0.0483);
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.0483, "tazuna_paid": true}), 4.0);
+        let v = s.view();
+        let d = dones(&v)[0].1.clone();
+        assert_eq!((&d["plan"], &d["provider"], &d["price_m"], &d["run_cost"], &v["calls"][0]["cost"]),
+            (&json!(true), &json!("Mistral Vibe"), &json!([0.3, 0.007, 1.2]), &json!(0.0483), &json!(0.0483)));
+        assert_eq!((s.split_cost(), crate::ui::cost_str(&s)), ((0.0, 0.0483), "$0.05 on Mistral Vibe plan".to_string()));
+        // a plan's catalog that lists no price: the plan, no money (no $0 at API prices, no price list)
+        let mut z = Session::new("", "high");
+        vibe(&mut z, json!([0, 0, 0]));
+        paid_call(&mut z, 2.0, 1_000, 0, 100, 0.0);
+        z.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.0, "tazuna_paid": true}), 4.0);
+        let d = dones(&z.view())[0].1.clone();
+        assert_eq!((&d["plan"], &d["price_m"], crate::ui::cost_str(&z)), (&json!(true), &Value::Null, "on Mistral Vibe plan".to_string()));
+        // then claude on its plan in the same session: two plans, "on plans"
+        s.apply(&json!({"type": "harness_switch", "model": "claude-opus-5-5", "effort": "medium", "text": "now Opus"}), 5.0);
+        s.apply(&json!({"type": "system", "subtype": "init", "model": "claude-opus-5-5"}), 5.5);
+        paid_call(&mut s, 6.0, 1_000, 0, 100, 0.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.5}), 8.0);
+        assert_eq!(crate::ui::cost_str(&s), "$0.55 on plans");
+        // a rewind that cuts the Vibe reply keeps its money, and the plan it is on
+        let mut r = Session::new("", "high");
+        vibe(&mut r, json!([0.3, 0.007, 1.2]));
+        paid_call(&mut r, 2.0, 100_000, 900_000, 10_000, 0.0483);
+        r.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.0483, "tazuna_paid": true}), 4.0);
+        r.truncate(0);
+        assert_eq!((r.plans.clone(), crate::ui::cost_str(&r)), (vec![("Mistral Vibe".to_string(), false)], "$0.05 on Mistral Vibe plan".to_string()));
+        // an unpriced plan before its first result: the plan, not "≈$0"
+        let mut k = Session::new("", "high");
+        k.apply(&json!({"type": "system", "subtype": "init", "model": "kimi-k3", "price_per_m": [0, 0, 0], "provider": "Kimi Code", "plan": true}), 0.0);
+        paid_call(&mut k, 1.0, 1_000, 0, 100, 0.0);
+        assert_eq!(crate::ui::cost_str(&k), "on Kimi Code plan");
+    }
+
+    #[test]
+    fn a_route_switch_off_a_plan_is_billed() {
+        // the engine leaves no fallback across a plan's key, and a route_switch clears the plan: its calls are paid
+        let mut s = Session::new("", "high");
+        s.apply(&json!({"type": "system", "subtype": "init", "model": "m", "price_per_m": [0.3, 0.007, 1.2], "provider": "Mistral Vibe", "plan": true}), 0.0);
+        s.apply(&json!({"type": "system", "subtype": "route_switch", "message": "now https://openrouter.ai/api/v1: HTTP 503", "price_per_m": [2.0, 0.2, 4.0], "provider": "OpenRouter"}), 1.0);
+        paid_call(&mut s, 2.0, 1_000_000, 0, 0, 2.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 2.0, "tazuna_paid": true}), 4.0);
+        let d = dones(&s.view())[0].1.clone();
+        assert_eq!((&d["plan"], &d["provider"], s.split_cost(), crate::ui::cost_str(&s)), (&json!(false), &json!("OpenRouter"), (2.0, 0.0), "$2.00".to_string()));
     }
 
     #[test]
