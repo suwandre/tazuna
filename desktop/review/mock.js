@@ -471,3 +471,78 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
     return emit(event, payload);
   };
 })();
+
+// the receipt's numbers and the work panel's Stats (the user, 2026-11-25, mockups/v11.html): "Make the request logger…", a
+// plan's own loop (DeepSeek V4.1 Flash 1017 on Mistral Vibe, at Mistral's reference price $0.30 / $0.007 / $1.20 per
+// million: plan money, not billed), the user's eight calls from the screenshot and a second turn, each call with its time to
+// first token, speed and time; `window.__PLAY__` plays a third turn call by call (start, next, end) for the live Stats.
+// "Rename the config loader": a plan whose catalog lists no price (Z.ai Coding Plan): no reference, so no amount, never $0;
+// then a paid turn (SubRouter), so its conversation's slip opens. The run log has Mistral Vibe's runs beside Claude's, for the
+// usage page's plans by provider (`window.__REFLESS_ONLY__`: a no-price plan's runs alone). `window.__MOCK__.emit(id, f)`
+// shows a conversation's view changed by f (a reply running, for the sweep).
+(() => { const T = window.__TAURI_INTERNALS__; if (!window.__SENT__) return;
+  const inv = T.invoke.bind(T), emit = T.emit.bind(T), now = Math.floor(Date.now() / 1000), midnight = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+  const u = (i, c, o) => ({ input: i, cache_write: 0, cache_read: c, output: o });
+  const VIBE = { model: "deepseek-v4.1-flash-1017", plan: true, provider: "Mistral Vibe", price_m: [0.3, 0.007, 1.2] };
+  const price = (fresh, cached, out) => (fresh * 0.3 + cached * 0.007 + out * 1.2) / 1e6;
+  // [in, cached, out, first token in s, t/s while writing]
+  const call = (block, [inn, cached, out, first, tps]) => ({ block, fresh: inn - cached, cached, out, cost: price(inn - cached, cached, out), first_ms: Math.round(first * 1000), tps,
+    total_ms: Math.round((first + out / tps + 0.15) * 1000), model: VIBE.model, role: null, provider: "Mistral Vibe" });
+  const tool = (id, name, input) => ({ kind: "tool", id, name, input, result: "…", error: false, secs: name === "Bash" ? 2.4 : 0.1, running: false });
+  const sum = (cs, f) => cs.reduce((a, c) => a + f(c), 0);
+  const total = { i: 0, c: 0, o: 0, cost: 0 };
+  const done = (cs) => { total.i += sum(cs, (c) => c.fresh); total.c += sum(cs, (c) => c.cached); total.o += sum(cs, (c) => c.out); total.cost += sum(cs, (c) => c.cost);
+    return { kind: "done", ok: true, secs: Math.round(sum(cs, (c) => c.total_ms) / 1000 + 2), turns: cs.length, cost: total.cost, usage: u(total.i, total.c, total.o), stopped: false,
+      run_cost: sum(cs, (c) => c.cost), run_usage: u(sum(cs, (c) => c.fresh), sum(cs, (c) => c.cached), sum(cs, (c) => c.out)), ...VIBE }; };
+  const first = [[144.5e3, 0, 527, 1.9, 212], [145.6e3, 144.4e3, 234, 0.9, 198], [147.5e3, 145.5e3, 6.0e3, 0.8, 231], [153.1e3, 147.3e3, 312, 1.0, 205],
+    [153.9e3, 153.1e3, 445, 1.1, 219], [154.5e3, 153.9e3, 293, 0.9, 224], [154.8e3, 154.5e3, 145, 0.7, 190], [155.2e3, 154.9e3, 701, 1.0, 216]].map((c, i) => call(i + 1, c));
+  const second = [[156.0e3, 155.1e3, 210, 1.1, 208], [156.6e3, 156.0e3, 160, 0.8, 219], [157.3e3, 156.6e3, 540, 0.9, 226]].map((c, i) => call(12 + i, c));
+  const f = (p) => ({ file_path: `src/${p}` });
+  const blocks = [{ kind: "prompt", text: "Make the request logger skip health checks and log each request's latency" },
+    tool("v1", "Read", f("logger.ts")), tool("v2", "Read", f("server.ts")), tool("v3", "Write", f("middleware/latency.ts")), tool("v4", "Read", f("routes/health.ts")),
+    tool("v5", "Read", f("config.ts")), tool("v6", "Edit", f("logger.ts")), tool("v7", "Read", f("logger.test.ts")),
+    { kind: "text", text: "The logger now skips `/health` and `/ready`, and every other request logs its latency in milliseconds from a small middleware (`src/middleware/latency.ts`).", live: false },
+    done(first), { kind: "prompt", text: "Log the route's pattern, not the raw path" }, tool("v8", "Read", f("middleware/latency.ts")), tool("v9", "Edit", f("middleware/latency.ts")),
+    { kind: "text", text: "It logs `req.route.path` now (`/users/:id`), falling back to the raw path where no route matched.", live: false }, done(second)];
+  const p6 = { type: "view", from: 0, model: VIBE.model, effort: "high", cwd: "/Users/x/api-gateway", profile: "repo", mode: "auto", session_id: "p6", activity: "Done", turns: 11,
+    cost: total.cost, usage: u(total.i, total.c, total.o), context: 157300, context_window: 256000, changes: [], edit_points: [], blocks, calls: [...first, ...second] };
+  // the plan with no reference price: the core starts it at [0,0,0], so its calls come with their model and cost 0
+  const zcall = (block, inn, cached, out, first, tps) => ({ block, fresh: inn - cached, cached, out, cost: 0, first_ms: first, tps, total_ms: Math.round(first + (out / tps) * 1000 + 150),
+    model: "glm-5.3", role: null, provider: "Z.ai Coding Plan" });
+  const scall = { block: 6, fresh: 1300, cached: 2100, out: 90, cost: 0.0004, first_ms: 700, tps: 140, total_ms: 1500, model: "deepseek-v4.1-flash", role: null, provider: "SubRouter" };
+  const p7 = { type: "view", from: 0, model: "deepseek-v4.1-flash", effort: "high", cwd: "/Users/x/api-gateway", profile: "repo", mode: "auto", session_id: "p7", activity: "Done", turns: 3, cost: 0.0004,
+    usage: u(5400, 20100, 700), context: 3400, context_window: 200000, changes: [], edit_points: [], calls: [zcall(1, 9800, 0, 140, 2300, 88), zcall(2, 12300, 9800, 470, 1200, 94), scall],
+    blocks: [{ kind: "prompt", text: "Rename the config loader to loadSettings" }, tool("z1", "Edit", f("config.ts")),
+      { kind: "text", text: "Renamed `loadConfig` to `loadSettings` in `src/config.ts` and its two callers.", live: false },
+      { kind: "done", ok: true, secs: 9, turns: 2, cost: 0, usage: u(4100, 18000, 610), stopped: false, run_cost: 0, run_usage: u(4100, 18000, 610), model: "glm-5.3", plan: true, provider: "Z.ai Coding Plan", price_m: null },
+      { kind: "notice", text: "── continued on DeepSeek V4.1 Flash ──", error: false }, { kind: "prompt", text: "Say in one line what changed" },
+      { kind: "text", text: "`loadConfig` is `loadSettings` now, in the module and both callers.", live: false },
+      { kind: "done", ok: true, secs: 2, turns: 1, cost: 0.0004, usage: u(5400, 20100, 700), stopped: false, run_cost: 0.0004, run_usage: u(1300, 2100, 90), model: "deepseek-v4.1-flash", plan: false, provider: "SubRouter", price_m: [0.15, 0.003, 0.6] }] };
+  let tid6 = null, live = p6;
+  const show = (v) => { live = v; T.view(tid6, v); }, tids = {}, views = { p6, p7 };
+  window.__MOCK__ = { emit: (id, f) => T.view(tids[id], f(JSON.parse(JSON.stringify(views[id])))) };
+  const third = [[158.0e3, 157.2e3, 260, 1.4, 201, "Read"], [158.9e3, 158.0e3, 1900, 0.8, 228, "Write"], [161.2e3, 158.9e3, 140, 0.7, 196, "Bash"], [161.5e3, 161.2e3, 380, 0.9, 223, "Read"]];
+  let n = 0;
+  window.__PLAY__ = {
+    start() { n = 0; show({ ...p6, activity: "Thinking", blocks: [...p6.blocks, { kind: "prompt", text: "Add a test for the skipped health checks" }] }); },
+    // a call ends: its step, its numbers in the view, the conversation's cost and context with it
+    next() { const [i, c, o, fi, tp, name] = third[n++], at = live.blocks.length, k = call(at, [i, c, o, fi, tp]);
+      show({ ...live, activity: "Tool", cost: live.cost + k.cost, context: i, blocks: [...live.blocks, tool(`w${n}`, name, name === "Bash" ? { command: "npm test -- logger" } : f("logger.test.ts"))], calls: [...live.calls, k] }); },
+    end() { const cs = live.calls.slice(p6.calls.length);
+      show({ ...live, activity: "Done", blocks: [...live.blocks, { kind: "text", text: "Added `logger.test.ts`: health checks log nothing, other routes log their pattern and latency.", live: false }, done(cs)] }); },
+  };
+  const vibeRows = [1, 2, 3].map((d) => [midnight - d * 86400 + 3600, VIBE.model, "0.1.226", true, 0.06 + d * 0.01, 1500, 0, 150000, 900, "completed", "claimed", null, "live", true, [], [], "Mistral Vibe"]);
+  T.invoke = async (cmd, args) => {
+    if (cmd === "op" && args.msg.op === "resume" && args.msg.id === "p6") { tid6 = tids.p6 = args.tid; setTimeout(() => show(p6), 10); return null; }
+    if (cmd === "op" && args.msg.op === "resume" && args.msg.id === "p7") { tids.p7 = args.tid; setTimeout(() => T.view(args.tid, p7), 10); return null; }
+    return inv(cmd, args);
+  };
+  T.emit = (event, payload) => {
+    const m = payload?.msg, proj = m?.type === "sessions" && m.dirs.find((d) => d.dir === "/Users/x/api-gateway");
+    if (proj && !proj.list.some((e) => e.id === "p6")) proj.list.push({ id: "p6", first: "Make the request logger skip health checks and log each request's latency", last_at: now - 4 * 3600, messages: 4, model: VIBE.model },
+      { id: "p7", first: "Rename the config loader to loadSettings", last_at: now - 6 * 3600, messages: 2, model: "glm-5.3" });
+    if (m?.type === "usage") m.rows = window.__REFLESS_ONLY__ ? [1, 2].map((d) => [midnight - d * 86400 + 3600, "glm-5.3", "0.1.226", true, 0, 9800, 0, 9800, 600, "completed", "claimed", null, "live", true, [], [], "Z.ai Coding Plan"])
+      : [...m.rows, ...vibeRows];
+    return emit(event, payload);
+  };
+})();

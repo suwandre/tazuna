@@ -3,12 +3,13 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { Slot } from "../lib/slots";
 import { tokens, widgetUrl, type UserWidget } from "../lib/widgets";
 import { OPEN_PR, checksOf, type Pr } from "../lib/pr";
+import type { View } from "../lib/tazuna";
 import type { ChangedFile, Message, Usage } from "../lib/types";
 import { Counts, Sep } from "./Sep";
 import { quietButton } from "./Controls";
 
-// The right column is the work panel (the design review of 2026-11-18): what the agent changed, the checks it ran, the
-// branch's pull request, then your messages and the user's own panels; it closes (⌘\), and a plain chat opens without
+// The right column is the work panel (the design review of 2026-11-18): its Stats (components/Stats.tsx), what the agent
+// changed, the checks it ran, the branch's pull request, then your messages and the user's own panels; it closes (⌘\), and a plain chat opens without
 // it. Until desktop 0.1.64 it held four equal cards of numbers (context, plan, thread cost, today) that repeated the
 // composer's and the header's; those went into the plan ring by the composer and the usage page. It stays a slot
 // (docs/PLUGINS.md): a plugin adds a section, replaces one by id, or hides it. A section with nothing real to show
@@ -28,6 +29,8 @@ export type Work = {
   review?: () => void; openPr?: () => void;
   /** a message to the agent (the PR section's "Ask tazuna to open one") */
   ask?: (text: string) => void;
+  /** the conversation as the core sends it, and the window's id for it: the Stats read its calls (the user, 2026-11-25) */
+  view?: View | null; active?: string;
 };
 export const WorkCtx = createContext<Work>({ files: [], checks: [] });
 

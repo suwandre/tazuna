@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { Slot } from "../lib/slots";
 import { readableError } from "../lib/fromView";
 import { attachments, IMAGE_FILE, type Change, type Message, type ToolStep } from "../lib/types";
-import { AnswerSlip, dur, priceSaid, tok } from "./Receipt";
+import { AnswerSlip, dur, priceSaid, refless, tok } from "./Receipt";
 import { Parts, Sep } from "./Sep";
 import { quietButton } from "./Controls";
 import { Mark } from "./Mark";
@@ -479,7 +479,8 @@ export function MessageMeta({ message: m, index }: { message: Message; index?: n
         <button onClick={toggle} aria-expanded={open} title="The receipt: every model call of this reply and what it cost"
           className="-ml-1.5 inline-flex min-w-0 items-center rounded-md px-1.5 py-0.5 hover:bg-hover hover:text-ink-2">
           <ChevronRight size={12} strokeWidth={1.5} aria-hidden="true" className={`mr-1.5 flex-none transition-transform duration-150 ${open ? "rotate-90" : ""}`} />
-          <span className="font-medium text-muted">{priceSaid(a.cost, a.estimate)}</span>
+          {/* a plan without a reference price: no "$0" (the user, 2026-11-25) */}
+          <span className="font-medium text-muted">{refless(a.billing) ? "not billed" : priceSaid(a.cost, a.estimate)}</span>
           {a.in ? <><Sep />{tok(a.in)} in{a.cachedPct != null && <span className="ml-1">({a.cachedPct}% cached)</span>}<Sep />{tok(a.out ?? 0)} out</> : null}
           <Sep />{dur(a.secs)}
         </button>

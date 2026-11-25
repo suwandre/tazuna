@@ -56,6 +56,141 @@ const log = [];
       + `, column ${msg ? `${Math.round(msg.left - main.left)} in, ${Math.round(msg.width - 56)} text` : "none"}, box ${box ? `${Math.round(box.left - main.left)} in, ${Math.round(box.width)}` : "none"}`
       + `, panel ${pop ? "over" : rail && rail.width > 0 && main.right < innerWidth - 100 ? "beside" : "shut"}`;
   });
+  // the receipt's numbers and the work panel's Stats (the user, 2026-11-25, mockups/v11.html): a plan run's receipt with its
+  // time to first token, speed, the cache's share and a totals row (wide, then narrow: speed goes first, then TTFT, the
+  // share stays), the plan footers (a plan's provider, Claude's, one with no reference price), the Stats over this turn and
+  // the conversation in both themes, beside and over the conversation, a sparkline's tip by pointer and by keyboard, the data
+  // marks in `live` under every accent, the numbers tweening while a reply runs (jumping under reduced motion), and the usage
+  // page's plans by provider. ONLY=stats: these alone
+  if (!process.env.ONLY || process.env.ONLY === "stats") {
+    const must = (ok, what) => { if (!ok) throw new Error(what); };
+    const VIBE = "Make the request logger";
+    const slip = (p) => p.evaluate(() => { const s = [...document.querySelectorAll(".tz-slip")].pop(), shown = (e) => getComputedStyle(e).display !== "none", t = s.querySelector("table");
+      return { cols: [...s.querySelectorAll("th")].filter(shown).map((e) => e.textContent).join(","), total: [...s.querySelectorAll("tr")].pop().innerText.replace(/\s+/g, " ").trim(),
+        text: s.innerText, over: t ? t.scrollWidth - s.clientWidth + 32 : 0, width: Math.round(s.getBoundingClientRect().width) }; });
+    const stats = (p) => p.evaluate(() => { const s = document.querySelector("section[aria-label=Stats]"); if (!s) return null;
+      const tile = (l) => [...s.querySelectorAll("div")].find((d) => d.textContent === l && d.className.includes("text-faint"))?.nextElementSibling?.textContent;
+      const probe = document.createElement("i"); probe.style.color = "var(--live)"; s.append(probe); const live = getComputedStyle(probe).color; probe.remove();
+      const cut = [...s.querySelectorAll(".truncate")].filter((e) => e.scrollWidth > e.clientWidth + 1).map((e) => e.textContent);
+      const sub = [...s.querySelectorAll("div")].find((d) => d.textContent === "Cost" && d.className.includes("text-faint"))?.nextElementSibling?.nextElementSibling?.textContent ?? null;
+      return { first: s.parentElement.firstElementChild === s, in: tile("In"), out: tile("Out"), cost: tile("Cost"), costSub: sub, calls: tile("Calls"), text: s.innerText.replace(/\s+/g, " "),
+        strokes: [...s.querySelectorAll("path")].map((e) => getComputedStyle(e).stroke), live, wide: s.scrollWidth - s.clientWidth, cut,
+        tip: s.querySelector(".tz-float")?.textContent ?? null }; });
+    for (const theme of ["dark", "light"]) {
+      const [ctx, p] = await ctxOf({ theme, w: 1440, h: 900 }), T = `${theme[0]}-stats`;
+      await open(p, VIBE);
+      await step(p, `${T}-receipt-wide`, async () => { await p.getByTitle(/^The receipt/).first().click(); await p.waitForTimeout(500);
+        const r = await slip(p); log.push(`${T} receipt: ${r.width} px, ${r.cols} | ${r.total}`);
+        must(r.cols === "Call,In,Cached,Out,TTFT,Speed,Time,Price" && r.over <= 0, `wide receipt: ${JSON.stringify(r)}`);
+        must(/^Total 1\.2M 1\.1M ?87% 8\.7k 0\.9 s ?med 225 t\/s 49 s \$0\.064$/.test(r.total), `totals row: ${r.total}`);
+        must(r.text.includes("Total at Mistral Vibe's API prices") && /On your Mistral Vibe plan\s+not billed/.test(r.text) && !r.text.includes("Paid"), `the plan's footer: ${r.text}`); });
+      // the Stats beside the conversation (1440): this turn, then the conversation
+      await step(p, `${T}-turn`, async () => { await p.getByTitle(/^Open the work panel/).click(); await p.waitForTimeout(700);
+        const s = await stats(p); log.push(`${T} turn: ${JSON.stringify(s)}`);
+        must(s && s.first && s.calls === "3" && s.in === "469.9k" && s.out === "910" && s.text.includes("at API prices · not billed") && s.text.includes("t/s") && !/tok\/s|\d \/s/.test(s.text), `this turn: ${JSON.stringify(s)}`);
+        must(s.wide <= 0 && !s.cut.length && s.strokes.length === 3 && s.strokes.every((c) => c === s.live), `fit and colour: ${JSON.stringify(s)}`); });
+      await step(p, `${T}-conversation`, async () => { await p.getByRole("radio", { name: "Conversation" }).click(); await p.waitForTimeout(300);
+        const s = await stats(p); must(s.calls === "11" && s.in === "1.7M", `the conversation: ${JSON.stringify(s)}`); });
+      // the pointer over the speed line: a crosshair and "call N · 219 t/s"; the keyboard on the first line: the arrows
+      await step(p, `${T}-hover`, async () => { const g = p.locator("[role=group][aria-label^='Writing speed']"), b = await g.boundingBox();
+        await p.mouse.move(b.x + b.width * 0.42, b.y + b.height / 2); await p.waitForTimeout(150);
+        const s = await stats(p); log.push(`${T} tip: ${s.tip}`); must(/^call \d+ · \d+ t\/s$/.test(s.tip ?? ""), `the speed's tip: ${s.tip}`); });
+      await step(p, `${T}-keys`, async () => { await p.mouse.move(700, 450); await p.locator("[role=group][aria-label^='Time to first token']").focus(); await p.keyboard.press("ArrowLeft");
+        const label = await p.evaluate(() => document.activeElement.getAttribute("aria-label")), s = await stats(p);
+        must(label === "Time to first token: call 10, 0.8 s" && s.tip === "call 10 · 0.8 s", `keys: ${label} | ${s.tip}`); });
+      await p.keyboard.press("Tab");
+      // every accent: the lines stay live, never the accent
+      for (const accent of ["jade", "amber", "rose", "graphite"]) await step(p, `${T}-accent-${accent}`, async () => {
+        await p.evaluate((a) => { document.documentElement.dataset.accent = a; }, accent); await p.waitForTimeout(100);
+        const s = await stats(p); must(s.strokes.every((c) => c === s.live), `${accent}: ${JSON.stringify([s.strokes, s.live])}`); });
+      await p.evaluate(() => { delete document.documentElement.dataset.accent; });
+      // live: a reply plays call by call; the numbers move over ~450 ms (sampled), the newest point grows in
+      for (const motion of ["no-preference", "reduce"]) {
+        const [c2, q] = motion === "reduce" ? await ctxOf({ theme, w: 1440, h: 900, motion }) : [null, p], M = motion === "reduce" ? `${T}-still` : `${T}-live`;
+        if (c2) { await open(q, VIBE); await q.getByTitle(/^Open the work panel/).click(); await q.waitForTimeout(700); }
+        else { await q.getByRole("radio", { name: "This turn" }).click(); }
+        await q.evaluate(() => { window.__PLAY__.start(); }); await q.waitForTimeout(300);
+        await q.evaluate(() => { window.__PLAY__.next(); }); await q.waitForTimeout(800);
+        await step(q, M, async () => {
+          const seen = await q.evaluate(async () => { const out = (() => { const s = document.querySelector("section[aria-label=Stats]"); return [...s.querySelectorAll("div")].find((d) => d.textContent === "Out" && d.className.includes("text-faint")).nextElementSibling; })();
+            window.__PLAY__.next(); const vals = []; const t0 = performance.now();
+            while (performance.now() - t0 < 700) { vals.push(out.textContent); await new Promise((r) => setTimeout(r, 30)); }
+            return vals; });
+          await q.screenshot({ path: `${OUT}/${M}-before-end.png` });
+          const distinct = [...new Set(seen)];
+          log.push(`${M}: Out ${distinct.join(" → ")}`);
+          must(seen[seen.length - 1] === "2.2k", `${M}: ended at ${seen[seen.length - 1]}`);
+          must(motion === "reduce" ? distinct.length <= 2 && seen[3] === "2.2k" : distinct.length >= 4, `${M}: ${distinct.join(" → ")}`);
+        });
+        // a frame mid-way through the next call's tween
+        await q.evaluate(() => { window.__PLAY__.next(); }); await q.waitForTimeout(120); await q.screenshot({ path: `${OUT}/${M}-mid.png` });
+        await q.waitForTimeout(600); await q.evaluate(() => { window.__PLAY__.end(); }); await q.waitForTimeout(400);
+        await step(q, `${M}-ended`, async () => { const s = await stats(q); must(s.calls === "3" && !s.text.includes("live") && s.cost.startsWith("$"), `after the reply: ${JSON.stringify(s)}`); });
+        if (c2) await c2.close();
+      }
+      // the review of 2026-11-25: a reply running after plan turns is "so far" in the conversation, never "not billed"; a
+      // switch of scope during a reply jumps; running calls without their model, or on a plan with no reference price, have
+      // no cost ("–", never $0)
+      const running = (calls) => p.evaluate((cs) => window.__MOCK__.emit("p6", (v) => ({ ...v, activity: "Tool", blocks: [...v.blocks, { kind: "prompt", text: "And the README" }],
+        calls: [...v.calls, ...cs.map((c) => ({ block: v.blocks.length + 1, fresh: 900, cached: 157000, out: 120, first_ms: 800, tps: 210, total_ms: 1500, role: null, ...c }))] })), calls);
+      await step(p, `${T}-paid-after-plan`, async () => { await running([{ cost: 0.01, model: "deepseek-v4.1-flash", provider: "SubRouter" }]); await p.waitForTimeout(300);
+        await p.getByRole("radio", { name: "Conversation" }).click(); await p.waitForTimeout(600);
+        const s = await stats(p); log.push(`${T} a paid reply after plan turns: ${s.cost} · ${s.costSub}`); must(s.costSub === "so far" && s.cost === "$0.079", `paid after plan: ${JSON.stringify(s)}`); });
+      await step(p, `${T}-scope-jump`, async () => {
+        const seen = await p.evaluate(async () => { const s = document.querySelector("section[aria-label=Stats]"), out = () => [...s.querySelectorAll("div")].find((d) => d.textContent === "Out" && d.className.includes("text-faint")).nextElementSibling.textContent;
+          [...s.querySelectorAll("[role=radio]")].find((b) => b.textContent === "This turn").click(); const vals = [];
+          for (let i = 0; i < 12; i++) { await new Promise((r) => setTimeout(r, 30)); vals.push(out()); } return vals; });
+        log.push(`${T} scope switched during a reply: Out ${[...new Set(seen)].join(" → ")}`); must(new Set(seen).size === 1 && seen[0] === "120", `the switch slid: ${seen.join(" → ")}`); });
+      await step(p, `${T}-running-no-model`, async () => { await running([{ cost: 0.3, estimate: true }]); await p.waitForTimeout(500);
+        const s = await stats(p); must(s.cost === "–" && !s.costSub && !/\$0(?!\.)/.test(s.text), `a call without its model: ${JSON.stringify(s)}`); });
+      await p.evaluate(() => window.__MOCK__.emit("p6", (v) => v)); await p.waitForTimeout(300);
+      // a plan whose catalog lists no price: no amount, never $0 (receipt line and footer); Claude's plan by name
+      await step(p, `${T}-receipt-refless`, async () => { await open(p, "Rename the config loader"); await p.getByTitle(/^The receipt/).first().click(); await p.waitForTimeout(500);
+        const r = await slip(p), line = await p.getByTitle(/^The receipt/).first().innerText();
+        must(/On your Z\.ai Coding Plan\s+not billed/.test(r.text) && !r.text.includes("API prices") && !/\$0(?!\.)/.test(r.text) && line.startsWith("not billed"), `no reference: ${line} | ${r.text}`); });
+      await step(p, `${T}-chat-receipt-no-ref`, async () => { await p.getByTitle(/^This conversation's receipt/).click(); await p.waitForTimeout(400);
+        const t = await p.getByRole("dialog", { name: "This conversation's receipt" }).innerText();
+        must(/On your Z\.ai Coding Plan\s+not billed/.test(t) && /Rename the config loader[^\n]*\s+2\s+9 s\s+not billed/.test(t) && !/\$0(?!\.)/.test(t), `the conversation's slip, no reference: ${t}`); });
+      await esc(p);
+      await step(p, `${T}-running-no-ref`, async () => { await p.getByTitle(/^Open the work panel/).click(); await p.waitForTimeout(600);
+        await p.evaluate(() => window.__MOCK__.emit("p7", (v) => ({ ...v, model: "glm-5.3", activity: "Tool", blocks: [...v.blocks, { kind: "prompt", text: "Rename it back" }],
+          calls: [...v.calls, { block: v.blocks.length + 1, fresh: 900, cached: 12000, out: 60, cost: 0, first_ms: 900, tps: 90, total_ms: 1700, model: "glm-5.3", role: null, provider: "Z.ai Coding Plan" }] })));
+        await p.waitForTimeout(500); const s = await stats(p);
+        must(s.cost === "–" && !s.costSub && !/\$0(?!\.)/.test(s.text), `a running turn on a plan with no reference: ${JSON.stringify(s)}`); });
+      await p.getByTitle(/^Close the work panel/).click().catch(() => {});
+      await step(p, `${T}-receipt-claude`, async () => { await open(p, "Why is the CI build"); await p.getByTitle(/^The receipt/).first().click(); await p.waitForTimeout(500);
+        const r = await slip(p); must(r.text.includes("Total at Claude's API prices") && /On your Claude plan\s+not billed/.test(r.text), `Claude's plan: ${r.text}`); });
+      // the usage page: each plan by its provider
+      await step(p, `${T}-usage-plans`, async () => { await p.keyboard.press("Control+Shift+U"); await p.waitForTimeout(900);
+        await p.getByText("A plan's runs are counted at API prices").scrollIntoViewIfNeeded();
+        const text = await p.getByRole("dialog", { name: "Usage" }).innerText();
+        must(text.includes("Mistral Vibe plan") && /Plans\s/.test(text) && text.includes("Plans, at API prices") && !text.includes("Claude on your plan"), "the usage page's plans"); });
+      await esc(p);
+      log.push(`${T} page errors: ${JSON.stringify(p.errs.slice(0, 5))}`);
+      await ctx.close();
+      // over the conversation (1280), and the receipt narrow: speed goes first, then the time to first token
+      const [c3, r] = await ctxOf({ theme, w: 1280, h: 800 });
+      await open(r, VIBE);
+      await step(r, `${T}-over`, async () => { await r.getByTitle(/^Open the work panel/).click(); await r.waitForTimeout(700);
+        const s = await stats(r); must(await r.locator("div[data-panel] section[aria-label=Stats]").count() === 1 && s.wide <= 0 && !s.cut.length, `over: ${JSON.stringify(s)}`); });
+      await c3.close();
+      for (const [w, cols] of [[600, "Call,In,Cached,Out,TTFT,Time,Price"], [520, "Call,In,Cached,Out,Time,Price"]]) {
+        const [c4, q] = await ctxOf({ theme, w, h: 800 });
+        await step(q, `${T}-receipt-${w}`, async () => { await q.getByRole("button", { name: "Conversations", exact: true }).click(); await open(q, VIBE);
+          await q.getByTitle(/^The receipt/).first().click(); await q.waitForTimeout(500);
+          const s = await slip(q); log.push(`${T} receipt at ${w}: ${s.width} px, ${s.cols} | ${s.total}`);
+          must(s.cols === cols && s.over <= 0 && /87%/.test(s.total), `narrow ${w}: ${JSON.stringify(s)}`); });
+        await c4.close();
+      }
+    }
+    { const [c5, q] = await ctxOf({ extra: "window.__NO_TODAY__ = true; window.__REFLESS_ONLY__ = true;" });
+      await step(q, "stats-usage-no-ref", async () => { await q.keyboard.press("Control+Shift+U"); await q.waitForTimeout(900);
+        await q.getByText("A plan's runs are counted at API prices").scrollIntoViewIfNeeded();
+        const text = await q.getByRole("dialog", { name: "Usage" }).innerText();
+        must(text.includes("Z.ai Coding Plan") && /Z\.ai Coding Plan\s+not billed/.test(text) && !text.includes("No plan runs") && !/\$0(?!\.)/.test(text), `only plans with no price: ${text}`); });
+      await c5.close(); }
+    if (process.env.ONLY === "stats") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n")); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
+  }
   const rows = [];
   for (const [mac, theme, w, h] of [true, false].flatMap((mac) => ["dark", "light"].flatMap((theme) => (mac ? [[1440, 900], [1280, 800], [960, 600], [760, 640]] : [[1440, 900], [960, 600]]).map(([w, h]) => [mac, theme, w, h])))) {
     const [ctx, p] = await ctxOf({ theme, w, h, mac }), N = `rows-${mac ? "mac" : "linux"}-${theme[0]}-${w}`;

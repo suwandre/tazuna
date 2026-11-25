@@ -160,7 +160,8 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   account's name alone.
 - Each number shows once. The model and effort: the composer's one pill. The plan (5 hours and week, what is left), the
   SubRouter balance, this conversation's context, cache and cost, and the app's version: the status bar along the window's
-  bottom (prototype `mockups/v4.html`, variant B, 2026-11-19), a click on the plan or the cost opening the usage page. An
+  bottom (prototype `mockups/v4.html`, variant B, 2026-11-19), a click on the plan or the cost opening the usage page. The
+  work panel's Stats are the one exception the user asked for (2026-11-25): their sums and each call's numbers, live. An
   answer's own numbers: under it, on hover. The line under the composer only says what is new: a paid model's cost per
   message, the plan running low, or that Claude is signed out while the conversation runs on it ("Claude isn't signed
   in | Settings → Providers").
@@ -202,9 +203,13 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   older ones show theirs on hover or focus, as their actions do: design review 13, D3; an agent's run, and a chat's
   answer by the agent, keep every line; Copy beside it on hover or focus; a turn
   that gave no answer and cost nothing has none); a click unfolds the slip: a row
-  per model call (its model and role, or what it called; in, cached, out, time, and its price where the core fixed it
-  when the call ended), the tools' own time, then the sums (the total at API prices, "On your Claude plan: not billed" or
-  who was paid, and "The same without the cache"). A slip is paper with a torn lower edge (`.tz-slip`), not a card. How a
+  per model call (its model and role, or what it called; in, cached with its share beside it, out, time to first token,
+  speed while writing ("219 t/s", never "/s" or "tok/s"), time, and its price where the core fixed it when the call
+  ended; "–" where the core sends none), the tools' own time, a totals row (the cache's share overall, the median time to
+  first token, the speed over all the writing time), then the sums (on a plan, Claude's or a provider's, "Total at
+  Mistral Vibe's API prices" and "On your Mistral Vibe plan: not billed", the plan alone where it has no reference price,
+  never $0; or who was paid; and "The same without the cache"). A narrow slip drops the speed first, then the time to
+  first token, and keeps the share (the user, 2026-11-25, `mockups/v11.html`). A slip is paper with a torn lower edge (`.tz-slip`), not a card. How a
   turn was paid comes from that turn alone (the core's `model`, `plan`, `provider`, `price_m` on its end): never from the
   model the conversation runs on now, which said "not billed" under answers a provider had billed. A turn that does not
   say has its total alone; a number the core does not send is a row or a column left out; rows that do not add up to
@@ -217,7 +222,8 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - The usage page speaks Settings' language: sections (Right now, Spending), each a card of rows; every account's windows
   as meters (amber from 75%); accounts with nothing used fold into one line ("4 windows at 0%"), and so do providers
   whose API tells no balance (their pages inside); a zero is a quiet line, not a big number; the daily bars stack the plan
-  and paid parts. How the runs went (for tuning tazuna) is folded at the bottom, closed (design review 9, mockups/v6.html).
+  and paid parts; each plan is named by its provider ("Mistral Vibe plan"; "Claude plan" where the run names none), one with no reference
+  price counted by its runs and "not billed", never $0. How the runs went (for tuning tazuna) is folded at the bottom, closed (design review 9, mockups/v6.html).
 - The sidebar lifts out what needs you or works (Needs you, Working); every saved conversation sits under the day it last
   ran (Today, Yesterday, This week, Earlier), two lines each: its title; its project and when (today its age, yesterday its
   time, this week its day, then its date). One open with nothing to do stays under its day with an accent dot (× closes
@@ -243,8 +249,10 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - A message answered by the router as a chat carries an `answered as a chat · send to agent` tag. One the agent answered in
   a chat's place (the chat said it needs live data or this computer, or you sent it there)
   carries `answered by the agent · why` the same way; a plain chat's answers have Send to agent beside Copy.
-- The work panel: Changes (the files this conversation changed, the branch, Review), Checks (tazuna's runs after a turn),
-  Pull request (state, CI, Checks and reviews), your messages, then the user's own panels.
+- The work panel: Stats (this turn or the conversation: In, Out, Cost and Calls as tiles, a sparkline for time to first
+  token, speed and cache hit rate, the context against the model's window; data marks in `live`; the user, 2026-11-25,
+  `mockups/v11.html`), Changes (the files this conversation changed, the branch, Review), Checks (tazuna's runs after a
+  turn), Pull request (state, CI, Checks and reviews), your messages, then the user's own panels.
 
 ## Components we own
 Segmented (a raised key on a `field` track; lilac `selected` is only a list's selected row; a radio group: one Tab stop,
@@ -263,7 +271,9 @@ fits, else below it); completion menu and attachment chip (Composer), answer ima
 in it, lib/chrome.ts, only after the pointer really moves onto its element: a row that slides under a still pointer gets
 none); answer copy; error card (the provider's message in words, said once even when the answer repeats it; Retry runs
 the last failed turn again without a second message, on the last reply only; its raw reply on request); code
-block with its language and copy; work panel section (Changes, Checks, Pull request), usage bar, status bar. Reuse these before adding new ones; add new ones here when they are made.
+block with its language and copy; work panel section (Stats, Changes, Checks, Pull request), sparkline and stat tile
+(components/Stats.tsx: a sparkline is one 2 px line, its last point marked, a tip "call N · value" on hover or the
+arrows), usage bar, status bar. Reuse these before adding new ones; add new ones here when they are made.
 
 ## Motion
 - CSS transitions of 120-200 ms with the easing above; panels slide, toasts fade.
@@ -272,6 +282,8 @@ block with its language and copy; work panel section (Changes, Checks, Pull requ
 - No animated backgrounds, particles or glow; streaming text is not animated per token. Two shimmers: the light sweep over
   a running step's words (`tz-live`), and the reply's live status, slower and to `live-ink` (`tz-shimmer`, 1.8 s; design
   review 13). The working mark draws a pixel every ~70 ms (a band going round where the webview lacks `linear()`).
+- The Stats' numbers move to a call's new values (450 ms, easing out) while a reply runs, the newest point growing in
+  from the one before; otherwise, and under reduced motion, they jump.
 - Rows move, they do not jump: a sidebar row that changes group slides there (200 ms, kept by the conversation's id); a
   reply's steps unfold and fold in height (180 ms and 150 ms).
 - What closes fades out where it was (`tz-out`, 110 ms; lib/chrome.ts does it for every menu and dialog), and the work

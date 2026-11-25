@@ -2,7 +2,7 @@ import { ChevronDown, ChevronRight, ExternalLink, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { core, type Accounts, type ModelChoice } from "../lib/tazuna";
 import { useDialog } from "../lib/dialog";
-import { summarize, type Day, type Row } from "../lib/usage";
+import { planName, summarize, type Day, type Row } from "../lib/usage";
 import { modelLabel } from "../lib/types";
 import { exactly, parseReset, whenReset } from "../lib/health";
 import { Sep } from "./Sep";
@@ -94,6 +94,7 @@ export function UsageView({ onClose, limits, balance, choices = [] }: { onClose:
   const s = useMemo(() => (rows ? summarize(rows, days) : null), [rows, days]);
   const th = "px-3.5 pb-1.5 pt-2.5 text-left text-[11.5px] font-medium text-faint", td = "border-t border-line-soft px-3.5 py-[7px]";
   const num = `${td} text-right tabular-nums`;
+  const plans = s?.plans.length === 1 ? s.plans[0].name : "Plans";
   const apiRuns = s ? s.byModel.filter((m) => !m.plan).reduce((a, m) => a + m.runs, 0) : 0, planRuns = s ? s.byModel.filter((m) => m.plan).reduce((a, m) => a + m.runs, 0) : 0;
   return (
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
@@ -110,21 +111,25 @@ export function UsageView({ onClose, limits, balance, choices = [] }: { onClose:
           {/* the range by the sections it changes, not in the page's header: there it read as changing "Right now" too,
               which it never did (the user, desktop 0.1.72) */}
           <Section title="Spending" action={
-            <Segmented label="Days" value={String(days)} options={RANGES.map((d) => [String(d), `${d} days`] as const)} onChange={(d) => setDays(Number(d))} />} note={`The last ${days} days from the run log. Claude on your plan is counted at API prices, not billed.`}>
+            <Segmented label="Days" value={String(days)} options={RANGES.map((d) => [String(d), `${d} days`] as const)} onChange={(d) => setDays(Number(d))} />} note={`The last ${days} days from the run log. A plan's runs are counted at API prices, not billed.`}>
             {!s ? <div className="px-3.5 py-2.5 text-[12.5px] text-faint">Reading the run log…</div> : <>
               <div className="grid grid-cols-3 divide-x divide-line-soft">
                 <Figure label="API providers" value={s.api > 0 ? money(s.api) : "Nothing billed in these days"} quiet={s.api <= 0} caption="billed" more={[[`${apiRuns}`, "runs"]]} />
-                <Figure label="Claude plan" value={s.plan > 0 ? money(s.plan) : "No plan runs in these days"} quiet={s.plan <= 0} caption="at API prices, not billed" more={[[`${planRuns}`, "runs"]]} />
+                {/* each plan by its provider (the user, 2026-11-25: a Mistral Vibe run read "Claude plan"): one by name, several
+                    as Plans with each one's part */}
+                {/* plans with no reference price run at $0: counted by their runs, "not billed", never "$0" (the review of 2026-11-25) */}
+                <Figure label={plans} value={!planRuns ? "No plan runs in these days" : s.plan > 0 ? money(s.plan) : "not billed"} quiet={!planRuns} caption={s.plan > 0 ? "at API prices, not billed" : undefined}
+                  more={[...(s.plans.length > 1 ? s.plans.map((p) => [p.cost > 0 ? money(p.cost) : "not billed", p.name] as [string, string]) : []), [`${planRuns}`, "runs"]]} />
                 <Figure label="From the cache" value={s.read ? `${Math.round((100 * s.cached) / s.read)}%` : "Nothing read yet"} quiet={!s.read} caption="of the input" more={[[big(s.cached), "tokens"]]} />
               </div>
-              <Bars days={s.days} />
+              <Bars days={s.days} plans={plans} />
               {s.byModel.length > 0 && (
                 <table className="w-full text-[12.5px]"><thead><tr><th className={th}>Model</th><th className={th}>Provider</th>
                   <th className={`${th} text-right`}>Runs</th><th className={`${th} text-right`}>Cost</th><th className={`${th} text-right`}>From cache</th></tr></thead>
                   <tbody>{(allModels ? s.byModel : s.byModel.slice(0, 8)).map((m) => (
                     <tr key={`${m.plan}${m.model}${m.provider}`}><td className={td} title={m.model}>{modelLabel(m.model)}</td>
-                      <td className={`${td} text-muted`}>{m.plan ? "Claude plan" : m.provider ?? providerOf(m.model) ?? <span className="text-faint" title="An API run from before tazuna 0.1.182, which did not record its provider; several providers serve this model">Not recorded</span>}</td>
-                      <td className={num}>{m.runs}</td><td className={num}>{money(m.cost)}</td><td className={num}>{m.cachePct}%</td></tr>
+                      <td className={`${td} text-muted`}>{m.plan ? planName(m.provider) : m.provider ?? providerOf(m.model) ?? <span className="text-faint" title="An API run from before tazuna 0.1.182, which did not record its provider; several providers serve this model">Not recorded</span>}</td>
+                      <td className={num}>{m.runs}</td><td className={num}>{m.plan && !m.cost ? "not billed" : money(m.cost)}</td><td className={num}>{m.cachePct}%</td></tr>
                   ))}</tbody>
                   {/* the eight most used, the rest on request: every model ever tried made a list of 40 (design review 5) */}
                   {/* a button that looks like one: it read as a line of text until hovered (design review 6) */}
@@ -321,7 +326,7 @@ function Contributing({ notes }: { notes: string[] }) {
 // a day as every other date in the window says it: "Nov 6", not "2026-11-06" or "11-06" (design review 10)
 const dayName = (iso: string) => new Date(`${iso}T00:00`).toLocaleDateString([], { month: "short", day: "numeric" });
 
-function Bars({ days }: { days: Day[] }) {
+function Bars({ days, plans }: { days: Day[]; /** what the plans' part is called: "Claude plan", "Plans" */ plans: string }) {
   const [at, setAt] = useState<number | null>(null);
   const max = Math.max(...days.map((d) => d.plan + d.api), 0);
   if (max === 0) return <div className="px-3.5 py-2.5 text-[12.5px] text-muted">Nothing spent in these days.</div>;
@@ -346,7 +351,7 @@ function Bars({ days }: { days: Day[] }) {
       </div>
       <div className="mt-1.5 flex justify-between text-[11px] tabular-nums text-faint"><span>{dayName(days[0].day)}</span><span>max {money(max)} a day</span><span>{dayName(days[days.length - 1].day)}</span></div>
       <div className="mt-1.5 flex gap-3.5 text-[11.5px] text-muted">
-        <span className="flex items-center gap-1.5"><i className="size-2 rounded-sm bg-[color-mix(in_srgb,var(--live)_38%,var(--card))]" />Claude plan, at API prices</span>
+        <span className="flex items-center gap-1.5"><i className="size-2 rounded-sm bg-[color-mix(in_srgb,var(--live)_38%,var(--card))]" />{plans}, at API prices</span>
         <span className="flex items-center gap-1.5"><i className="size-2 rounded-sm bg-live" />Paid APIs</span>
       </div>
       {d && (

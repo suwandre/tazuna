@@ -1,6 +1,6 @@
 // The core's view (Session::view) turned into what the window draws.
 import type { View } from "./tazuna";
-import { pct, type Call, type Message, type ToolStep, type Usage } from "./types";
+import { median, paidTo, pct, usd, writing, type Call, type Message, type ToolStep, type Usage } from "./types";
 
 /** Words before a later step that are an aside, not an answer: one short paragraph, no code block, table or list. */
 export const interim = (text: string) => { const t = text.trim(); return t.length <= 280 && !/\n\s*\n/.test(t) && !/^\s*(```|\||[-*+]\s|\d+[.)]\s|#)/m.test(t); };
@@ -49,6 +49,53 @@ export const replyOut = (v: View | null | undefined) => {
   const done = (v?.blocks ?? []).reduce((n, b, i) => (b.kind === "done" ? i : n), -1);
   return (v?.calls ?? []).filter((c) => c.block > done).reduce((n, c) => n + c.out, 0);
 };
+
+type Done = Extract<View["blocks"][number], { kind: "done" }>;
+/** A call's number in its scope and a value of it. */
+export type Point = [number, number];
+
+/** The work panel's Stats (the user, 2026-11-25, mockups/v11.html): the calls of this turn or of the whole conversation and
+ * what they add up to, from the view alone. This turn is replyOut's: the calls after the last finished turn while a reply
+ * runs (or that no finished turn took), else the last finished turn's. Real numbers only: a call without a time to first
+ * token, a speed or any input is left out of that series, never 0; a cost or a time not known is null. */
+export function stats(v: View, scope: "turn" | "all") {
+  const busy = !["Ready", "Done"].includes(v.activity), all = v.calls ?? [];
+  const dones = v.blocks.flatMap((b, i) => (b.kind === "done" ? [{ i, b }] : []));
+  const last = dones[dones.length - 1]?.i ?? -1, prev = dones[dones.length - 2]?.i ?? -1, after = all.filter((c) => c.block > last);
+  const open = scope === "turn" && (busy || after.length > 0);
+  const calls = scope === "all" ? all : open ? after : all.filter((c) => c.block > prev && c.block <= last);
+  const turns: Done[] = scope === "all" ? dones.map((d) => d.b) : open ? [] : dones.slice(-1).map((d) => d.b);
+  const sum = (f: (c: (typeof all)[number]) => number) => calls.reduce((a, c) => a + f(c), 0);
+  const input = sum((c) => c.fresh + c.cached), cached = sum((c) => c.cached);
+  const series = (f: (c: (typeof all)[number]) => number | null): Point[] => calls.flatMap((c, i) => { const x = f(c); return x == null ? [] : [[i + 1, x] as Point]; });
+  const run = (b: Done) => (b.run_cost === undefined ? b.cost : b.run_cost);
+  // a plan's own loop without a reference price: the plan, no money, never $0 at API prices (core, the user, 2026-11-25)
+  const noRef = (b: Done) => b.plan === true && !!b.provider && !b.price_m;
+  // the turn running now, by the receipt's rule: a sum only where every call brings its model (claude's models but Opus
+  // carry none, their figure at Opus's prices) and it comes to something; "about" where one is at list prices
+  const running = scope === "all" || open ? after : [], runSum = running.reduce((a, c) => a + (c.cost ?? 0), 0);
+  const runCost = running.length && running.every((c) => c.model) && runSum > 0 ? runSum : null;
+  // how it was paid, from the finished turns themselves (as the receipt has it); one still running says so when it ends, so
+  // its money is "so far" (a paid reply after plan turns read "not billed": the review of 2026-11-25)
+  const said = turns.length > 0 && turns.every((b) => b.model !== undefined && b.plan != null), plan = said ? turns.filter((b) => b.plan) : [];
+  const planned = plan.reduce((a, b) => a + (run(b) ?? 0), 0), paid = turns.reduce((a, b) => a + (b.plan ? 0 : run(b) ?? 0), 0);
+  const noMoney = said && turns.every(noRef) && runCost == null;
+  // this turn: what runs now, or its own when it has ended; the conversation: the core's total, or while a reply runs the
+  // finished turns' and that reply's by the same rule
+  const cost = noMoney ? null : scope === "turn" ? (open ? runCost : run(turns[0])) ?? null
+    : running.length ? (runCost == null ? null : turns.reduce((a, b) => a + (run(b) ?? 0), 0) + runCost) : v.cost;
+  const about = turns.some((b) => b.estimate) || running.some((c) => c.estimate);
+  // a payee nobody named (a model on this machine, a gateway it cannot name): no word, as the receipt has none
+  const payees = [...new Set(turns.map((b) => paidTo({ plan: b.plan, provider: b.provider ?? undefined, providers: b.providers })))];
+  const how = noMoney ? "not billed" : cost == null || !said && !running.length ? undefined : running.length ? "so far"
+    : plan.length === turns.length ? "at API prices · not\u00a0billed" : !plan.length ? (payees.every(Boolean) ? (payees.length === 1 ? `paid to ${payees[0]}` : "paid") : undefined)
+    : `${planned > 0 ? `${usd(planned)} ` : ""}not\u00a0billed + ${usd(paid)} paid`;
+  // the finished turns' own time (the receipt line's), and the running one's calls so far
+  const secs = turns.reduce((a, b) => a + b.secs, 0) + (scope === "all" || open ? after : []).reduce((a, c) => a + (c.total_ms ?? 0) / 1000, 0);
+  return { busy, open, calls: calls.length, input, cached, hit: input ? (100 * cached) / input : null, out: sum((c) => c.out), tps: writing(calls), cost, about, how, secs,
+    ttft: series((c) => (c.first_ms == null ? null : c.first_ms / 1000)), speed: series((c) => c.tps || null),
+    hits: series((c) => (c.fresh + c.cached ? (100 * c.cached) / (c.fresh + c.cached) : null)) };
+}
 
 /** The prompts shown before the core refused them (the router's check, then the refusal) whose words are what went back
  * into the box: left out with their refusal, so a send again does not show it twice (`refused` as messages() has it). The
@@ -263,6 +310,33 @@ export function demoView() {
   // a reply's tokens: the calls after the last finished turn, a message queued during it not starting again
   const running = { ...v, blocks: [...v.blocks, { kind: "prompt", text: "d" }], calls: [...v.calls!, call(7, null)] } as View;
   if (replyOut(v) !== 0 || replyOut(running) !== 10 || replyOut({ ...running, blocks: [...running.blocks, { kind: "prompt", text: "e" }], calls: [...running.calls!, call(9, null)] } as View) !== 20 || replyOut(null) !== 0) throw new Error("view: replyOut");
+  // the Stats: this turn by replyOut's rule (the running one, else the last finished), a call's number kept where a series
+  // leaves a call out, the writing speed over the calls' writing time, a plan's turn at API prices and not billed; the review
+  // of 2026-11-25: a running turn's cost only where every call has its model and it comes to something (else not known,
+  // never $0), "about" passed on, "so far" while a reply runs (a paid one after plan turns), no payee no word
+  const sc = (block: number, fresh: number, cached: number, out: number, first_ms: number | null, tps: number | null, total_ms: number, cost: number, more: object = {}) =>
+    ({ block, fresh, cached, out, cost, first_ms, tps, total_ms, model: "deepseek-v4.1-flash", ...more });
+  const three = [sc(0, 1000, 0, 100, 2000, 50, 4000, 0.01), sc(1, 100, 900, 300, null, 100, 5000, 0.04), sc(2, 0, 2000, 200, 1000, 200, 3000, 0.002, { provider: "SubRouter" })];
+  const vibe = { kind: "done", ok: true, secs: 4, turns: 1, cost: 0.05, usage: u, stopped: false, run_cost: 0.05, model: "deepseek-v4.1-flash", plan: true, provider: "Mistral Vibe", price_m: [0.3, 0.007, 1.2] };
+  const sv = (activity: string, calls: unknown[], ...ds: object[]) => ({ ...v, activity, cost: 0.1, blocks: [...(ds.length ? ds : [vibe]).flatMap((d) => [{ kind: "prompt", text: "a" }, d]), { kind: "prompt", text: "b" }], calls } as View);
+  const said = (s: ReturnType<typeof stats>) => JSON.stringify([s.calls, s.input, s.cached, s.hit, s.out, s.tps, s.cost, s.about, s.how, s.secs, s.ttft, s.speed.length, s.hits.length]);
+  const two = three.slice(0, 2), free = { ...vibe, provider: "Z.ai Coding Plan", price_m: null, run_cost: 0, cost: 0 };
+  const cases: [string, ReturnType<typeof stats>, unknown[]][] = [
+    ["running", stats(sv("Tool", three), "turn"), [1, 2000, 2000, 100, 200, 200, 0.002, false, "so far", 3, [[1, 1]], 1, 1]],
+    ["finished plan", stats(sv("Done", two), "turn"), [2, 2000, 900, 45, 400, 80, 0.05, false, "at API prices · not\u00a0billed", 4, [[1, 2]], 2, 2]],
+    ["a paid reply running after a plan turn", stats(sv("Tool", three), "all"), [3, 4000, 2900, 72.5, 600, 100, 0.05 + 0.002, false, "so far", 7, [[1, 2], [3, 1]], 3, 3]],
+    ["no reference price", stats(sv("Done", two, { ...vibe, price_m: null }), "turn"), [2, 2000, 900, 45, 400, 80, null, false, "not billed", 4, [[1, 2]], 2, 2]],
+    ["paid", stats(sv("Done", two, { ...vibe, plan: false, provider: "SubRouter" }), "turn"), [2, 2000, 900, 45, 400, 80, 0.05, false, "paid to SubRouter", 4, [[1, 2]], 2, 2]],
+    ["running, no reference price", stats(sv("Tool", [...two, sc(2, 0, 2000, 200, 1000, 200, 3000, 0)], free), "turn"), [1, 2000, 2000, 100, 200, 200, null, false, null, 3, [[1, 1]], 1, 1]],
+    ["running, a call without its model", stats(sv("Tool", [...two, sc(2, 0, 2000, 200, 1000, 200, 3000, 0.3, { model: undefined, estimate: true })]), "turn"), [1, 2000, 2000, 100, 200, 200, null, true, null, 3, [[1, 1]], 1, 1]],
+    ["running at list prices", stats(sv("Tool", [...two, sc(2, 0, 2000, 200, 1000, 200, 3000, 0.002, { estimate: true })]), "turn"), [1, 2000, 2000, 100, 200, 200, 0.002, true, "so far", 3, [[1, 1]], 1, 1]],
+    ["paid to nobody named", stats(sv("Done", two, { ...vibe, plan: false, provider: null }), "turn"), [2, 2000, 900, 45, 400, 80, 0.05, false, null, 4, [[1, 2]], 2, 2]],
+    ["a plan turn and a paid one", stats(sv("Done", [sc(0, 10, 0, 1, null, null, 100, 0.05), sc(2, 10, 0, 1, null, null, 100, 0.03)], vibe, { ...vibe, plan: false, provider: "SubRouter", run_cost: 0.03 }), "all"),
+      [2, 20, 0, 0, 2, null, 0.1, false, "$0.050 not\u00a0billed + $0.030 paid", 8, [], 0, 2]],
+  ];
+  const off = cases.filter(([, s, w]) => said(s) !== JSON.stringify(w));
+  if (off.length) throw new Error(`view: stats\n${off.map(([n, s, w]) => `${n}: ${said(s)}, wanted ${JSON.stringify(w)}`).join("\n")}`);
+  if (median([3, 1, 2]) !== 2 || median([4, 1, 2, 3]) !== 2.5 || median([]) !== null || writing([{ out: 10, tps: null }]) !== null) throw new Error("view: median, writing");
   console.log("view ok");
 }
 

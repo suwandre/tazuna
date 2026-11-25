@@ -707,6 +707,16 @@ sweep checks it (d-typing-keeps-scroll).
 - A name you gave a conversation stands while its reply runs too (rows, header, notification), not only once it is done.
 - The app icon's bitmap sits with room around it (64% of the tile, was about 85%).
 
+0.1.127 (with tazuna 0.1.226), the user's asks of 2026-11-25 (prototype mockups/v11.html):
+- The receipt shows each call's time to first token, its writing speed ("219 t/s") and its cache hit rate, with a totals
+  row; a plan run reads "Total at Mistral Vibe's API prices / On your Mistral Vibe plan · not billed", a plan with no
+  published price shows no amount, never "$0".
+- A Stats section at the top of the work panel, for this turn or the whole conversation: In with its cache share, Out
+  with t/s, cost, calls; time to first token, writing speed and cache hit rate per call as sparklines (hover or arrow keys
+  for each call's value); the context's fill. Live while a reply runs, numbers counting up; reduced motion jumps.
+- The usage page names each plan ("Mistral Vibe plan") instead of calling every plan run Claude's.
+- A refused message comes back into the box once, not twice (after #53).
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

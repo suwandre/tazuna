@@ -3,6 +3,7 @@
 // EffortPill (a pill of its own until desktop 0.1.70) stays exported for a plugin that wants it back
 import { AttachButton, ModelPill, ModePill, WherePill } from "./components/Composer";
 import { ChangesSection, ChecksSection, PrSection, Timeline } from "./components/Rail";
+import { StatsSection } from "./components/Stats";
 import { NewChatButton, OpenFolderButton, SettingsRow } from "./components/Sidebar";
 import { Step } from "./components/Step";
 import { MessageChange, MessageFailure, MessageImages, MessageMeta, UserMessage } from "./components/Transcript";
@@ -12,6 +13,8 @@ import type { ToolStep } from "./lib/types";
 
 const own = "tazuna";
 
+// the numbers first, above Changes (the user, 2026-11-25, mockups/v11.html)
+slots.register({ id: "rail.stats", slot: "rail", order: 5, source: own, render: StatsSection });
 slots.register({ id: "rail.changes", slot: "rail", order: 10, source: own, render: ChangesSection });
 slots.register({ id: "rail.checks", slot: "rail", order: 20, source: own, render: ChecksSection });
 slots.register({ id: "rail.pr", slot: "rail", order: 30, source: own, render: PrSection });

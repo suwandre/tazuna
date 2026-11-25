@@ -190,7 +190,8 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSe
   useEffect(() => {
     if (draft && draft.n !== seen.current) {
       seen.current = draft.n;
-      if (draft.text || !draft.append) setText((t) => (draft.append && t.trim() ? `${t.trimEnd()}\n\n${draft.text}` : draft.text));
+      // appended words the box already ends with (kept under its key for a box that mounts later) are not added again
+      if (draft.text || !draft.append) setText((t) => (draft.append && t.trim() ? (t.trimEnd().endsWith(draft.text.trimEnd()) ? t : `${t.trimEnd()}\n\n${draft.text}`) : draft.text));
       if (draft.files) setFiles((f) => [...new Set([...f, ...draft.files!])]);
       box.current?.focus();
     }

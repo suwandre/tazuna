@@ -1,6 +1,6 @@
 // The usage page's numbers (docs/DESKTOP.md 0.2), grouped from the run log's rows (the core's {"op": "usage"}: one row per
-// run, last 90 days). Runs on the claude CLI are the plan: their dollars are claude's estimate at API prices, not billed.
-// The rest ran on the own loop against a provider's API: billed.
+// run, last 90 days). Runs on a plan (the claude CLI on its login, or the own loop on a plan's key: Mistral Vibe, a sign-in;
+// the row's `plan`) are counted at API prices, not billed; the rest ran on the own loop against a provider's API: billed.
 import { pct } from "./types";
 
 /** [ts, model, version, plan, cost, input, cache write, cache read, output, stop, verify, cache ttl, mode, real use, strong
@@ -21,6 +21,10 @@ export function run(r: Row): Run {
   return { ts, day: dayOf(ts), model: model || "(default)", version: version || "?", plan, cost: cost ?? 0, read: i + w + cr, cached: cr,
     real: !!real, strong: strong ?? [], soft: soft ?? [], provider: provider ?? null };
 }
+
+/** A plan by its provider: "Mistral Vibe plan", "Z.ai Coding Plan" (not a second "plan"), "Claude plan" where the row names
+ * none (the claude CLI on its login). Every plan run read "Claude plan" (the user, 2026-11-25). */
+export const planName = (provider: string | null) => { const n = provider ?? "Claude"; return / plan$/i.test(n) ? n : `${n} plan`; };
 
 export type Day = { day: string; plan: number; api: number; runs: number };
 export type ByModel = { model: string; plan: boolean; provider: string | null; runs: number; cost: number; cachePct: number };
@@ -57,11 +61,16 @@ export function summarize(rows: Row[], days: number, now = Date.now() / 1000) {
     const top = [...count.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([s, n]) => `${s} ${n}`).join(", ");
     return { version: rs[0].version, model: rs[0].model, ...rate(rs), top };
   }).sort((a, b) => newer(a.version, b.version) || b.runs - a.runs);
-  const lanes: Lane[] = [["Claude plan", mine.filter((r) => r.plan)], ["API providers", mine.filter((r) => !r.plan)]]
+  // the plans apart, by provider, the costliest first
+  const by = new Map<string, Run[]>();
+  for (const r of runs.filter((r) => r.plan)) by.set(planName(r.provider), [...(by.get(planName(r.provider)) ?? []), r]);
+  const plans = [...by].map(([name, rs]) => ({ name, cost: sum(rs, (r) => r.cost), runs: rs.length })).sort((a, b) => b.cost - a.cost);
+  const minePlans = new Set(mine.filter((r) => r.plan).map((r) => planName(r.provider)));
+  const lanes: Lane[] = [[minePlans.size === 1 ? [...minePlans][0] : "Plans", mine.filter((r) => r.plan)], ["API providers", mine.filter((r) => !r.plan)]]
     .filter(([, rs]) => (rs as Run[]).length).map(([lane, rs]) => ({ lane: lane as string, ...rate(rs as Run[]) }));
   return {
     runs: runs.length, api: sum(runs.filter((r) => !r.plan), (r) => r.cost), plan: sum(runs.filter((r) => r.plan), (r) => r.cost),
-    cached: sum(runs, (r) => r.cached), read: sum(runs, (r) => r.read), days: [...byDay.values()], byModel, byVersion, lanes,
+    cached: sum(runs, (r) => r.cached), read: sum(runs, (r) => r.read), days: [...byDay.values()], byModel, byVersion, lanes, plans,
   };
 }
 
@@ -104,5 +113,10 @@ export function demo() {
   const keyed: Row = [now - 150, "claude-opus-5-5", "0.1.193", false, 0.42, 2000, 0, 0, 500, "completed", "claimed", "5m", "live", true, [], [], "Anthropic API"];
   const k = today([...rows, keyed], now), byKey = summarize([...rows, keyed], 30, now).byModel.find((m) => m.provider === "Anthropic API");
   if (!k || !near(k.paid, 0.45) || !byKey || byKey.plan || !near(byKey.cost, 0.42)) throw new Error(`keyed: ${JSON.stringify([k, byKey])}`);
+  // a plan's own loop (Mistral Vibe): plan money under its own name, apart from Claude's; not paid on the start page
+  const vibe: Row = [now - 120, "deepseek-v4.1-flash-1017", "0.1.226", true, 0.05, 1000, 0, 9000, 300, "completed", "claimed", null, "live", true, [], [], "Mistral Vibe"];
+  const v = summarize([...rows, vibe], 30, now);
+  if (JSON.stringify(v.plans) !== JSON.stringify([{ name: "Claude plan", cost: 0.5, runs: 1 }, { name: "Mistral Vibe plan", cost: 0.05, runs: 1 }]) || v.lanes[0].lane !== "Plans"
+    || !near(today([...rows, vibe], now)!.paid, 0.03) || planName("Z.ai Coding Plan") !== "Z.ai Coding Plan" || s.lanes[0].lane !== "Claude plan") throw new Error(`plans: ${JSON.stringify(v.plans)}`);
   console.log("usage ok");
 }

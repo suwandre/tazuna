@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { modelLabel, paidTo, usd, type Billing, type Meta, type ToolStep } from "../lib/types";
+import { median, modelLabel, paidTo, pct, usd, writing, type Billing, type Meta, type ToolStep } from "../lib/types";
 import { Mark } from "./Mark";
 
 // The receipt (design review 11, variant A of mockups/v8.html): what an answer cost, itemised, on a slip of paper with a
@@ -89,13 +89,25 @@ const took = (ms: number | null) => (ms == null ? "" : ms < 10_000 ? `${(ms / 10
 
 const th = "border-b border-line pb-[5px] text-[11.5px] font-medium text-faint";
 const num = "whitespace-nowrap pl-3 pt-1 text-right", head = "whitespace-nowrap pl-3 text-right", first = "truncate pt-1";
+// the totals row: under a rule, a little apart
+const tot = "whitespace-nowrap border-t border-line pl-3 pt-[5px] text-right";
+// the columns a narrow slip leaves out, speed first (the user, 2026-11-25): by the slip's own width, where the call's name
+// would have under ~120 px (the Call column takes what the numbers leave, and is cut)
+const speed = "@max-[500px]:hidden", ttft = "@max-[430px]:hidden";
+/** "219 t/s": the user's way, never "/s" or "tok/s" (2026-11-25) */
+export const perSec = (tps: number) => `${Math.round(tps)} t/s`;
+/** The cache's share beside a cached count, small and faint: "99%" ("–" with no input). */
+const Share = ({ part, whole }: { part: number; whole: number }) => <span className="ml-1 text-[11px] font-normal text-faint">{whole ? `${pct(part, whole)}%` : "–"}</span>;
 
 /** The slip itself: its title beside the mark, a word on the right, the rows, the sums under a dashed rule. `float`: over
  * the window (the conversation's, from the status bar), on the popover's fill with its shadow. */
-export function Slip({ title, right, float, children }: { title: string; right?: ReactNode; float?: boolean; children: ReactNode }) {
+export function Slip({ title, right, float, wide, children }: { title: string; right?: ReactNode; float?: boolean;
+  /** an answer's, with its time to first token and speed (the user, 2026-11-25): wider, its own width deciding which
+   * columns fit (`@container`) */
+  wide?: boolean; children: ReactNode }) {
   return (
-    <div className={`tz-slip-wrap ${float ? "float" : ""}`}>
-      <div className="tz-slip text-[12.5px] tabular-nums text-ink-2">
+    <div className={`tz-slip-wrap ${float ? "float" : ""} ${wide ? "wide" : ""}`}>
+      <div className="tz-slip @container text-[12.5px] tabular-nums text-ink-2">
         <div className="flex items-center justify-between text-[12px] text-faint">
           <span className="inline-flex items-center gap-[7px] text-[12.5px] font-medium text-ink"><Mark size={20} />{title}</span>{right != null && <span>{right}</span>}</div>
         {children}
@@ -109,6 +121,16 @@ const Sum = ({ what, children, quiet, strong }: { what: string; children: ReactN
   <div className={`flex justify-between gap-4 py-px ${quiet ? "text-faint" : ""}`}><span>{what}</span><span className={strong ? "font-semibold text-ink" : ""}>{children}</span></div>
 );
 
+/** Whose plan a turn ran on: the provider a plan's own loop names (core: Mistral Vibe's key, the user, 2026-11-25), else
+ * Claude's (the core names no provider on the Claude plan). */
+const planOf = (b: Billing) => b.provider ?? "Claude";
+/** "On your Mistral Vibe plan", "On your Z.ai Coding Plan": a name that says plan already is not given a second (the
+ * terminal's plan_label). */
+export const onYour = (plan: string) => `On your ${plan}${/ plan$/i.test(plan) ? "" : " plan"}`;
+/** A plan's own loop with no reference price (its catalog lists none): the plan, no money, never "$0 at API prices" (the
+ * user, 2026-11-25; the terminal says "on Mistral Vibe plan" alone). */
+export const refless = (b?: Billing) => b?.plan === true && !!b.provider && !b.perM;
+
 /** The sums under one answer's receipt, from how that turn itself was paid: on the plan its price at API prices and that
  * nothing was billed, to a provider what it was paid, and what the cache saved where that can be told. A turn that does
  * not say (older data) has its total alone: nothing is taken from the conversation's model of now. An estimate says
@@ -119,10 +141,11 @@ function Sums({ meta, note }: { meta: Meta; /** why the rows above do not add up
   const said = cost === 0 && meta.unknownCalls ? "not reported" : priceSaid(cost, meta.estimate);
   return <>
     <Rule />
+    {/* any plan as Claude's (mockups/v11.html, the user, 2026-11-25): its total at the provider's API prices, and that the
+        plan paid ("Paid $0" under it said the same again); a plan's own loop without a reference price has the plan alone */}
     {billing?.plan === true ? <>
-      <Sum what="Total, at API prices" strong>{said}</Sum>
-      <Sum what="On your Claude plan">not billed</Sum>
-      <Sum what="Paid">$0</Sum>
+      {!refless(billing) && <Sum what={`Total at ${planOf(billing)}'s API prices`} strong>{said}</Sum>}
+      <Sum what={onYour(planOf(billing))} quiet>not billed</Sum>
     </> : paidTo(billing) ? <Sum what={`Paid to ${paidTo(billing)}`} strong>{said}</Sum> : <Sum what="Total" strong>{said}</Sum>}
     {[note, ...gaps(meta)].filter(Boolean).map((n) => <div key={n} className="pt-px text-[11.5px] text-faint">{n}</div>)}
     {bare != null && cost != null && bare > cost * 1.005 && <><Rule /><Sum what="The same without the cache" quiet>{priceSaid(bare, meta.estimate)}</Sum></>}
@@ -140,44 +163,64 @@ export function note(calls: { estimate?: boolean }[], subs: number, plan = false
 }
 
 /** One answer's receipt: a row per model call (its model and role where the core sends them, else what it called; its
- * input, the part read from the cache, its output, its time, and its price where it was fixed when the call ended), the
- * tools' own time, then the sums. */
+ * input, the part read from the cache and its share, its output, its time to first token, its speed while writing, its
+ * time, and its price where it was fixed when the call ended), the tools' own time, the totals, then the sums. */
 export function AnswerSlip({ meta, tools = [], toolsSaid }: { meta: Meta; tools?: ToolStep[]; /** the steps in words, "ran 2 commands, searched" */ toolsSaid?: string }) {
   const calls = meta.calls ?? [], ran = tools.filter((t) => t.kind !== "thinking" && t.kind !== "said");
-  const toolSecs = took(Math.round(ran.reduce((a, t) => a + t.secs, 0) * 1000));
+  const toolMs = Math.round(ran.reduce((a, t) => a + t.secs, 0) * 1000);
   // a price per call only where each call brings its own (with its model); else the column would be an estimate at the
-  // prices of the model the conversation runs on now, 20 to 100 times off after a change of model
-  const priced = calls.length > 0 && calls.every((c) => c.model);
+  // prices of the model the conversation runs on now, 20 to 100 times off after a change of model. A plan with no reference
+  // price has none: its calls come at $0 (the core's [0,0,0]), never shown (the review of 2026-11-25)
+  const priced = !refless(meta.billing) && calls.length > 0 && calls.every((c) => c.model);
   // the rows fall short of the total, or are off it by more than rounding: why, said under them
   const off = priced && meta.cost != null && Math.abs(calls.reduce((a, c) => a + (c.cost ?? 0), 0) - meta.cost) > Math.max(0.0005, meta.cost * 0.005);
-  const cols: [string, string][] = [["In", "input tokens, the cached ones included"], ["Cached", "input tokens read from the cache"], ["Out", "output tokens"], ["Time", "the whole call, the wait included"],
+  // a narrow slip drops the speed first, then the time to first token; the cache's share stays (the user, 2026-11-25)
+  const cols: [string, string, string?][] = [["In", "input tokens, the cached ones included"], ["Cached", "input tokens read from the cache, and their share of the input"], ["Out", "output tokens"],
+    ["TTFT", "time to the first token", ttft], ["Speed", "output tokens a second while writing (after the first token)", speed], ["Time", "the whole call, the wait included"],
     ...(priced ? [["Price", "as charged when the call ended"] as [string, string]] : [])];
+  const sum = (f: (c: (typeof calls)[number]) => number | null) => { const xs = calls.map(f).filter((x): x is number => x != null); return xs.length ? xs.reduce((a, b) => a + b, 0) : null; };
+  const input = sum((c) => c.fresh + c.cached) ?? 0, cached = sum((c) => c.cached) ?? 0, med = median(calls.flatMap((c) => (c.firstMs == null ? [] : [c.firstMs]))), tps = writing(calls);
+  const time = sum((c) => c.totalMs), price = sum((c) => c.cost);
   return (
-    <Slip title="Receipt" right={calls.length ? `${calls.length} model call${calls.length === 1 ? "" : "s"}` : undefined}>
+    <Slip wide title="Receipt" right={calls.length ? `${calls.length} model call${calls.length === 1 ? "" : "s"}` : undefined}>
       {calls.length > 0 ? (
         <table className="mt-2 w-full border-collapse">
-          <thead><tr><th scope="col" className={`${th} text-left`}>Call</th>
-            {cols.map(([h, why]) => <th key={h} scope="col" title={why} className={`${th} ${head}`}>{h}</th>)}</tr></thead>
+          <thead><tr><th scope="col" className={`${th} w-full text-left`}>Call</th>
+            {cols.map(([h, why, hide]) => <th key={h} scope="col" title={why} className={`${th} ${head} ${hide ?? ""}`}>{h}</th>)}</tr></thead>
           <tbody>
             {calls.map((c, i) => (
               <tr key={i}>
-                <td className={`max-w-[190px] ${first}`} title={c.tools || "It wrote the answer"}><span className="inline-block w-4 text-faint">{i + 1}</span>
+                <td className={`${first} max-w-0`} title={c.tools || "It wrote the answer"}><span className="inline-block w-4 text-faint">{i + 1}</span>
                   {c.model ? <>{modelLabel(c.model)} <span className="text-faint">{c.role || c.tools || "answer"}</span></> : c.tools || "answer"}</td>
-                <td className={num}>{tok(c.fresh + c.cached)}</td><td className={num}>{tok(c.cached)}</td><td className={num}>{tok(c.out)}</td>
-                <td className={num} title={[c.firstMs != null && `first token after ${took(c.firstMs)}`, c.tps != null && `${Math.round(c.tps)} tokens a second`].filter(Boolean).join(", ") || undefined}>{took(c.totalMs)}</td>
+                <td className={num}>{tok(c.fresh + c.cached)}</td><td className={num}>{tok(c.cached)}<Share part={c.cached} whole={c.fresh + c.cached} /></td><td className={num}>{tok(c.out)}</td>
+                <td className={`${num} ${ttft}`}>{took(c.firstMs) || "–"}</td><td className={`${num} ${speed}`}>{c.tps ? perSec(c.tps) : "–"}</td>
+                {/* what a narrow slip leaves out, on hover */}
+                <td className={num} title={[c.firstMs != null && `first token after ${took(c.firstMs)}`, c.tps && `${perSec(c.tps)} while writing`].filter(Boolean).join(", ") || undefined}>{took(c.totalMs) || "–"}</td>
                 {priced && <td className={num} title={c.cost == null ? "not known: no usage reported, or cut off by a stop" : undefined}>{c.cost == null ? "–" : usd(c.cost)}</td>}
               </tr>
             ))}
             {ran.length > 0 && (
               <tr>
-                <td className={`max-w-[190px] ${first}`} colSpan={4} title="The time the tools themselves took"><span className="inline-block w-4" />Tools <span className="text-faint">{toolsSaid}</span></td>
-                <td className={num}>{toolSecs}</td>{priced && <td />}
+                <td className={`${first} max-w-0`} colSpan={4} title="The time the tools themselves took"><span className="inline-block w-4" />Tools <span className="text-faint">{toolsSaid}</span></td>
+                <td className={ttft} /><td className={speed} /><td className={num}>{took(toolMs)}</td>{priced && <td />}
+              </tr>
+            )}
+            {/* the sums of the rows: the cache's share overall, the middle time to first token, the speed over all the
+                writing time, the time with the tools' (the user, 2026-11-25, mockups/v11.html) */}
+            {calls.length + (ran.length ? 1 : 0) > 1 && (
+              <tr className="font-medium text-ink">
+                <td className="max-w-0 truncate border-t border-line pt-[5px]"><span className="inline-block w-4" />Total</td>
+                <td className={tot}>{tok(input)}</td><td className={tot}>{tok(cached)}<Share part={cached} whole={input} /></td><td className={tot}>{tok(sum((c) => c.out) ?? 0)}</td>
+                <td className={`${tot} ${ttft}`} title="the median of the calls">{med == null ? "–" : <>{took(med)}<span className="ml-1 text-[11px] font-normal text-faint">med</span></>}</td>
+                <td className={`${tot} ${speed}`}>{tps ? perSec(tps) : "–"}</td>
+                <td className={tot}>{time == null && !ran.length ? "–" : took((time ?? 0) + toolMs)}</td>
+                {priced && <td className={tot}>{price == null ? "–" : usd(price)}</td>}
               </tr>
             )}
           </tbody>
         </table>
       // a reply without its calls (an older saved one) still knows how long its tools took
-      ) : ran.length > 0 && <div className="mt-2 flex justify-between gap-4" title="The time the tools themselves took"><span className="min-w-0 truncate">Tools <span className="text-faint">{toolsSaid}</span></span><span>{toolSecs}</span></div>}
+      ) : ran.length > 0 && <div className="mt-2 flex justify-between gap-4" title="The time the tools themselves took"><span className="min-w-0 truncate">Tools <span className="text-faint">{toolsSaid}</span></span><span>{took(toolMs)}</span></div>}
       <Sums meta={meta} note={off ? note(calls, meta.subCalls ?? 0, meta.billing?.plan === true) : undefined} />
     </Slip>
   );
@@ -193,6 +236,8 @@ export function ChatSlip({ turns, cost, busy, children }: { turns: Turn[]; /** t
   /** under the sums: the way on to the usage page */ children?: ReactNode }) {
   const listed = turns.reduce((a, t) => a + (t.cost ?? 0), 0), rest = cost - listed > Math.max(0.0005, cost * 0.005) ? cost - listed : 0;
   const s = sumsOf(turns, rest);
+  // whose plans: one by its name, several as plans (a Mistral Vibe turn read "On your Claude plan", the user, 2026-11-25)
+  const plans = [...new Set(turns.flatMap((t) => (t.billing?.plan === true ? [planOf(t.billing)] : [])))];
   // a short window (the smallest one at the largest text size is 384 px tall) lists fewer turns: the slip has no scroll
   const last = Math.max(2, Math.min(8, Math.floor((window.innerHeight - 300) / 22)));
   return (
@@ -206,7 +251,7 @@ export function ChatSlip({ turns, cost, busy, children }: { turns: Turn[]; /** t
           {turns.slice(-last).map((t, i) => (
             <tr key={i}>
               <td className={`max-w-[230px] ${first}`} title={t.title}><span className="inline-block w-5 text-faint">{Math.max(0, turns.length - last) + i + 1}</span>{t.title}</td>
-              <td className={num}>{t.calls ?? "–"}</td><td className={num}>{dur(t.secs)}</td><td className={num}>{priceSaid(t.cost, t.estimate)}</td>
+              <td className={num}>{t.calls ?? "–"}</td><td className={num}>{dur(t.secs)}</td><td className={num}>{refless(t.billing) ? "not billed" : priceSaid(t.cost, t.estimate)}</td>
             </tr>
           ))}
           {rest > 0 && <tr className="text-faint"><td className={first} colSpan={3}><span className="inline-block w-5" />{busy ? "Running now, so far" : "Not in a finished turn"}</td><td className={num}>{usd(rest)}</td></tr>}
@@ -215,7 +260,8 @@ export function ChatSlip({ turns, cost, busy, children }: { turns: Turn[]; /** t
       <Rule />
       <Sum what={s.known && s.plan > 0 ? "Total, at API prices" : "Total"} strong>{priceSaid(s.total, s.about)}</Sum>
       {s.known && <>
-        {s.plan > 0 && <Sum what="On your Claude plan">{s.paid.length ? `${usd(s.plan)}, not billed` : "not billed"}</Sum>}
+        {/* a plan with no reference price keeps its line, without an amount (the review of 2026-11-25) */}
+        {plans.length > 0 && <Sum what={plans.length === 1 ? onYour(plans[0]) : "On your plans"}>{s.paid.length && s.plan > 0 ? `${usd(s.plan)}, not billed` : "not billed"}</Sum>}
         {s.paid.map(([who, n]) => <Sum key={who} what={`Paid to ${who}`}>{n === 0 && s.unknownCalls ? "not reported" : usd(n)}</Sum>)}
         {!s.paid.length && <Sum what="Paid">$0</Sum>}
         {s.bare != null && s.bare > s.total * 1.005 && <><Rule /><Sum what="The same without the cache" quiet>{priceSaid(s.bare, s.about)}</Sum></>}

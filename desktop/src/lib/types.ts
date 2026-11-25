@@ -51,6 +51,15 @@ export type Meta = { cost: number | null; tokens: number; in?: number; cached?: 
   estimate?: boolean; uncounted?: number; unknownCalls?: number };
 /** A share as a whole percent that never rounds up to all of it: 99.6% of the input cached is "99%", only all of it "100%". */
 export const pct = (part: number, whole: number) => (part >= whole ? 100 : Math.min(99, Math.round((100 * part) / whole)));
+/** The middle value (of two, their mean); null for none. */
+export const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b), m = s.length >> 1; return !s.length ? null : s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+/** Output tokens a second while writing, over several calls: their output over their time after the first token (each
+ * call's `tps` is its own), the calls without a speed left out; null where none has one. The receipt's total and the work
+ * panel's Stats say it the same (the user, 2026-11-25: "219 t/s"). */
+export const writing = (calls: { out: number; tps: number | null }[]) => {
+  const w = calls.filter((c) => c.tps && c.out), secs = w.reduce((a, c) => a + c.out / c.tps!, 0);
+  return secs ? w.reduce((a, c) => a + c.out, 0) / secs : null;
+};
 export type Message =
   | { role: "user"; text: string; queued?: boolean; edit?: { cp: number; block: number };
       /** waiting in the window behind the reply (App's queue): "Send now" can stop the reply and send it at once */

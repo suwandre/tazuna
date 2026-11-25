@@ -104,7 +104,10 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
     // kept under its key on screen too: the box that shows it may be a new one (the start page's, when the refused message
     // leaves the conversation in the same render), and a new box takes what is kept, not a draft that came before it
     const key = draftKeyOf(t);
-    if (draft.text) localStorage.setItem(DRAFT + key, [localStorage.getItem(DRAFT + key), draft.text].filter(Boolean).join("\n\n"));
+    // not twice: the box may have kept the words under its key already, when the refusal came before it cleared them
+    // (a refused send showed "write me a haiku\n\nwrite me a haiku", design review 13)
+    const kept = localStorage.getItem(DRAFT + key) ?? "";
+    if (draft.text && !kept.trimEnd().endsWith(draft.text.trimEnd())) localStorage.setItem(DRAFT + key, [kept, draft.text].filter(Boolean).join("\n\n"));
     if (draft.files?.length) saveDraftFiles(key, [...new Set([...draftFiles(key), ...draft.files])]);
     if (tid === activeRef.current) onDraftRejected(draft);
   };
@@ -604,6 +607,7 @@ export default function App() {
     review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined,
     openPr: inTauri && folder ? () => setShowPr(true) : undefined,
     ask: inTauri ? (text) => say(text) : undefined,
+    view, active,
   };
   // the tab's count, live: the files the finished turns changed and those the running reply has edited so far (it said
   // "Changes 0" while the fold said "Edited main.rs": a turn's changes come from git when it ends)
