@@ -68,6 +68,11 @@ h3 { font-size: 29px; line-height: 1.1; }
 .decision h2 { margin-top: 14px; }
 .decision p:not(.meta) { color: var(--muted); max-width: 43ch; margin: 14px 0 0; }
 .decision a { align-self: flex-start; margin-top: 15px; }
+.list-two { margin-top: 48px; padding-top: 29px; border-top: 1px solid var(--line); }
+.list-two .section-head { flex-wrap: wrap; }
+.list-two .section-head .kicker { color: var(--accent); }
+.list-two .decision { margin-top: 18px; padding: 22px; border: 1px solid var(--line); background: var(--panel); }
+.list-two .decision p:not(.meta) { max-width: 72ch; }
 .foot { align-items: start; border-top: 1px solid var(--line); margin: 32px 0 0; padding: 17px 0 27px; color: var(--muted); font-size: 12px; }
 .foot p { margin: 0; max-width: 68ch; }
 @media (max-width: 1170px) {
@@ -184,6 +189,50 @@ h3 { font-size: 29px; line-height: 1.1; }
     <symbol id="icon-command" viewBox="0 0 1024 1024">
       <use href="#graphite"/><use href="#command" color="#f0f0f2"/>
     </symbol>
+    <g id="led-array" fill="currentColor" transform="scale(64)">
+      <circle cx="8.5" cy="4.5" r=".55"/><circle cx="10.5" cy="4.5" r=".55"/><circle cx="12.5" cy="4.5" r=".55" fill="#8f9bf0"/>
+      <circle cx="6.5" cy="6.5" r=".55"/><circle cx="8.5" cy="6.5" r=".55"/><circle cx="10.5" cy="6.5" r=".55"/>
+      <circle cx="4.5" cy="8.5" r=".55"/><circle cx="6.5" cy="8.5" r=".55"/><circle cx="8.5" cy="8.5" r=".55"/><circle cx="10.5" cy="8.5" r=".55"/><circle cx="12.5" cy="8.5" r=".55"/>
+      <circle cx="4.5" cy="10.5" r=".55"/><circle cx="8.5" cy="10.5" r=".55"/>
+      <circle cx="4.5" cy="12.5" r=".55"/><circle cx="6.5" cy="12.5" r=".55"/><circle cx="8.5" cy="12.5" r=".55"/>
+    </g>
+    <g id="scanline" fill="currentColor" transform="scale(64)">
+      <path d="M4 5.25 10.5 4l1.75.5v.875L4 6.375zM5 7h7.25v1H5zM3.75 8.75h8.75v1.125H3.75z"/>
+      <path d="M7.375 6h1.25v2h-1.25zM8 8.75h1.25v1.125H8zM7.375 10.5h1.25v1L7.5 12.625H5.625L4.5 11.5l.875-.875.875.875H7z"/>
+    </g>
+    <g id="switchback-mark" fill="currentColor" transform="scale(64)">
+      <path d="M4 4h6L6 8v1l3 3H4zM12 4v8h-1.5L7 8.5z"/>
+    </g>
+    <g id="inference-stack" fill="currentColor" transform="scale(64)">
+      <path opacity=".55" d="M3.5 8.875 8 10.5l4.5-1.625v1.25L8 11.75l-4.5-1.625z"/>
+      <path opacity=".78" d="M3.5 7.125 8 8.75l4.5-1.625v1.25L8 10l-4.5-1.625z"/>
+      <path d="M3.5 6.25 8 4.625l4.5 1.625-2 .725L8 6.05l-1.5.55L9 7.525 8 7.875z"/>
+    </g>
+    <g id="stroke-order" fill="currentColor" transform="scale(64)">
+      <path d="M5 5h3V4h3v1H8v1H5zM5 7h3v1H5zM4 9h4v1H4zM9 6h1v6H6v-1h3z"/>
+    </g>
+    <g id="terminal-id" fill="none" stroke="currentColor" stroke-width="1.15" transform="scale(64)">
+      <path d="M4.75 4v3.5h2.5M3.5 5.25h3.75M8.5 5.25h3.75L8.5 7.5h3.75"/>
+      <path d="M4 9.125 6.75 10.625 4 12.125M8.75 11.875h3.75"/>
+    </g>
+    <symbol id="icon-led-array" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#led-array" color="#f0f0f2"/>
+    </symbol>
+    <symbol id="icon-scanline" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#scanline" color="#f0f0f2"/>
+    </symbol>
+    <symbol id="icon-switchback-mark" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#switchback-mark" color="#f0f0f2"/>
+    </symbol>
+    <symbol id="icon-inference-stack" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#inference-stack" color="#f0f0f2"/>
+    </symbol>
+    <symbol id="icon-stroke-order" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#stroke-order" color="#f0f0f2"/>
+    </symbol>
+    <symbol id="icon-terminal-id" viewBox="0 0 1024 1024">
+      <use href="#graphite"/><use href="#terminal-id" color="#f0f0f2"/>
+    </symbol>
   </defs>
 </svg>
 <main>
@@ -215,6 +264,23 @@ h3 { font-size: 29px; line-height: 1.1; }
     </div>
     <div class="board" id="board"></div>
     <noscript><p>Enable JavaScript to render the inline comparison samples.</p></noscript>
+  </section>
+  <section class="list-two" id="list-two" aria-labelledby="list-two-title">
+    <div class="section-head">
+      <div>
+        <p class="meta kicker">Six additional directions</p>
+        <h2 id="list-two-title">List 2</h2>
+      </div>
+      <p class="meta">Same grid · Same sizes · Both surfaces</p>
+    </div>
+    <div class="board" id="board-two"></div>
+    <aside class="decision" aria-labelledby="list-two-pick">
+      <p class="meta kicker">List 2 / Design recommendation</p>
+      <h2 id="list-two-pick">Pick Switchback.</h2>
+      <p><strong>Switchback</strong> is the strongest departure in this list. The turn in the negative space suggests a rein and holds up at 16 px without needing a prompt or a tiny letter.</p>
+      <p><strong>Stroke Order</strong> is my runner-up if the hand has to stay literal. The four separated strokes keep that heritage and give the existing working animation a natural write-on order.</p>
+      <a href="#switchback">Back to Switchback ↑</a>
+    </aside>
   </section>
   <footer class="foot">
     <p>01 copies the shipped <code>app-icon.svg</code> artwork. The wordmarks and titlebar/TUI strips are context studies, not changes to the app. The live terminal draws its own font glyph.</p>
@@ -253,6 +319,33 @@ const directions = [
     cost: 'The brackets consume space at 16 px and are less ownable than the hand.' },
 ];
 
+const moreDirections = [
+  { mark: 'led-array', name: 'LED Array', label: 'Agent activity',
+    rationale: 'Map the hand to a five-by-five LED display with one lit status dot.',
+    gain: 'Makes the brand feel like an instrument panel that can show work in progress.',
+    cost: 'The dots read as a pattern before they read as a hand at 16 px.' },
+  { mark: 'scanline', name: 'Scanline', label: 'Display raster',
+    rationale: 'Break the hand into four offset bands, like a terminal drawn a line at a time.',
+    gain: 'Keeps the glyph recognizable while making the display itself part of the mark.',
+    cost: 'The gaps are less clear at 16 px; the effect works best in motion or at Dock size.' },
+  { mark: 'switchback-mark', id: 'switchback', name: 'Switchback', label: 'Recommended',
+    rationale: 'Cut the turn of a rein out of a solid square; the gap is the mark.',
+    gain: 'Two bold pieces and one clean cut give it a strong silhouette at 16 px.',
+    cost: 'The connection to the hand is indirect; it needs the name to tell that story.' },
+  { mark: 'inference-stack', name: 'Inference Stack', label: 'Layers',
+    rationale: 'Cut a route into three stacked planes, with each pass visible in cross-section.',
+    gain: 'Suggests layers of work rather than a single prompt, with no lettering to resolve.',
+    cost: 'Layered tiles are familiar infrastructure imagery; the top cut is the detail that makes this one different.' },
+  { mark: 'stroke-order', name: 'Stroke Order', label: 'Runner-up',
+    rationale: 'Separate the hand into four gestures, from the stepped crown to the hook.',
+    gain: 'Keeps the hand and gives each stroke a clean, independent shape to animate.',
+    cost: 'At a glance the detached bars can look like a list next to an arrow.' },
+  { mark: 'terminal-id', name: 'Terminal ID', label: 'Type lockup',
+    rationale: 'Put a compact tz above a prompt, like a two-line terminal signature.',
+    gain: 'The initials do the branding and the prompt explains the category.',
+    cost: 'It’s closer to a wordmark than a symbol; the letters are the first thing to soften.' },
+];
+
 const icon = (mark, size, className = '') =>
   `<svg class="icon ${className}" width="${size}" height="${size}" viewBox="0 0 1024 1024" aria-hidden="true"><use href="#icon-${mark}"/></svg>`;
 
@@ -265,10 +358,10 @@ const surface = (mark, theme) => `
     </div>
   </div>`;
 
-document.querySelector('#board').innerHTML = directions.map(({mark, id, name, label, rationale, gain, cost}, index) => `
+const renderCards = (list, start = 1) => list.map(({mark, id, name, label, rationale, gain, cost}, index) => `
   <article class="card${id ? ' recommended' : ''}" ${id ? `id="${id}"` : ''} aria-labelledby="name-${mark}">
     <header class="card-head">
-      <div class="card-id meta"><span>0${index + 1}</span><span class="badge">${label}</span></div>
+      <div class="card-id meta"><span>${String(index + start).padStart(2, '0')}</span><span class="badge">${label}</span></div>
       <h3 id="name-${mark}">${name}</h3>
       <p class="rationale">${rationale}</p>
     </header>
@@ -285,7 +378,9 @@ document.querySelector('#board').innerHTML = directions.map(({mark, id, name, la
       <dt>Strength</dt><dd>${gain}</dd>
       <dt>Trade-off</dt><dd>${cost}</dd>
     </dl>
-  </article>`).join('') + `
+  </article>`).join('');
+
+document.querySelector('#board').innerHTML = renderCards(directions) + `
   <aside class="decision" aria-labelledby="decision-title">
     <p class="meta kicker">Design recommendation</p>
     <h2 id="decision-title">Use the grid.<br>Skip the prompt.</h2>
@@ -293,6 +388,7 @@ document.querySelector('#board').innerHTML = directions.map(({mark, id, name, la
     <p>TTY Hand is my runner-up if matching the terminal welcome is more important than keeping the standalone silhouette. Keep the shipped animation either way.</p>
     <a href="#hard-grid">Back to Hard Grid ↑</a>
   </aside>`;
+document.querySelector('#board-two').innerHTML = renderCards(moreDirections, directions.length + 1);
 </script>
 </body>
 </html>
