@@ -890,7 +890,6 @@ impl Loop {
             if let Some(why) = (!self.routes.is_empty()).then(|| route_trouble(&self.route_calls)).flatten() {
                 self.switch_route(&why);
             }
-            (self.out)(&json!({"type": "stream_event", "event": {"type": "message_start"}}));
             let mut body = match self.api {
                 Api::Responses => {
                     // stateless (store: false): earlier reasoning comes back encrypted and is sent again with the history.
@@ -937,6 +936,7 @@ impl Loop {
             if self.tools.is_empty() && let Some(o) = body.as_object_mut() {
                 o.remove("tools");
             }
+            (self.out)(&json!({"type": "stream_event", "event": {"type": "message_start", "tazuna_request_start": true}}));
             let t0 = std::time::Instant::now();
             let first = (self.call)(&body);
             // every later call for this message (a retry or re-send of this one, the turns after it) is the agent's
