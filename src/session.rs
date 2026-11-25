@@ -1588,8 +1588,9 @@ impl Session {
                 self.waiting_note = None;
                 (self.streamed, self.streamed_text) = (false, false);
                 self.turns += 1;
-                // the own loop sends this when its request goes out, right after the tool results
-                self.call_start = Some(self.ready_at.take().unwrap_or(self.now_ms));
+                // Claude only reports a response start; the own loop marks the actual request start.
+                let ready = self.ready_at.take();
+                self.call_start = Some(if ev["tazuna_request_start"] == true { self.now_ms } else { ready.unwrap_or(self.now_ms) });
                 (self.first_token, self.call_est, self.call_deltas) = (None, 0.0, 0);
                 self.call_thinking.clear();
                 self.turn_usage.push(Usage::default());
@@ -2028,6 +2029,25 @@ mod tests {
         let n = s.blocks.len();
         let (Block::Retry(r), Block::Done(d)) = (&s.blocks[n - 2], &s.blocks[n - 1]) else { panic!() };
         assert!(r.gave_up && r.tries == 2 && r.next_ms.is_none() && !d.ok, "{} {}", r.why, r.tries);
+    }
+
+    #[test]
+    fn own_loop_call_times_start_at_each_request() {
+        let mut s = Session::new("", "medium");
+        let ev = |e: Value| json!({"type": "stream_event", "event": e});
+        let start = ev(json!({"type": "message_start", "tazuna_request_start": true}));
+        let token = ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hello"}}));
+        let end = ev(json!({"type": "message_delta", "usage": {"output_tokens": 80}}));
+        s.apply(&json!({"type": "harness_user", "text": "go"}), 100.0);
+        s.apply(&start, 3200.0);
+        assert_eq!(s.in_flight(), Some((3200.0, None, 0.0)));
+        s.apply(&token, 3600.0);
+        s.apply(&end, 7000.0);
+        s.apply(&json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "x", "content": "ok"}]}}), 7100.0);
+        s.apply(&start, 7300.0);
+        s.apply(&token, 8100.0);
+        s.apply(&end, 11_500.0);
+        assert_eq!(s.calls.iter().map(|c| (c.ttft_ms, c.total_ms)).collect::<Vec<_>>(), [(Some(400.0), 3800.0), (Some(800.0), 4200.0)]);
     }
 
     #[test]
