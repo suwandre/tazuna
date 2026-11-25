@@ -70,14 +70,27 @@ input[type=checkbox] { accent-color: var(--accent); }
 .stroke:nth-child(2) { --phase: -1.8s; }
 .stroke:nth-child(3) { --phase: -1.2s; }
 .stroke:nth-child(4) { --phase: -.6s; }
-.write .stroke { animation: write-crown 2.8s step-end infinite; }
-.write .stroke:nth-child(2) { animation-name: write-first; }
-.write .stroke:nth-child(3) { animation-name: write-second; }
-.write .stroke:nth-child(4) { animation-name: write-hook; }
-@keyframes write-crown { 0% { opacity: .25; } 7%, 100% { opacity: 1; } }
-@keyframes write-first { 0% { opacity: .25; } 17%, 100% { opacity: 1; } }
-@keyframes write-second { 0% { opacity: .25; } 27%, 100% { opacity: 1; } }
-@keyframes write-hook { 0% { opacity: .25; } 37%, 100% { opacity: 1; } }
+.write-guide { opacity: .2; }
+.write-reveal .stroke { animation: write-crown 2.8s ease-out infinite; }
+.write-reveal .stroke:nth-child(2) { animation-name: write-first; }
+.write-reveal .stroke:nth-child(3) { animation-name: write-second; }
+.write-reveal .stroke:nth-child(4) { animation-name: write-hook; }
+@keyframes write-crown {
+  0% { clip-path: inset(0 100% 0 0) fill-box; }
+  12%, 100% { clip-path: inset(0) fill-box; }
+}
+@keyframes write-first {
+  0%, 9% { clip-path: inset(0 100% 0 0) fill-box; }
+  21%, 100% { clip-path: inset(0) fill-box; }
+}
+@keyframes write-second {
+  0%, 18% { clip-path: inset(0 100% 0 0) fill-box; }
+  30%, 100% { clip-path: inset(0) fill-box; }
+}
+@keyframes write-hook {
+  0%, 27% { clip-path: inset(0 0 100% 0) fill-box; }
+  39%, 100% { clip-path: inset(0) fill-box; }
+}
 .chase .stroke { animation: chase 2.4s step-end var(--phase) infinite; }
 @keyframes chase { 0% { fill: #8f9bf0; opacity: 1; } 25%, 100% { fill: currentColor; opacity: .55; } }
 .breathe svg { animation: breathe 2.4s ease-in-out infinite; }
@@ -130,7 +143,11 @@ input[type=checkbox] { accent-color: var(--accent); }
 .foot { margin: 24px 0 0; padding: 13px 0 24px; color: var(--muted); border-top: 1px solid var(--line); font-size: 12px; }
 html[data-paused] * { animation-play-state: paused !important; }
 html[data-reduced] * { animation: none !important; }
-@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+html[data-reduced] .write-guide { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; }
+  .write-guide { display: none; }
+}
 @media (max-width: 930px) {
   .hero, .lane { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .contexts { grid-template-columns: 1fr; }
@@ -210,18 +227,20 @@ html[data-reduced] * { animation: none !important; }
   <footer class="foot">Motion prototype only. Nothing changes in the app. “Empty start” is the new-chat view, not a loading screen or a separate native splash.</footer>
 </main>
 <script>
-const hand = () => `<svg viewBox="0 0 16 16" aria-hidden="true">${['crown', 'first-bar', 'second-bar', 'hook'].map(id =>
-  `<use class="stroke" href="#${id}"/>`).join('')}</svg>`;
+const strokes = ['crown', 'first-bar', 'second-bar', 'hook'].map(id =>
+  `<use class="stroke" href="#${id}"/>`).join('');
+const hand = (write = false) => `<svg viewBox="0 0 16 16" aria-hidden="true">${write
+  ? `<g class="write-guide">${strokes}</g><g class="write-reveal">${strokes}</g>` : strokes}</svg>`;
 
 const tile = (size, motion = '') =>
-  `<span class="tile ${motion}" style="--size:${size}px" aria-hidden="true">${hand()}</span>`;
+  `<span class="tile ${motion}" style="--size:${size}px" aria-hidden="true">${hand(motion === 'write')}</span>`;
 
 const surfaces = render => ['dark', 'light'].map(theme => render(theme)).join('');
 const states = `<div class="state-text" aria-hidden="true"><span>Thinking</span><span>Running tool</span><span>Done</span></div>`;
 const studies = [
   { key: 'write', title: 'Write & hold', badge: 'Reply pick', speed: '2.8 s / cycle',
-    why: 'Crown → first bar → second bar → hook. Finish at ~1 s and hold the whole hand for ~1.8 s.',
-    trade: 'The whole mark is visible for most of the loop. The reset is still noticeable.' },
+    why: 'The crown and two bars sweep left to right, then the hook draws down. Strokes overlap slightly and finish at ~1.1 s.',
+    trade: 'A faint outline stays visible as the strokes draw. Hold the full hand for ~1.7 s, then return to the faint mark.' },
   { key: 'chase', title: 'Indigo pass', badge: 'Alternative', speed: '600 ms / stroke',
     why: 'One stroke at a time takes the live indigo. The other three stay visible.',
     trade: 'Clearer at a glance, but busier for long runs and less visible at 10 px.' },
