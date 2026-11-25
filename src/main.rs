@@ -3115,7 +3115,7 @@ fn changelog_panel(entries: &[serde_json::Value]) -> ui::ListPanel {
 
 fn model_calls(s: &Session) -> ui::ListPanel {
     let rows = s.turn_usage.iter().enumerate().map(|(i, u)| {
-        let c = s.calls.get(i);
+        let c = s.call_time(i);
         let first = c.and_then(|c| c.ttft_ms).map_or("-".to_string(), |ms| format!("{:.1}s", ms / 1000.0));
         let rate = c.filter(|c| c.gen_ms > 0.0).map_or("-".to_string(), |c| format!("{:.0}", c.out as f64 / c.gen_ms * 1000.0));
         let e2e = c.filter(|c| c.total_ms > 0.0 && c.out > 0).map_or("-".to_string(), |c| format!("{:.0}", c.out as f64 / c.total_ms * 1000.0));

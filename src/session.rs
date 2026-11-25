@@ -225,6 +225,7 @@ impl Bill {
 /// `unreported`: the provider sent no usage, so nobody knows the cost (it read "Paid to X $0", design review 12);
 /// `uncounted`: tries before its answer the provider may have billed, not in its cost.
 struct CallBill {
+    timing: Option<usize>,
     model: String,
     price: Option<(f64, f64, f64)>,
     provider: Option<String>,
@@ -388,7 +389,7 @@ pub struct Session {
     billed: usize,
     /// Subagent calls already counted into a run's `sub_calls`.
     subs_counted: usize,
-    /// Every model call's timing, in order; the one in flight: when it started, when its first token came, its output so
+    /// Completed model call timings, in order; the one in flight: when it started, when its first token came, its output so
     /// far (estimated: thinking as claude estimates it, text and tool input at ~4 characters a token) and its thinking
     /// blocks, which get the exact count when it ends.
     pub calls: Vec<CallTime>,
@@ -747,7 +748,7 @@ impl Session {
     /// run).
     fn calls_view(&self) -> Vec<Value> {
         self.turn_usage.iter().zip(&self.call_blocks).enumerate().map(|(i, (u, &block))| {
-            let c = self.calls.get(i);
+            let c = self.call_time(i);
             let b = self.call_bill.get(i);
             let price = b.map_or(self.price_m, |b| b.price);
             let (charged, unreported) = (b.and_then(|b| b.cost), b.is_some_and(|b| b.unreported));
@@ -763,6 +764,10 @@ impl Session {
             }
             v
         }).collect()
+    }
+
+    pub fn call_time(&self, row: usize) -> Option<&CallTime> {
+        self.calls.get(self.call_bill.get(row)?.timing?)
     }
 
     /// The model calls a subagent made under tool call `id`: its assistant messages, one per message id.
@@ -977,7 +982,7 @@ impl Session {
         self.call_blocks.truncate(k);
         self.turn_usage.truncate(k);
         self.call_bill.truncate(k);
-        self.calls.truncate(k);
+        self.calls.truncate(self.call_bill.iter().rev().find_map(|b| b.timing).map_or(0, |i| i + 1));
         self.billed = self.billed.min(k);
         (self.cut_at, self.usage_at_result) = (Some((self.cost(), self.usage)), self.usage);
     }
@@ -1589,7 +1594,7 @@ impl Session {
                 self.call_thinking.clear();
                 self.turn_usage.push(Usage::default());
                 self.call_blocks.push(self.blocks.len());
-                self.call_bill.push(CallBill { model: self.model.clone(), price: self.price_m, provider: self.provider.clone(), cost: None, unreported: false, uncounted: 0 });
+                self.call_bill.push(CallBill { model: self.model.clone(), price: self.price_m, provider: self.provider.clone(), cost: None, unreported: false, uncounted: 0, timing: None });
                 // a call with nothing running (a queued message's, after the run before it ended): work begins here
                 self.clock_on(self.now_ms);
             }
@@ -1683,7 +1688,7 @@ impl Session {
                         }
                     }
                 }
-                if let Some(start) = self.call_start.take() {
+                if let (Some(start), Some(bill)) = (self.call_start.take(), self.call_bill.last_mut()) {
                     // the speed is the output over the time after the first token, only where the stream shows the model
                     // writing (all recorded calls of every model, 2026-11-16); otherwise the call has none (gen_ms 0)
                     // rather than a figure that takes the wait in:
@@ -1704,6 +1709,7 @@ impl Session {
                     let kept_back = !self.model.starts_with("claude-") && self.call_est < 0.5 * out;
                     let measured = first.is_some() && t.output >= 20 && self.call_deltas >= 5 && after >= 500.0 && !burst && !kept_back
                         && self.call_est <= 2.0 * out + 50.0;
+                    bill.timing = Some(self.calls.len());
                     self.calls.push(CallTime { ttft_ms: first.filter(|_| !burst).map(|f| f - start), gen_ms: if measured { after } else { 0.0 }, out: t.output,
                         total_ms: self.now_ms - start });
                 }
@@ -1898,6 +1904,26 @@ mod tests {
         let Some(Block::Done(d)) = s.blocks.last() else { panic!("a Done") };
         assert_eq!((d.run_usage.output, d.run_usage.input), (50, 10));
         assert!((d.run_cost.unwrap() - 0.05).abs() < 1e-9, "{:?}", d.run_cost);
+    }
+
+    #[test]
+    fn an_unfinished_call_does_not_take_the_next_calls_timing() {
+        let mut s = Session::new("", "medium");
+        let start = json!({"type": "stream_event", "event": {"type": "message_start"}});
+        let end = json!({"type": "stream_event", "event": {"type": "message_delta", "usage": {"output_tokens": 30}}});
+        s.apply(&json!({"type": "harness_user", "text": "first"}), 0.0);
+        s.apply(&start, 100.0);
+        s.apply(&json!({"type": "result", "subtype": "error_during_execution", "errors": ["timeout"]}), 500.0);
+        let cut = s.blocks.len();
+        s.apply(&json!({"type": "harness_user", "text": "second"}), 600.0);
+        s.apply(&start, 700.0);
+        s.apply(&end, 1100.0);
+        let rows = s.calls_view();
+        assert!(rows[0]["total_ms"].is_null());
+        assert_eq!(rows[1]["total_ms"], 500.0);
+        s.truncate(cut);
+        assert_eq!(s.calls_view().len(), 1);
+        assert!(s.calls.is_empty());
     }
 
     /// An edit is placed only in a regular file up to 4 MB: a device or a FIFO would never end the read (design review 13).
