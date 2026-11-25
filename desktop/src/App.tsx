@@ -101,12 +101,12 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
   const restoreDraft = (tid: string, draft: SendDraft) => {
     const t = live.current[tid];
     if (!t) return;
+    // kept under its key on screen too: the box that shows it may be a new one (the start page's, when the refused message
+    // leaves the conversation in the same render), and a new box takes what is kept, not a draft that came before it
+    const key = draftKeyOf(t);
+    if (draft.text) localStorage.setItem(DRAFT + key, [localStorage.getItem(DRAFT + key), draft.text].filter(Boolean).join("\n\n"));
+    if (draft.files?.length) saveDraftFiles(key, [...new Set([...draftFiles(key), ...draft.files])]);
     if (tid === activeRef.current) onDraftRejected(draft);
-    else {
-      const key = draftKeyOf(t);
-      if (draft.text) localStorage.setItem(DRAFT + key, [localStorage.getItem(DRAFT + key), draft.text].filter(Boolean).join("\n\n"));
-      if (draft.files?.length) saveDraftFiles(key, [...new Set([...draftFiles(key), ...draft.files])]);
-    }
   };
   // a send the core refused (send_rejected: claude not found, an untrusted folder), its words put back in the box: its
   // error notice says so (`rejected`); a core before that field sends send_rejected before the view that brings the
