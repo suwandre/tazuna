@@ -1,11 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Stroke Order (mockups/logo-directions.html) on the macOS icon grid. `npx tauri icon app-icon.png` makes src-tauri/icons. -->
+  <!-- Stroke Order (mockups/logo-directions.html) on the macOS icon grid. `npx tauri icon app-icon.png` makes src-tauri/icons.
+       Warm ink and paper like the rest of the app, and the glyph centred (its strokes span 4..11 of the 16 grid, so half a unit
+       right; it sat 32 px left of the middle), the user, 2026-11-25. -->
   <defs>
+    <linearGradient id="ink" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2824"/><stop offset="1" stop-color="#1d1c19"/></linearGradient>
     <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
       <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity=".28"/>
     </filter>
   </defs>
-  <rect x="100" y="100" width="824" height="824" rx="186" fill="#111113" filter="url(#shadow)"/>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#ink)" filter="url(#shadow)"/>
   <rect x="104" y="104" width="816" height="816" rx="182" fill="none" stroke="#fff" stroke-width="8" stroke-opacity=".18"/>
-  <path fill="#f0f0f2" transform="scale(64)" d="M5 5h3V4h3v1H8v1H5zM5 7h3v1H5zM4 9h4v1H4zM9 6h1v6H6v-1h3z"/>
+  <path fill="#ece8df" transform="translate(32 0) scale(64)" d="M5 5h3V4h3v1H8v1H5zM5 7h3v1H5zM4 9h4v1H4zM9 6h1v6H6v-1h3z"/>
 </svg>

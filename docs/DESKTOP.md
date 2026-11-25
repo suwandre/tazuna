@@ -717,6 +717,11 @@ sweep checks it (d-typing-keeps-scroll).
 - The usage page names each plan ("Mistral Vibe plan") instead of calling every plan run Claude's.
 - A refused message comes back into the box once, not twice (after #53).
 
+0.1.128 (with tazuna 0.1.227): the Stroke Order mark (#57, the user's pick from mockups/logo-directions.html): 手 as four
+separate strokes that a running reply writes in order on its Working row, the sidebar's mark pulsing while any reply
+runs. Paper on warm ink like the rest of the app, and centred on its tile (it came in cool graphite and 32 px left of the
+middle). The receipt keeps each call's timing on its own row (#58, #59).
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

@@ -90,7 +90,7 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - The sheet is lifted in dark too (design review 11, `mockups/v8.html`): `main` #211f1b on the desk #121110 is 1.15:1 (it
   was 1.08:1, and the sheet read only in light); card, field, hover and the lines each a step up with it, and `faint` too,
   so it still reads 4.6:1 on a hovered row.
-- One mark: 手 (ta, the hand of 手綱). Stroke Order separates it into a crown, two bars and a hook on graphite
+- One mark: 手 (ta, the hand of 手綱). Stroke Order separates it into a crown, two bars and a hook, paper on warm ink, centred on its tile
   (`mockups/logo-directions.html`, `app-icon.svg` and `components/Mark.tsx`). A running reply writes and holds the mark on its
   Working row and work fold (10 px); the sidebar pulses the complete mark (20 px) while any open thread is working.
   New chats, receipts and reduced motion use the still mark (`mockups/logo-animations.html`). The terminal draws its own
