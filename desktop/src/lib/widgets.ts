@@ -38,7 +38,7 @@ export const widgetUrl = (id: string) =>
 export const widgetId = (ask: string) =>
   `${ask.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").split("-").slice(0, 4).join("-") || "panel"}-${Math.random().toString(36).slice(2, 6)}`;
 
-const TOKENS = ["--ink", "--ink-2", "--muted", "--faint", "--line", "--card", "--field", "--accent", "--accent-soft", "--ok", "--bad", "--warn", "--font-ui", "--font-mono"];
+const TOKENS = ["--ink", "--ink-2", "--muted", "--faint", "--line", "--card", "--field", "--accent", "--accent-soft", "--live", "--live-ink", "--live-soft", "--ok", "--bad", "--warn", "--font-ui", "--font-mono"];
 
 /** The design tokens as the window has them now (light or dark). */
 export function tokens(): Record<string, string> {

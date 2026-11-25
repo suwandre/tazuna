@@ -12,18 +12,35 @@ export function Segmented<T extends string>({ value, options, onChange, label, w
   wrap?: boolean;
 }) {
   const at = options.findIndex(([v]) => v === value);
-  const key = (e: React.KeyboardEvent<HTMLSpanElement>) => {
-    const n = options.length, to = e.key === "ArrowRight" || e.key === "ArrowDown" ? (at + 1) % n : e.key === "ArrowLeft" || e.key === "ArrowUp" ? (at + n - 1) % n : e.key === "Home" ? 0 : e.key === "End" ? n - 1 : -1;
-    if (to < 0) return;
-    e.preventDefault();
-    onChange(options[to][0]);
-    e.currentTarget.querySelectorAll<HTMLElement>("[role=radio]")[to]?.focus();
-  };
   return (
-    <span role="radiogroup" aria-label={label} onKeyDown={key} className={`inline-flex flex-none rounded-[7px] bg-field p-0.5 text-[12.5px] ${wrap ? "flex-wrap" : ""}`}>
+    <span role="radiogroup" aria-label={label} onKeyDown={(e) => radioKeys(e, options.map(([v]) => v), at, onChange)} className={`inline-flex flex-none rounded-[7px] bg-field p-0.5 text-[12.5px] ${wrap ? "flex-wrap" : ""}`}>
       {options.map(([v, l], i) => (
         <button key={v} role="radio" aria-checked={v === value} tabIndex={i === Math.max(0, at) ? 0 : -1} onClick={() => onChange(v)}
           className={`whitespace-nowrap rounded-[5px] px-[11px] py-[3px] ${v === value ? "bg-card font-medium text-ink shadow-[0_0_0_1px_var(--line-strong)]" : "text-muted hover:text-ink"}`}>{l}</button>
+      ))}
+    </span>
+  );
+}
+
+/** A radio group's keys: the arrows, Home and End choose, and the focus goes with the choice. */
+function radioKeys<T extends string>(e: React.KeyboardEvent<HTMLSpanElement>, options: readonly T[], at: number, onChange: (v: T) => void) {
+  const n = options.length, to = e.key === "ArrowRight" || e.key === "ArrowDown" ? (at + 1) % n : e.key === "ArrowLeft" || e.key === "ArrowUp" ? (at + n - 1) % n : e.key === "Home" ? 0 : e.key === "End" ? n - 1 : -1;
+  if (to < 0) return;
+  e.preventDefault();
+  onChange(options[to]);
+  e.currentTarget.querySelectorAll<HTMLElement>("[role=radio]")[to]?.focus();
+}
+
+/** The accents to choose from (design review 13): round swatches, a radio group with Segmented's keys, each named by its
+ * tooltip; the chosen one ringed in ink, clear of the card, and the focus ring outside that. Each is coloured by its own
+ * `data-accent` (styles.css), so it follows a flip of light and dark with no render. */
+export function Swatches<T extends string>({ value, options, onChange, label }: { value: T; options: readonly T[]; onChange: (v: T) => void; label: string }) {
+  const at = options.indexOf(value);
+  return (
+    <span role="radiogroup" aria-label={label} onKeyDown={(e) => radioKeys(e, options, at, onChange)} className="inline-flex flex-none gap-[9px]">
+      {options.map((v, i) => (
+        <button key={v} role="radio" aria-checked={v === value} aria-label={v} title={v} tabIndex={i === Math.max(0, at) ? 0 : -1} onClick={() => onChange(v)} data-accent={v.toLowerCase()} style={{ background: "var(--accent)" }}
+          className={`size-5 rounded-full focus-visible:outline-offset-[5px] ${v === value ? "shadow-[inset_0_0_0_1px_#0003,0_0_0_2px_var(--card),0_0_0_4px_var(--ink)]" : "shadow-[inset_0_0_0_1px_#0003]"}`} />
       ))}
     </span>
   );

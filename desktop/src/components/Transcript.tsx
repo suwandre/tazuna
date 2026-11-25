@@ -1,4 +1,4 @@
-import { ArrowDown, CircleAlert, Check, ChevronRight, Copy, FileText, Info, LoaderCircle, MessageCircle, Pencil, RotateCcw, Square, SquareTerminal } from "lucide-react";
+import { ArrowDown, CircleAlert, Check, ChevronRight, Copy, FileText, Info, MessageCircle, Pencil, RotateCcw, Square, SquareTerminal } from "lucide-react";
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Slot } from "../lib/slots";
@@ -7,6 +7,7 @@ import { attachments, IMAGE_FILE, type Change, type Message, type ToolStep } fro
 import { AnswerSlip, dur, priceSaid, tok } from "./Receipt";
 import { Parts, Sep } from "./Sep";
 import { quietButton } from "./Controls";
+import { Mark } from "./Mark";
 
 function inlineCode(text: string) {
   return text.split(/(`[^`]+`)/).map((part, i) => part.startsWith("`") ? <code key={i}>{part.slice(1, -1)}</code> : part);
@@ -20,7 +21,10 @@ type Props = {
   /** the reply running waits for your answer (an approval): its fold says so */
   asking?: boolean;
   /** when the reply running began (ms), for its time */
-  since?: number; onSendToAgent?: (text: string) => void;
+  since?: number;
+  /** the running reply's output tokens so far, said on its Working row when there are any */
+  out?: number;
+  onSendToAgent?: (text: string) => void;
   onDiff?: (turn: number, path: string) => void; onUndo?: (turn: number) => void; onReview?: (turn: number) => void;
   /** "edit from here" on one of your messages */
   onEdit?: (edit: { cp: number; block: number }, text: string) => void;
@@ -34,6 +38,8 @@ type Props = {
   onSendNow?: (text: string) => void;
   /** the message whose Retry works: the last reply (set by Transcript) */
   lastReply?: number;
+  /** the last chat answer with a receipt, which keeps its line in a plain chat (set by Transcript) */
+  lastChatReceipt?: number;
   /** an image file an answer names, as a data URL (it fails for a file that is not there) */
   onImage?: (path: string) => Promise<string>;
 };
@@ -80,7 +86,10 @@ export const useTranscript = () => useContext(TranscriptCtx);
 export function Transcript({ messages, activity, jumps = true, ...props }: Props) {
   const { busy, editFrom } = props;
   // Retry runs the last failed turn again: only the last reply's error card offers it
-  const rest = { ...props, lastReply: messages.reduce((n, m, i) => (m.role === "agent" ? i : n), -1) };
+  // and in a plain chat the last answer with a receipt keeps its line: not the last reply, which a failure or a stop at once
+  // leaves with none, and hid every line (design review 13, D3)
+  const rest = { ...props, lastReply: messages.reduce((n, m, i) => (m.role === "agent" ? i : n), -1),
+    lastChatReceipt: messages.reduce((n, m, i) => (m.role === "agent" && m.chat && hasReceipt(m) ? i : n), -1) };
   // a reply with steps says it is working in its fold; the line under the transcript only until the first step
   const folded = !!busy && messages.some((m) => m.role === "agent" && !m.meta && (m.tools?.length ?? 0) > 0);
   // follow new output while the reader is at the bottom; stay put once they scroll up
@@ -157,14 +166,14 @@ export function Transcript({ messages, activity, jumps = true, ...props }: Props
                   </span>
                 </div>
               )}
-              {m.tools && m.tools.length > 0 && <WorkFold tools={m.tools} secs={m.meta?.secs} live={!!busy && !m.meta} asking={rest.asking} since={rest.since} />}
+              {m.tools && m.tools.length > 0 && <WorkFold tools={m.tools} secs={m.meta?.secs} live={!!busy && !m.meta} asking={rest.asking} since={rest.since} out={rest.out} />}
               <div className="prose-answer text-ink">{m.prose.map((p, j) => <Slot key={j} name="message.text" props={{ text: p }} only />)}</div>
               <Slot name="message.after" props={{ message: m, index: hidden + i }} />
             </>
           )}
         </div>
       ))}
-      {busy && !folded && activity && doing[activity] && <Working what={doing[activity]} since={rest.since} />}
+      {busy && !folded && activity && doing[activity] && <Working what={doing[activity]} since={rest.since} out={rest.out} />}
     </section>
       {/* over the scroller, not in it: the transcript's own fade is under the button (in it, the fade took the button
           too; before the fade it sat on a message's words, "public API s↓ame", design review 9) */}
@@ -232,7 +241,7 @@ function useFold(shown: boolean, set: (open: boolean) => void) {
 
 /** A reply's steps as one line, "Worked 41 s · read 2 files, ran 3 commands ›": open while the reply runs, folded once it
  * is done (a click keeps it as chosen). Until desktop 0.1.64 each step was a line of its own above every answer. */
-function WorkFold({ tools, secs, live, asking, since }: { tools: ToolStep[]; secs?: number; live: boolean; asking?: boolean; since?: number }) {
+function WorkFold({ tools, secs, live, asking, since, out }: { tools: ToolStep[]; secs?: number; live: boolean; asking?: boolean; since?: number; out?: number }) {
   const [open, setOpen] = useState<boolean | null>(null);
   const shown = open ?? live;
   const what = workSummary(tools);
@@ -246,8 +255,11 @@ function WorkFold({ tools, secs, live, asking, since }: { tools: ToolStep[]; sec
       <button onClick={toggle} aria-expanded={shown} title={shown ? "Fold the steps" : "Show each step"}
         className="-ml-1.5 inline-flex max-w-full items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left text-[12.5px] text-muted hover:bg-hover hover:text-ink">
         <ChevronRight size={13} strokeWidth={1.5} className={`flex-none transition-transform duration-150 ${shown ? "rotate-90" : ""}`} />
-        {live && !asking && <LoaderCircle size={13} strokeWidth={1.75} className="flex-none animate-spin text-accent" aria-hidden="true" />}
-        <span className={`flex-none ${live && asking ? "font-medium text-warn" : ""}`}>{live ? (asking ? "Waiting for you" : <>Working{since && <> <Ticking since={since} /></>}</>) : `Worked${took}`}</span>
+        {/* the mark at work where the spinning ring was, "Working" under a slow shimmer, and its tokens so far (design review
+            13, D1 of mockups/v10.html); with reduced motion the mark is drawn whole and the words plain */}
+        {live && !asking && <Mark size={MARK_AT_WORK} working />}
+        <span className={`flex-none ${live && asking ? "font-medium text-warn" : ""}`}>{live ? (asking ? "Waiting for you" : <><span className="tz-shimmer font-medium">Working</span>{since && <> <Ticking since={since} /></>}</>) : `Worked${took}`}</span>
+        {live && !asking && !!out && <span className="flex flex-none items-center text-faint"><Sep />↓ {tok(out)} tokens</span>}
         {what && <span className="flex min-w-0 items-center truncate text-faint"><Sep />{what}</span>}
         {failed > 0 && <span className="flex flex-none items-center text-bad"><Sep />{failed} failed</span>}
       </button>
@@ -261,15 +273,19 @@ function WorkFold({ tools, secs, live, asking, since }: { tools: ToolStep[]; sec
   );
 }
 
-/** Under a reply that is still going: a spinner, what it is doing with dots that count, and how long the reply has run
- * (it stays mounted from the reply's start to its end). */
-function Working({ what, since }: { what: string; since?: number }) {
+/** The working mark's tile on a 12.5 px line (18.75 px high): 10 px, as a 20 px tile would not fit it. A multiple of 10, so
+ * its cells land on whole device pixels (components/Mark.tsx). */
+const MARK_AT_WORK = 10;
+
+/** Under a reply that is still going: the mark at work, what it is doing with dots that count, how long the reply has run
+ * (it stays mounted from the reply's start to its end) and its tokens so far. */
+function Working({ what, since, out }: { what: string; since?: number; out?: number }) {
   const [start] = useState(() => since ?? Date.now());
   return (
     <div role="status" className="mx-auto flex max-w-[756px] items-center gap-2 px-7 text-[12.5px] text-muted">
-      <LoaderCircle size={13} strokeWidth={1.75} className="animate-spin text-accent" aria-hidden="true" />
-      <span className="tz-live">{what}</span><span className="tz-dots -ml-2" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>
-      <span className="tabular-nums text-faint"><Ticking since={start} /></span>
+      <Mark size={MARK_AT_WORK} working />
+      <span className="tz-shimmer font-medium">{what}</span><span className="tz-dots -ml-2" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>
+      <span className="tabular-nums text-faint"><Ticking since={start} />{!!out && <><Sep />↓ {tok(out)} tokens</>}</span>
     </div>
   );
 }
@@ -437,23 +453,28 @@ export function MessageImages({ message: m }: { message: Message }) {
   );
 }
 
-export function MessageMeta({ message: m }: { message: Message }) {
-  const { busy, onSendToAgent } = useTranscript();
+/** A turn that gave no answer and cost nothing has no receipt ("$0 | 0 s" under a failed attempt). */
+const hasReceipt = (m: Message) => m.role === "agent" && !!m.meta && (!!m.prose.join("\n\n") || !!m.meta.in || !!m.meta.out || (m.meta.cost ?? 0) > 0);
+
+export function MessageMeta({ message: m, index }: { message: Message; index?: number }) {
+  const { busy, onSendToAgent, lastChatReceipt } = useTranscript();
   const [open, setOpen] = useState(false);
   const [body, toggle] = useFold(open, setOpen);
   // the slip opens into view (under the last answer it opened below the message box's edge)
   const line = useRef<HTMLDivElement>(null);
   // (once it has unfolded: asked for while its height is still 0, only its top came into view)
   useEffect(() => { if (!open) return; const t = setTimeout(() => body.current?.scrollIntoView({ block: "nearest", behavior: still() ? "auto" : "smooth" }), still() ? 0 : 200); return () => clearTimeout(t); }, [open]);
-  if (m.role !== "agent" || !m.meta) return null;
+  if (m.role !== "agent" || !m.meta || !hasReceipt(m)) return null;
   const text = m.prose.join("\n\n"), a = m.meta;
-  // a turn that gave no answer and cost nothing has no receipt ("$0 | 0 s" under a failed attempt)
-  if (!text && !a.in && !a.out && !(a.cost && a.cost > 0)) return null;
+  // in a plain chat the last answer keeps its line and older ones show theirs on hover or focus, as their actions do
+  // (design review 13, D3 of mockups/v10.html: every chat answer's numbers read as noise); an agent's run keeps it, its
+  // cost is the work's
+  const quiet = m.chat && index !== lastChatReceipt && !open;
   return (
     // the answer's receipt: one faint line, always there (design review 11, variant A of mockups/v8.html; until then its
     // numbers showed on the answer's hover only), a click unfolds every model call and what it cost. Copy stays on hover
     // and on the keyboard's focus.
-    <div ref={line} className="mt-2 scroll-mb-3 text-[12px] tabular-nums text-faint">
+    <div ref={line} className={`mt-2 scroll-mb-3 text-[12px] tabular-nums text-faint ${quiet ? "opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100" : ""}`}>
       <div className="flex items-center">
         <button onClick={toggle} aria-expanded={open} title="The receipt: every model call of this reply and what it cost"
           className="-ml-1.5 inline-flex min-w-0 items-center rounded-md px-1.5 py-0.5 hover:bg-hover hover:text-ink-2">

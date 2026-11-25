@@ -696,6 +696,17 @@ sweep checks it (d-typing-keeps-scroll).
 - The mark is new: 手 as a 9×9 bitmap, paper on ink (the user's pick of six, kept in mockups/logo.html with the stroke mark
   it replaced). The app icon, the sidebar, the start screen and receipts use it.
 
+0.1.126 (with tazuna 0.1.225), design review 13's approved prototype (mockups/v10.html, D1-D4) and two reviews:
+- While a reply works, the mark writes itself in stroke order beside "Working", with the reply's own tokens out ("↓ 1.2k
+  tokens"); the sidebar's mark works while any reply runs. Reduced motion keeps it still.
+- An accent of your own in Settings › Appearance (Indigo, Jade, Amber, Rose, Graphite): buttons, focus and selection
+  follow it; what means a state (running, usage meters, code keywords) stays indigo (`--live`), and plugins' own colours
+  are left alone. A selected row has a thin ring, so it never reads as a hovered one.
+- In chats, an older answer shows its cost line on hover; the last keeps it. Agent runs show everything.
+- The mode pill says how free it is: full warn-tinted ("full · never asks"), plan tinted.
+- A name you gave a conversation stands while its reply runs too (rows, header, notification), not only once it is done.
+- The app icon's bitmap sits with room around it (64% of the tile, was about 85%).
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

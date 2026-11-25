@@ -21,7 +21,9 @@ export function Mark({ size = 20, working = false }: { size?: number; working?: 
       <svg viewBox="0 0 10 10" width={size} height={size} fill="currentColor" shapeRendering="crispEdges">
         {PIXELS.map(([x, y], i) => (
           <rect key={i} x={0.5 + x} y={0.5 + y} width={0.75} height={0.75}
-            className={working ? "tz-px" : undefined} style={working ? { ["--at" as string]: `${4 + Math.round((i * 66) / (PIXELS.length - 1))}%` } : undefined} />
+            className={working ? "tz-px" : undefined} style={working ? { ["--at" as string]: `${4 + Math.round((i * 66) / (PIXELS.length - 1))}%`,
+              // where linear() is missing (styles.css): each pixel a tenth of a second behind the one before it
+              ["--lag" as string]: `-${(((PIXELS.length - 1 - i) * 3) / PIXELS.length).toFixed(2)}s` } : undefined} />
         ))}
       </svg>
     </span>

@@ -31,7 +31,7 @@ import { CoreFailed, Start, type StartItem } from "./components/Start";
 import { StatusBar } from "./components/StatusBar";
 import { getVersion } from "@tauri-apps/api/app";
 import * as demo from "./lib/demo";
-import { asked, askedInput, changedCount, heldTurn, messages as viewMessages, queued, readableError, resetIn, sessionIds, standing, unsaved, usage as viewUsage } from "./lib/fromView";
+import { asked, askedInput, changedCount, heldTurn, messages as viewMessages, queued, readableError, replyOut, resetIn, sessionIds, standing, unsaved, usage as viewUsage } from "./lib/fromView";
 import { modelLabel, shortTitle, titleFrom, type Usage } from "./lib/types";
 import { items as accountItems, mine as accountOf, withLive } from "./lib/health";
 import { Parts } from "./components/Sep";
@@ -41,7 +41,7 @@ import { Parts } from "./components/Sep";
 const MENUS = ".tz-pop:not([data-panel]):not(.tz-out), [role=menu], [role=listbox], [role=dialog]:not(.tz-out), dialog[open]";
 
 const NO_USAGE: Usage = { contextPct: 0, contextUsed: "0", contextMax: "", plan5h: null, plan5hReset: "", planWeek: null, threadCost: 0, threadTurns: 0, cachedPct: 0, saved: 0, today: 0, todayTurns: 0, todaySeries: [], balance: null };
-import { THEME, applyLooks, darkNow, look } from "./lib/chrome";
+import { ACCENT, ACCENTS, THEME, applyLooks, darkNow, look } from "./lib/chrome";
 import { HOTKEY, composed, core, defaultHotkey, inTauri, menuKeys, type Accounts, type ClaudeSetup, type Diff, type ModelChoice, type Models, type SendDraft, type SessionRow, type View } from "./lib/tazuna";
 import { listen } from "@tauri-apps/api/event";
 import { accentButton, quietButton } from "./components/Controls";
@@ -138,12 +138,15 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
   const show = (tid: string) => { core.use(tid); setActiveTid(tid); setModels(null); patch(tid, { used: Date.now() }); };
   // a conversation out of sight that finishes or asks for an answer says so with a system notification
   const was = useRef<Record<string, string>>({});
+  const namesRef = useRef<Map<string, string>>(new Map());
   const tell = (tid: string, v: View) => {
     if (live.current[tid]?.side) return;
     const now = v.asking ? "asking" : busyView(v) ? "working" : "idle", before = was.current[tid];
     was.current[tid] = now;
     if (now === before || (tid === activeRef.current && document.hasFocus())) return;
-    const title = shortTitle(asked(v, refusedIn(tid, v))[0]) || "A conversation";
+    // by every session the conversation has been (a change of model or a Retry goes on in a new one), as nameOf has it
+    const named = [...sessionIds(v, earlier.current[tid]), live.current[tid]?.resume].map((id) => (id ? namesRef.current.get(id) : undefined)).find(Boolean);
+    const title = named || shortTitle(asked(v, refusedIn(tid, v))[0]) || "A conversation";
     if (now === "asking") core.notify("tazuna asks", `${title}: ${v.asking!.tool.replace(/^mcp__lean__/, "")} ${v.asking!.what}`).catch(() => {});
     else if (now === "idle" && before === "working") core.notify("tazuna is done", title).catch(() => {});
   };
@@ -333,7 +336,13 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
   // a saved one being opened is the row clicked from the start (`resume`): until its messages came it matched no row, and
   // showed for a second or two as a "New conversation" of its own (the user, 2026-11-24)
   const listedId = (t?: Thread) => (t ? idsOf(t).find((id) => listed.has(id)) ?? t.view?.session_id ?? t.resume ?? undefined : undefined);
-  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, restoreDraft, side, openSide, closeSide, forget, resuming, held: (held[active] ?? []).map((w) => w.text), hold, unhold, sendHeldNow, listedId, refusedIn };
+  // a name the user gave a conversation stands while a reply runs too: the working and asking rows, the header and the
+  // notification titled it by its first message, so a renamed one showed its old title until the reply ended (the user,
+  // 2026-11-25)
+  const names = new Map(Object.values(sessions).flatMap((rows) => rows.filter((r) => r.named).map((r) => [r.id, r.first] as const)));
+  namesRef.current = names;
+  const nameOf = (t?: Thread) => (t ? idsOf(t).map((id) => names.get(id)).find(Boolean) ?? (t.resume ? names.get(t.resume) : undefined) : undefined);
+  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, restoreDraft, side, openSide, closeSide, forget, resuming, held: (held[active] ?? []).map((w) => w.text), hold, unhold, sendHeldNow, listedId, refusedIn, nameOf };
 }
 
 /** Light or dark: the choice in Settings (lib/chrome.ts keeps it; until desktop 0.1.87 a flip lasted until the window
@@ -399,7 +408,7 @@ export default function App() {
     });
     return () => { off.then((f) => f()); };
   }, []);
-  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, restoreDraft, resuming, side, openSide, closeSide, forget, held, hold, unhold, sendHeldNow, listedId, refusedIn } = useCore((draft) => setDraft({ ...draft, n: Date.now(), append: true }));
+  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, restoreDraft, resuming, side, openSide, closeSide, forget, held, hold, unhold, sendHeldNow, listedId, refusedIn, nameOf } = useCore((draft) => setDraft({ ...draft, n: Date.now(), append: true }));
   useEffect(() => setEditing(null), [active]);
   useEffect(watchUpdates, []);
   // creator mode: the user's panels, read again whenever a conversation finishes a turn (a creator one may have made one)
@@ -810,6 +819,8 @@ export default function App() {
   // (and from zero again when a reply of the same message starts anew: a Retry counted on from the failed try)
   if (busy && !replyStart.current[startKey]) replyStart.current[startKey] = Date.now();
   else if (!busy && view) delete replyStart.current[startKey];
+  // its output so far, on its Working row (design review 13, D1)
+  const liveOut = busy ? replyOut(view) : 0;
   const session = view
     ? { model: view.model || "default", effort: view.effort || "", mode: view.mode, branch: "", changed: 0, lastCost: lastCost(view) }
     : inTauri ? { model: "", effort: "", mode: "auto", branch: "", changed: 0, lastCost: 0 } : demo.session;
@@ -857,7 +868,10 @@ export default function App() {
       { id: "keys", group: "Window", label: "Keyboard shortcuts", keys: "⌘/", run: () => setTimeout(() => setOverlay("shortcuts")) },
       { id: "settings", group: "Window", label: "Settings: provider keys, data policy, router", keys: "⌘,", run: () => setTimeout(() => setOverlay("settings")) },
       { id: "setup", group: "Window", label: "Set up tazuna", hint: "what is set, what is left", keywords: "welcome first run onboarding", run: () => setTimeout(() => setOverlay("setup")) });
-    return inTauri ? a : a.map((action) => ["theme", "keys"].includes(action.id) ? action : { ...action, unavailable: "Available in the desktop app" });
+    // the accents beside light and dark (design review 13, D2), last in their group: found by "accent" or a colour's name
+    const accentNow = localStorage.getItem(ACCENT) ?? "Indigo";
+    a.push(...ACCENTS.map((n) => ({ id: `accent:${n}`, group: "Window", label: `Accent: ${n}`, hint: n === accentNow ? "now" : undefined, keywords: "accent colour color theme", run: () => look(ACCENT, n) })));
+    return inTauri ? a : a.map((action) => ["theme", "keys"].includes(action.id) || action.id.startsWith("accent:") ? action : { ...action, unavailable: "Available in the desktop app" });
   };
   // a new conversation before its first message: the start screen, with the composer in its middle (design review 2,
   // prototype mockups/v3.html)
@@ -952,17 +966,18 @@ export default function App() {
   // the header: the short title, then the first message in full where it is longer (variant A of mockups/v6.html)
   // (a message the core refused and gave back is no title)
   const firstAsked = titleFrom(asked(view, refused)[0]);
-  const title = view ? shortTitle(firstAsked) || "New chat" : inTauri ? (failed ? "Could not start" : "New chat") : "Retry test fails on CI";
+  const given = nameOf(threads.find((t) => t.tid === active));
+  const title = given || (view ? shortTitle(firstAsked) || "New chat" : inTauri ? (failed ? "Could not start" : "New chat") : "Retry test fails on CI");
   // after the title, only what it left out: "— Can you find out why and fix it?", not the title's words again; nothing where
   // that cannot be said (a title without the polite opening repeated the whole message, design review 12)
-  const said = title.replace(/…$/, "").toLowerCase(), at = firstAsked.toLowerCase().indexOf(said);
+  const said = title.replace(/…$/, "").toLowerCase(), at = given ? -1 : firstAsked.toLowerCase().indexOf(said);
   const more = at < 0 ? "" : firstAsked.slice(at + said.length).replace(/^[\s.?!,;:]+/, "");
   const sidebar = <Sidebar active={inTauri ? listedId(threads.find((t) => t.tid === active)) ?? folder ?? "" : "t1"}
     chats={inTauri ? rowsOf(home ? sessions[home] : undefined) : demo.chats}
     projects={inTauri ? projects.map((p) => ({ name: isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} / ${base(p)}` : base(p), path: p, open: p === folder, threads: rowsOf(sessions[p], isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), p) })) : demo.projects}
     onNewChat={inTauri ? () => open(null) : undefined} onOpenFolder={inTauri ? pick : undefined} onOpenProject={inTauri ? (p) => p.path && open(p.path) : undefined}
     onOpenThread={inTauri ? (t, p) => open(p?.path ?? null, t.id) : undefined} onSearch={() => setOverlay("palette")} onSettings={inTauri ? () => setOverlay("settings") : undefined}
-    open={inTauri ? threads.filter((t) => t.tid === active || asked(t.view, refusedIn(t.tid, t.view)).length).map((t) => ({ tid: t.tid, id: listedId(t), model: t.view?.model, title: titleOf(asked(t.view, refusedIn(t.tid, t.view))[0]), place: t.folder ? base(t.folder) : "chat",
+    open={inTauri ? threads.filter((t) => t.tid === active || asked(t.view, refusedIn(t.tid, t.view)).length).map((t) => ({ tid: t.tid, id: listedId(t), model: t.view?.model, title: nameOf(t) ?? titleOf(asked(t.view, refusedIn(t.tid, t.view))[0]), place: t.folder ? base(t.folder) : "chat",
       state: t.error ? "stopped" : t.view?.asking ? "asking" : busyView(t.view) ? "working" : "idle" })) : []}
     activeTid={active} onSwitch={show}
     // the one on screen closed: a new one in its folder takes its place, as when it is removed
@@ -1027,7 +1042,7 @@ export default function App() {
           onEdit={inTauri ? (e, text) => {
             const files = new Set((view?.changes ?? []).filter((c) => c.at_block > e.block && !c.undone).flatMap((c) => c.files.map((f) => f.path))).size;
             setEditing({ ...e, files, keep: files > 0 }); setDraft({ text, n: Date.now() });
-          } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} asking={!!view?.asking} since={busy ? replyStart.current[startKey] : undefined} onSendToAgent={inTauri ? (text) => say(text) : undefined} onRetry={inTauri ? () => { core.retry().catch(() => {}); } : undefined}
+          } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} asking={!!view?.asking} since={busy ? replyStart.current[startKey] : undefined} out={liveOut} onSendToAgent={inTauri ? (text) => say(text) : undefined} onRetry={inTauri ? () => { core.retry().catch(() => {}); } : undefined}
           onImage={inTauri ? (p) => core.imageData(p, folder ?? undefined) : undefined}
           onDiff={inTauri ? (turn, path) => setReviewing({ scope: "turn", turn, path }) : undefined} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={inTauri ? (turn) => core.undo(turn) : undefined} />}
         </div>
@@ -1104,7 +1119,7 @@ export default function App() {
                 return (
                   <button key={t.id} disabled={!isAgent} onClick={() => setAgent({ tid: active, call: t.calls[0] })} title={isAgent ? "See what it is doing: its reasoning, steps and answers" : undefined}
                     className="flex w-full items-center gap-2 rounded-lg border border-line bg-card px-3 py-1.5 text-left text-[12.5px] text-ink-2 disabled:cursor-default">
-                    <LoaderCircle size={13} strokeWidth={1.75} className="flex-none animate-spin text-accent" aria-hidden="true" />
+                    <LoaderCircle size={13} strokeWidth={1.75} className="flex-none animate-spin text-live" aria-hidden="true" />
                     <span className="flex-none text-ink">{isAgent ? "Subagent" : "Command"} in the background</span>
                     <span className="min-w-0 flex-1 truncate text-muted">{t.doing || t.description}</span>
                     {t.tokens > 0 && <span className="flex-none tabular-nums text-faint">{(t.tokens / 1000).toFixed(1)}k tokens</span>}

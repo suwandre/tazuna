@@ -96,7 +96,7 @@ export function ChecksSection() {
       {[last, ...before.slice(0, 2)].map((c, i) => (
         <div key={i} className="flex items-center gap-2 py-[3px] text-[12.5px] text-ink-2">
           {c.none ? <Minus size={14} strokeWidth={1.75} className="flex-none text-faint" />
-            : c.ok == null ? <LoaderCircle size={14} strokeWidth={1.75} className="flex-none animate-spin text-accent" />
+            : c.ok == null ? <LoaderCircle size={14} strokeWidth={1.75} className="flex-none animate-spin text-live" />
             : c.ok ? <Check size={14} strokeWidth={1.75} className="flex-none text-ok" /> : <X size={14} strokeWidth={1.75} className="flex-none text-bad" />}
           <span className="min-w-0 flex-1 truncate">{c.none ?? (c.ok == null ? "Running" : c.ok ? "Passed" : "Failed")}{i > 0 ? (c.none ? " earlier" : " before") : ""}</span>
           <span className="text-[12px] tabular-nums text-faint">{c.secs.toFixed(1)} s</span>

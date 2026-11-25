@@ -22,6 +22,9 @@ colors:
     accent-ink: "#2f3a8f"
     accent-soft: "#e7e8f6"
     on-accent: "#ffffff"
+    live: "#3d4aa8"
+    live-ink: "#2f3a8f"
+    live-soft: "#e7e8f6"
     ok: "#347045"
     bad: "#aa4236"
     warn: "#8c5811"
@@ -46,6 +49,9 @@ colors:
     accent-ink: "#aab3f5"
     accent-soft: "#272a44"
     on-accent: "#14152a"
+    live: "#8f9bf0"
+    live-ink: "#aab3f5"
+    live-soft: "#272a44"
     ok: "#7cc08f"
     bad: "#e08b7f"
     warn: "#e0b46a"
@@ -75,7 +81,8 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 (`mockups/a.html`). Every UI change follows this file; agents writing UI code read it first.
 
 ## Character
-- Paper and ink: a warm cream canvas, warm near-black text, one indigo accent (ai-iro; tazuna means "reins").
+- Paper and ink: a warm cream canvas, warm near-black text, one accent: indigo (ai-iro; tazuna means "reins") unless the
+  user picks another (design review 13).
 - Paper on the desk (design review 10, prototype `mockups/v7.html`): the window is the desk (`desk`); the conversation is one
   sheet on it (`main`, 12 px corners, the `sheet` shadow, 8 px from the window's edges), and so is a side chat or a subagent
   beside it. The sidebar, the work panel and the status bar lie on the desk with no border of their own; the work panel's
@@ -87,7 +94,8 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   (`components/Mark.tsx`, design review 13: the user's pick of six in `mockups/logo.html`, kept there with the stroke mark
   on indigo it replaced, `mockups/marks/a-rein-loop-indigo.svg`). The app icon (`app-icon.svg`), the sidebar (20 px tile)
   and the terminal's welcome (two cells, `▐手▌`, in the accent: a terminal draws its own font) use it; nothing else stands
-  for tazuna. A working mark writes its pixels in stroke order.
+  for tazuna. A working mark writes its pixels in stroke order: on a running reply's Working row (a 10 px tile: 20 px would
+  not fit its 12.5 px line) and in the sidebar while any reply runs (design review 13, D1 of `mockups/v10.html`).
 - Quiet structure: hairline borders, not shadows, for everything that sits on the page. What floats over it (a menu, a
   popover, a dialog, a tooltip; a toast or a card that opens by itself: `tz-float`) has the `pop` shadow, and in dark a fill one step lighter than a card: a menu over a card
   of the same fill read as part of it (design review 8, desktop 0.1.87). The composer keeps its own soft shadow.
@@ -95,8 +103,16 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - Real numbers only: cost, tokens, cache and plan usage come from the session, never placeholders.
 
 ## Colour use
-- `accent` marks the one thing to act on or the live state: the send button, the running thread, progress fills, the
-  context ring. Never decoration, never more than one accented control per area.
+- `accent` (the user's choice, below) marks the one thing to act on and what is chosen: the send button, a switch that is
+  on, the focus ring, the selected row (ringed in it, so never taken for a hovered one), selected text. `live`, a fixed
+  indigo, marks the live state: the running thread and its dots and spinners, progress fills and meters,
+  the plan pill (design review 13). Never decoration, never more than one accented control per area.
+- The accent is the user's (Settings › Appearance, design review 13, D2): Indigo, Jade, Amber, Rose or Graphite, each
+  drawn for both themes in styles.css (`[data-accent=…]` on the root, set by lib/chrome.ts and kept like the theme; never
+  the root's inline style, which is a plugin's `theme.set` and wins). `selected` and `accent-soft` follow it, the accent on
+  the sheet at 12% and 9% (10% in dark), where every text level still reads 4.5:1 (on-accent text 5.2:1 at the least,
+  Jade's light). Indigo keeps the tokens above. What means a state keeps `live` whatever the accent (an amber accent read
+  as a warning): also the usage charts, the Working shimmer, an info icon, code keywords. The mark stays paper on ink.
 - `ok` and `bad` only for results (diff counts, passed or failed checks). `warn` only for limits and risk.
 - Tables in answers: rules between rows, a quiet header (11.5 px, faint), numbers in tabular figures; no grid. A short
   cell ("+2 −1") stays on one line; code in a cell may break anywhere, so a long path does not crush the other columns.
@@ -107,7 +123,7 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   whole, so **bold** or a link may run over it); `---` alone is a rule, and under a paragraph's line a heading (`===`
   too); code spans are read before math; an unclosed `$$` stays text;
   `- [x]` and `- [ ]` are task items with a drawn box (not a form's checkbox); `~~struck~~` is struck and muted.
-- Code in answers has its own four tokens (`code-keyword` = accent-ink, `code-string` ochre, `code-number` plum,
+- Code in answers has its own four tokens (`code-keyword` = live-ink, `code-string` ochre, `code-number` plum,
   `code-comment` = faint, italic), so syntax never borrows the result colours.
 - Text levels: `ink` for content, `ink-2` for secondary content, `muted` for supporting text, `faint` for labels and
   metadata. No grey text on coloured backgrounds. Every text level reads at 4.5:1 or more on every background in both
@@ -153,7 +169,10 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - Narrow windows: below 1280 px the work panel starts closed; below 1000 px the sidebar opens over the conversation from
   the header's button. The composer's pills never wrap.
 - One live status per reply: its fold says "Working 12 s" (counted from when the reply began), or "Waiting for you" during
-  an approval; the line under the transcript shows only before the first step.
+  an approval; the line under the transcript shows only before the first step. Both have the mark at work before them,
+  their words under a slow shimmer, and the reply's output so far once there is some ("↓ 1.2k tokens": the output of its
+  model calls since the last finished turn, as each ends; a subagent's tokens are its whole context, not output, and stay
+  on its own row; design review 13, D1).
 - A message of yours sent while a reply runs (from the box, review comments, the work panel, the pull request) waits in
   the window, shown queued under it, kept on disk until it goes, and goes when the reply ends, one at a time (the next
   when the reply before it has ended); Stop puts all that wait back in the box (sent on at once, they went to
@@ -166,8 +185,8 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   the project's files, in one menu over the box (arrows, Enter or Tab to take, Esc to shut); its placeholder says so.
   Attachments are chips over the text, an image with its thumbnail. An answer that names an image file shows it under
   the answer (a click shows it whole); nothing loads from the network.
-- Settings is one part at a time, chosen in a list on its left (Appearance first: theme, text size, the type answers are
-  set in); a provider's key field shows when asked for. Claude is the first of your providers: signed in, or how to sign
+- Settings is one part at a time, chosen in a list on its left (Appearance first: theme, accent, text size, the type answers
+  are set in); a provider's key field shows when asked for. Claude is the first of your providers: signed in, or how to sign
   in (`claude auth login` with Copy, and Check again), or its install page; the first-run dialog ticks it only when it is
   signed in.
 - Scrolled up from the end of a conversation, a round button over the message box goes back down.
@@ -179,7 +198,9 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   window (720 px or less) takes less room around it and leaves the keys out; what does not fit scrolls under the
   transcript's fades. A bar under it (the trust bar) is in the flow, never over its content.
 - The receipt (design review 11, variant A of `mockups/v8.html`): under every answer one faint line, always there
-  ("$0.031 | 12.4k in (85% cached) | 640 out | 38 s", "<1 s" under a second; Copy beside it on hover or focus; a turn
+  ("$0.031 | 12.4k in (85% cached) | 640 out | 38 s", "<1 s" under a second; in a plain chat only under the last answer,
+  older ones show theirs on hover or focus, as their actions do: design review 13, D3; an agent's run, and a chat's
+  answer by the agent, keep every line; Copy beside it on hover or focus; a turn
   that gave no answer and cost nothing has none); a click unfolds the slip: a row
   per model call (its model and role, or what it called; in, cached, out, time, and its price where the core fixed it
   when the call ended), the tools' own time, then the sums (the total at API prices, "On your Claude plan: not billed" or
@@ -230,11 +251,14 @@ Segmented (a raised key on a `field` track; lilac `selected` is only a list's se
 the arrows, Home and End choose), `quietButton` (every bordered button that is not the accent one: Cancel, Later, Diff,
 Review, Retry), `accentButton` and `dialogShell` (420, 600, 780 or 860 px wide, never past the window less 5 rem, the
 `pop` shadow; its body is `main`, its groups are `card` with a hairline; the command palette alone keeps its own
-geometry: 560 px near the window's top, at most 60% of its height), all in `components/Controls.tsx`; the receipt (`components/Receipt.tsx`: Slip, AnswerSlip, ChatSlip), the start page's ledger
+geometry: 560 px near the window's top, at most 60% of its height), Swatches (the accent's: round, a radio group with
+Segmented's keys, the chosen one ringed in ink), all in `components/Controls.tsx`; the receipt (`components/Receipt.tsx`: Slip, AnswerSlip, ChatSlip), the start page's ledger
 line, the work panel's tab; Mark (`components/Mark.tsx`); sidebar item (two lines, or one when its place repeats), open row, group heading, project group, thread dot (idle, running), badge; header crumb, cost and
 panel button; message (user, agent, chat), work fold, tool step, change card, metadata line, routed tag; composer with
-pills (where, mode, model with its effort; one style: filled, an icon, a chevron where a menu opens; no mode in a plain
-chat) and send, their menus placed by one rule (usePlace: above the whole box where it
+pills (where, mode, model with its effort; one style: filled, an icon, a chevron where a menu opens; the mode pill
+tinted by the freedom it gives: full warn, with a 55% warn border, a 12% warn ground, a filled shield and "full · never
+asks" where the row has 520 px, plan `live`, the others grey, design review 13, D4) and send, their menus placed by
+one rule (usePlace: above the whole box where it
 fits, else below it); completion menu and attachment chip (Composer), answer images, jump to latest, tooltip (`.tz-tip`: every `title` shows
 in it, lib/chrome.ts, only after the pointer really moves onto its element: a row that slides under a still pointer gets
 none); answer copy; error card (the provider's message in words, said once even when the answer repeats it; Retry runs
@@ -245,15 +269,17 @@ block with its language and copy; work panel section (Changes, Checks, Pull requ
 - CSS transitions of 120-200 ms with the easing above; panels slide, toasts fade.
 - Every dialog comes up over its backdrop (`tz-dialog`, the backdrop `tz-fade`); a menu or popover opens from its button
   (`tz-pop`). The backdrop is `scrim`: darker in both themes, never the ink colour (in dark mode that lightened the window).
-- No animated backgrounds, particles or glow; streaming text is not animated per token. The one shimmer: the light sweep over
-  a running step's words (`tz-live`).
+- No animated backgrounds, particles or glow; streaming text is not animated per token. Two shimmers: the light sweep over
+  a running step's words (`tz-live`), and the reply's live status, slower and to `live-ink` (`tz-shimmer`, 1.8 s; design
+  review 13). The working mark draws a pixel every ~70 ms (a band going round where the webview lacks `linear()`).
 - Rows move, they do not jump: a sidebar row that changes group slides there (200 ms, kept by the conversation's id); a
   reply's steps unfold and fold in height (180 ms and 150 ms).
 - What closes fades out where it was (`tz-out`, 110 ms; lib/chrome.ts does it for every menu and dialog), and the work
   panel's column slides open and shut (the reading column's left edge stays put while it does); over the conversation it
   opens as a popover does (`tz-pop`).
 - Selected text is the accent at 30%, not the system's blue.
-- Honour `prefers-reduced-motion`.
+- Honour `prefers-reduced-motion`: the working mark stands drawn whole and the shimmers are plain words (a spinner
+  elsewhere still turns, slower).
 
 ## Desktop habits
 - UI chrome is not selectable; the default cursor everywhere but text fields and links.

@@ -65,7 +65,7 @@ const NO_KEY: Record<string, string> = { "no key": "No key yet · add one in Set
   "which key": "Same key as Mistral or Mistral Vibe · say which in Settings" };
 
 const CATALOG_STATUS = {
-  loading: { label: "Loading model list", detail: "A key is configured. Models will appear when the list is ready.", tone: "bg-accent" },
+  loading: { label: "Loading model list", detail: "A key is configured. Models will appear when the list is ready.", tone: "bg-live" },
   ready: { label: "Models ready", detail: "", tone: "bg-ok" },
   unavailable: { label: "Model list unavailable", detail: "A key is configured, but the list couldn’t load.", tone: "bg-warn" },
 };

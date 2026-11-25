@@ -43,7 +43,7 @@ function Meter({ name, of, used, at }: { name: string; of?: ReactNode; used: num
   return (
     <div className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]">
       <span className="w-[200px] flex-none"><span className="block truncate text-ink" title={name}>{name}</span>{of && <span className="block truncate text-[11.5px] text-faint">{of}</span>}</span>
-      <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded bg-line"><i className={`block h-full rounded ${pct >= 90 ? "bg-bad" : pct >= 75 ? "bg-warn" : "bg-accent"}`} style={{ width: `${pct}%` }} /></span>
+      <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded bg-line"><i className={`block h-full rounded ${pct >= 90 ? "bg-bad" : pct >= 75 ? "bg-warn" : "bg-live"}`} style={{ width: `${pct}%` }} /></span>
       <span className="w-[220px] flex-none truncate text-right tabular-nums text-muted"><span className="font-medium text-ink">{used == null ? "–" : `${Math.round(used)}% used`}</span>{resets && <><Sep /><span title={exactly(at)}>resets {resets}</span></>}</span>
     </div>
   );
@@ -295,7 +295,7 @@ function Contributing({ notes }: { notes: string[] }) {
             <div key={it.title} className="flex items-center gap-3.5 px-3.5 py-[7px] text-[12.5px]">
               <span className={`${lead} flex items-center gap-2`} title={`${it.pct}% of the period's use`}>
                 <span className="w-9 text-right font-medium tabular-nums text-ink">{it.pct}%</span>
-                <span className="h-1 flex-1 overflow-hidden rounded bg-line"><i className="block h-full rounded bg-accent" style={{ width: `${Math.min(100, it.pct)}%` }} /></span>
+                <span className="h-1 flex-1 overflow-hidden rounded bg-line"><i className="block h-full rounded bg-live" style={{ width: `${Math.min(100, it.pct)}%` }} /></span>
               </span>
               <span className="min-w-0 flex-1"><span className="block text-ink">{it.title}</span>{it.detail && <span className="block text-[11.5px] text-faint">{it.detail}</span>}</span>
               {it.run && <code className="flex-none rounded-[5px] border border-line bg-sidebar px-1.5 py-px font-mono text-[11.5px] text-muted" title={`run ${it.run} in Claude Code`}>{it.run}</code>}
@@ -339,15 +339,15 @@ function Bars({ days }: { days: Day[] }) {
           <span key={day.day} onMouseEnter={() => setAt(i)} aria-hidden="true" className="flex h-full min-w-0 flex-1 flex-col justify-end">
             {/* the paid part solid on top, the plan's (counted at API prices, not billed) light under it: one colour in two
                 strengths; the paid part was a dark pixel-high cap nobody could see (design review 10) */}
-            <span className={`block w-full rounded-t-[3px] ${at === i ? "bg-accent-ink" : "bg-accent"}`} style={{ height: day.api ? `${Math.max(3, (100 * day.api) / max)}%` : 0 }} />
-            <span className={`block w-full ${day.api ? "" : "rounded-t-[3px]"} ${at === i ? "bg-[color-mix(in_srgb,var(--accent)_55%,var(--card))]" : "bg-[color-mix(in_srgb,var(--accent)_38%,var(--card))]"}`} style={{ height: day.plan ? `${Math.max(2, (100 * day.plan) / max)}%` : 0 }} />
+            <span className={`block w-full rounded-t-[3px] ${at === i ? "bg-live-ink" : "bg-live"}`} style={{ height: day.api ? `${Math.max(3, (100 * day.api) / max)}%` : 0 }} />
+            <span className={`block w-full ${day.api ? "" : "rounded-t-[3px]"} ${at === i ? "bg-[color-mix(in_srgb,var(--live)_55%,var(--card))]" : "bg-[color-mix(in_srgb,var(--live)_38%,var(--card))]"}`} style={{ height: day.plan ? `${Math.max(2, (100 * day.plan) / max)}%` : 0 }} />
           </span>
         ))}
       </div>
       <div className="mt-1.5 flex justify-between text-[11px] tabular-nums text-faint"><span>{dayName(days[0].day)}</span><span>max {money(max)} a day</span><span>{dayName(days[days.length - 1].day)}</span></div>
       <div className="mt-1.5 flex gap-3.5 text-[11.5px] text-muted">
-        <span className="flex items-center gap-1.5"><i className="size-2 rounded-sm bg-[color-mix(in_srgb,var(--accent)_38%,var(--card))]" />Claude plan, at API prices</span>
-        <span className="flex items-center gap-1.5"><i className="size-2 rounded-sm bg-accent" />Paid APIs</span>
+        <span className="flex items-center gap-1.5"><i className="size-2 rounded-sm bg-[color-mix(in_srgb,var(--live)_38%,var(--card))]" />Claude plan, at API prices</span>
+        <span className="flex items-center gap-1.5"><i className="size-2 rounded-sm bg-live" />Paid APIs</span>
       </div>
       {d && (
         <div className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-md border border-line-strong bg-card px-2.5 py-1.5 text-[12px] tz-float"

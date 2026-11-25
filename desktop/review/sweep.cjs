@@ -24,10 +24,11 @@ fs.mkdirSync(OUT, { recursive: true });
 const log = [];
 (async () => {
   const browser = await chromium.launch();
-  const ctxOf = async ({ theme = "dark", w = 1280, h = 800, setup = true, extra = "", mac = false } = {}) => {
+  const ctxOf = async ({ theme = "dark", w = 1280, h = 800, setup = true, extra = "", mac = false, scale = 1, motion = "no-preference" } = {}) => {
     // a Linux agent: on a Mac one the app leaves its shortcuts to the native menus, which a browser does not have. `mac`:
-    // a Mac's agent all the same, for the title bar's row (the overlay's traffic lights drawn where the real window has them)
-    const ctx = await browser.newContext({ viewport: { width: w, height: h }, colorScheme: theme, userAgent: "Mozilla/5.0 (X11; Linux x86_64) Chrome/140" });
+    // a Mac's agent all the same, for the title bar's row (the overlay's traffic lights drawn where the real window has them).
+    // `scale` 2: a Retina screen's device pixels (the mark's cells, design review 13); `motion` "reduce": reduced motion
+    const ctx = await browser.newContext({ viewport: { width: w, height: h }, colorScheme: theme, userAgent: "Mozilla/5.0 (X11; Linux x86_64) Chrome/140", deviceScaleFactor: scale, reducedMotion: motion });
     await ctx.addInitScript(mac ? MOCK.replace("X11; Linux x86_64) Chrome/140", "Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15") + (process.env.LIGHTS === "0" ? "" : LIGHTS) : MOCK);
     if (extra) await ctx.addInitScript(extra);
     const p = await ctx.newPage(); p.errs = [];
@@ -647,6 +648,17 @@ const log = [];
       must(!/failed/.test(folds[1] ?? ""), `the running fold counts a failure: "${folds[1]}"`);
     });
     await ctx.close(); }
+  // a name the user gave stands while its reply runs: the working row and the header showed the first message instead,
+  // and the name only once the reply ended (the user, 2026-11-25)
+  { const named = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { const m = p?.msg; if (m?.type === "sessions") m.dirs = m.dirs.map((d) => ({ ...d, list: d.list.map((r) => r.id === "p1" ? { ...r, first: "Office lunch app", named: true } : r) })); return emit(e, p); }; })();`;
+    const [ctx, p] = await ctxOf({ extra: named });
+    await step(p, "d-renamed-while-working", async () => {
+      await open(p, "Office lunch app"); await p.waitForTimeout(500);
+      const head = await p.locator("main > header h1").innerText(), rows = await side(p).innerText();
+      must(head === "Office lunch app", `the header: "${head}" (the name wanted)`);
+      must(!/Fix the flaky retry test/.test(rows), "a sidebar row still shows the first message");
+    });
+    await ctx.close(); }
   // the model picker from the keyboard: the arrows through the rows and back up, Home and End, never a disabled row, the
   // row reached never under the sticky heads; Enter takes the one match, a "no key" row opens Settings on its key, an
   // empty search only shuts it, an input method's Enter picks nothing (the mock keeps a pick to itself: it is caught)
@@ -780,6 +792,241 @@ const log = [];
       must(!(await p.locator("[data-msg]").getByText(/starting claude/).count()), "the error is a row");
     });
     await ctx.close(); }
+  // design review 13, D1-D4 of mockups/v10.html
+  // D1: the mark at work on the running reply's Working row, at 2x (its cells on whole device pixels), and the sidebar's
+  // mark at work; with reduced motion all of it still. Its tokens are the output of the calls after the last finished turn,
+  // from the view alone: a reply begun out of sight counts its calls at once, a message queued during it does not start the
+  // count again, and a subagent's tokens (its whole context) are not added
+  { const live = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { const m = p?.msg; if (m?.type === "view" && m.session_id === "p1" && !m.calls.some((c) => c.block === 10)) m.calls.push({ block: 10, fresh: 3000, cached: 9000, out: 1234, cost: 0.01, first_ms: 800, tps: 60, total_ms: 4000 }); return emit(e, p); }; })();`;
+    const task = { id: "bg1", kind: "local_agent", agent: "explorer", description: "Find the flaky tests", status: "running", running: true, doing: "", tokens: 47000, tools: 2, calls: [], secs: null };
+    for (const [motion, R] of [["no-preference", ""], ["reduce", "-still"]]) for (const theme of ["dark", "light"]) {
+      const [ctx, p] = await ctxOf({ theme, extra: live + LAST, scale: 2, motion }), N = `${theme[0]}-d1-working${R}`;
+      const fold = p.locator("main button[aria-expanded]").filter({ hasText: /^Working/ });
+      const text = () => fold.evaluate((b) => b.innerText.replace(/\s+/g, " ").trim());
+      await step(p, N, async () => {
+        await open(p, "Fix the flaky retry test"); await fold.waitFor({ timeout: 4000 }); await p.mouse.move(5, 400); await p.waitForTimeout(300);
+        const seen = await fold.evaluate((b) => {
+          const mark = b.querySelector(".tz-mark"), r = mark?.getBoundingClientRect(), px = b.querySelectorAll(".tz-px"), cs = px[0] && getComputedStyle(px[0]), word = b.querySelector(".tz-shimmer");
+          return { size: r?.width, at: r && [r.left, r.top], crisp: mark?.querySelector("svg").getAttribute("shape-rendering"), px: px.length, anim: cs?.animationName, opacity: cs?.opacity,
+            shimmer: word ? getComputedStyle(word).backgroundImage.slice(0, 15) : "", text: b.innerText.replace(/\s+/g, " ").trim() };
+        });
+        log.push(`${N}: ${JSON.stringify(seen)}`);
+        must(seen.px === 30, `no mark at work on the row: ${JSON.stringify(seen)}`);
+        // a multiple of 10 on the 10-unit grid: at 2x a cell's pitch is whole device pixels, and crispEdges snaps the cells to
+        // them wherever the line puts the tile (the -row PNG shows them)
+        must(seen.size % 10 === 0 && seen.crisp === "crispEdges", `the tile's cells miss the device pixels: ${JSON.stringify(seen)}`);
+        must(motion === "reduce" ? seen.anim === "none" && seen.opacity === "1" && seen.shimmer === "none" : seen.anim === "tz-px" && seen.shimmer.startsWith("linear-gradient"), `${motion}: ${JSON.stringify(seen)}`);
+        must((await side(p).locator(".tz-mark .tz-px").count()) === 30, "the sidebar's mark is not at work while a reply runs");
+        await fold.screenshot({ path: `${OUT}/${N}-row.png` });
+        await side(p).locator(".tz-mark").screenshot({ path: `${OUT}/${N}-brand.png` });
+      });
+      if (!R && theme === "dark") {
+        // the reply was running when the window first saw it: its call is counted at once (the call before it, a finished
+        // turn's, is not)
+        await step(p, "d-d1-tokens-off-screen", async () => { must(/^Working \S+ s\s*↓ 1\.2k tokens/.test(await text()), `the row reads "${await text()}" (↓ 1.2k tokens wanted)`); });
+        await step(p, "d-d1-tokens-queued", async () => {
+          await p.evaluate(() => window.__again((m) => ({ ...m, blocks: [...m.blocks, { kind: "prompt", text: "and update the docs" }], calls: [...m.calls, { block: m.blocks.length + 1, fresh: 900, cached: 9000, out: 800, cost: 0.004, first_ms: 600, tps: 60, total_ms: 3000 }] })));
+          await p.waitForTimeout(300);
+          must(/↓ 2\.0k tokens/.test(await p.locator("main").innerText()), `after a queued message and a call: "${await text().catch(() => "no row")}" (↓ 2.0k tokens wanted)`);
+        });
+        await step(p, "d-d1-tokens-subagent", async () => {
+          await p.evaluate((t) => window.__again((m) => ({ ...m, tasks: [t] })), task); await p.waitForTimeout(300);
+          const all = await p.locator("main").innerText();
+          must(/↓ 2\.0k tokens/.test(all) && !/↓ 4\d\.\dk/.test(all), `a subagent's 47k tokens counted as output: "${await text().catch(() => "no row")}"`);
+        });
+      }
+      // a conversation at rest beside it: the sidebar's mark still works, for the reply running in the other
+      if (!R) await step(p, `${N}-other`, async () => { await open(p, "Why is the CI build"); must((await side(p).locator(".tz-mark .tz-px").count()) === 30, "the sidebar's mark stopped while p1 runs"); });
+      await ctx.close();
+    } }
+  // a side chat drawn again (away to another conversation and back; its own is working, so it stays open) still counts its
+  // running reply's tokens
+  { const sideBusy = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { const m = p?.msg; if (m?.type === "view" && m.session_id === "f1") { m.activity = "Thinking"; if (!m.blocks.some((b) => b.text === "why the fake clock?")) m.blocks.push({ kind: "prompt", text: "why the fake clock?" }); m.calls = [{ block: m.blocks.length, fresh: 900, cached: 8000, out: 1234, cost: 0.002, first_ms: 500, tps: 60, total_ms: 2000 }]; } return emit(e, p); }; })();`;
+    const [ctx, p] = await ctxOf({ extra: sideBusy }), st = p.locator('aside[aria-label="Side chat"] [role=status]').first();
+    await step(p, "d1-side-chat-remount", async () => {
+      await open(p, "Fix the flaky retry test"); await p.getByRole("button", { name: "Side chat", exact: true }).click(); await st.waitFor({ timeout: 4000 });
+      must(/↓ 1\.2k tokens/.test(await st.innerText()), `the side chat: "${await st.innerText()}"`);
+      await open(p, "Why is the CI build"); must(!(await st.count()), "the side chat shows beside another conversation");
+      // back by its working row, titled by its first message
+      await open(p, "The retry test fails on CI"); await st.waitFor({ timeout: 4000 });
+      must(/↓ 1\.2k tokens/.test(await st.innerText()), `the side chat drawn again: "${await st.innerText()}"`);
+    });
+    await ctx.close(); }
+  // a conversation out of sight that finishes is notified by the name the user gave it, found through every session it has
+  // been (here an earlier one, not the one it was opened by)
+  { const named = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { const m = p?.msg;
+      if (m?.type === "sessions") m.dirs = m.dirs.map((d) => d.list.some((r) => r.id === "p1") ? { ...d, list: [...d.list.filter((r) => r.id !== "p0"), { id: "p0", first: "Office lunch app", named: true, last_at: 1, messages: 2, model: "claude-opus-5-5" }] } : d);
+      if (m?.type === "view" && m.session_id === "p1") { m.earlier_sessions = ["p0"]; window.__p1 = { tid: p.tid, msg: m }; }
+      return emit(e, p); }; })();`;
+    const [ctx, p] = await ctxOf({ extra: named });
+    await step(p, "d-notify-name", async () => {
+      await open(p, "Fix the flaky retry test"); await open(p, "Why is the CI build");
+      await p.evaluate(() => { const { tid, msg } = window.__p1; window.__TAURI_INTERNALS__.view(tid, { ...msg, from: 0, activity: "Done" }); }); await p.waitForTimeout(400);
+      const told = await p.evaluate(() => window.__SENT__.filter(([c]) => c === "notify").map(([, a]) => `${a.title}: ${a.body}`));
+      must(told.includes("tazuna is done: Office lunch app"), `notified: ${JSON.stringify(told)} ("tazuna is done: Office lunch app" wanted)`);
+    });
+    await ctx.close(); }
+  // D2: each accent, chosen in Settings, in both themes: its tokens set and kept, on-accent text, the selected row and the
+  // accent-soft tag read 4.5:1 or more; the swatches by keyboard; the accents in the command palette
+  { const ACC = { Indigo: ["#3d4aa8", "#8f9bf0"], Jade: ["#2f7a5e", "#6cc3a0"], Amber: ["#9a5f12", "#e3b25f"], Rose: ["#a8425f", "#ec8fae"], Graphite: ["#45433e", "#c9c4b9"] };
+    const contrast = (p) => p.evaluate(() => {
+      const rgb = (v) => { const d = document.createElement("i"); d.style.color = v; document.body.append(d); const c = getComputedStyle(d).color; d.remove(); const n = c.replace(/^[^(]*\(/, "").match(/[\d.]+/g).map(Number); return c.startsWith("color(") ? n.slice(0, 3).map((x) => x * 255) : n.slice(0, 3); };
+      const L = (c) => { const [r, g, b] = c.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+      const cr = (a, b) => { const [x, y] = [L(rgb(a)), L(rgb(b))]; return +((Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05)).toFixed(2); };
+      return { "on-accent": cr("var(--on-accent)", "var(--accent)"), "faint on selected": cr("var(--faint)", "var(--selected)"), "ink-2 on selected": cr("var(--ink-2)", "var(--selected)"),
+        "muted on accent-soft": cr("var(--muted)", "var(--accent-soft)"), "accent-ink on accent-soft": cr("var(--accent-ink)", "var(--accent-soft)"), "accent-ink on field": cr("var(--accent-ink)", "var(--field)") };
+    });
+    for (const theme of ["dark", "light"]) {
+      const [ctx, p] = await ctxOf({ theme }), T = theme[0];
+      await open(p, "Why is the CI build"); await p.getByRole("textbox", { name: "Message" }).fill("Make the cache key include the lockfile");
+      for (const [n, [l, d]] of Object.entries(ACC)) { await step(p, `${T}-d2-accent-${n.toLowerCase()}`, async () => {
+        await p.keyboard.press("Control+,"); await p.getByRole("radio", { name: n }).click(); await p.waitForTimeout(200);
+        const got = await p.evaluate(() => ({ accent: getComputedStyle(document.documentElement).getPropertyValue("--accent").trim(), kept: localStorage.getItem("tazuna.accent") }));
+        must(got.accent === (theme === "dark" ? d : l) && got.kept === n, `${n}: ${JSON.stringify(got)}`);
+        const c = await contrast(p);
+        log.push(`${T}-d2 ${n}: ${JSON.stringify(c)}`);
+        must(Object.values(c).every((x) => x >= 4.5), `${n} under 4.5:1: ${JSON.stringify(c)}`);
+        await p.screenshot({ path: `${OUT}/${T}-d2-accent-${n.toLowerCase()}-settings.png` });
+        await esc(p);
+      });
+      // the selected row is ringed in the accent, so it never reads as a hovered one (Graphite's fill is a hover's grey)
+      await step(p, `${T}-d2-selected-${n.toLowerCase()}`, async () => {
+        await side(p).locator("a:not(.bg-selected)").nth(2).hover(); await p.waitForTimeout(200);
+        const sel = await p.evaluate(() => {
+          const rgb = (v) => { const d = document.createElement("i"); d.style.color = v; document.body.append(d); const c = getComputedStyle(d).color; d.remove(); const n = c.replace(/^[^(]*\(/, "").match(/[\d.]+/g).map(Number); return c.startsWith("color(") ? n.slice(0, 3).map((x) => x * 255) : n.slice(0, 3); };
+          const L = (c) => { const [r, g, b] = c.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+          const cr = (a, b) => { const [x, y] = [L(rgb(a)), L(rgb(b))]; return +((Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05)).toFixed(2); };
+          const row = document.querySelector("aside[aria-label=Conversations] .bg-selected");
+          return { shadow: row ? getComputedStyle(row).boxShadow : "no selected row", ring: cr("color-mix(in srgb, var(--accent) 35%, var(--selected))", "var(--selected)"), fill: cr("var(--selected)", "var(--hover)") };
+        });
+        log.push(`${T}-d2 ${n} selected: ${JSON.stringify(sel)}`);
+        must(/inset/.test(sel.shadow) && sel.ring >= 1.3, `${n}: the selected row is not told from a hovered one: ${JSON.stringify(sel)}`);
+      }); }
+      // kept: a new window comes up in it
+      await step(p, `${T}-d2-accent-kept`, async () => { await p.reload(); await p.waitForTimeout(900); must(await p.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()) === (theme === "dark" ? ACC.Graphite[1] : ACC.Graphite[0]), "the accent did not last a reload"); });
+      await step(p, `${T}-d2-swatch-keys`, async () => {
+        await p.keyboard.press("Control+,"); await p.getByRole("radio", { name: "Graphite" }).focus(); await p.keyboard.press("ArrowRight");
+        const at = await p.evaluate(() => `${document.activeElement?.getAttribute("aria-label")} ${document.activeElement?.getAttribute("aria-checked")} ${localStorage.getItem("tazuna.accent")} ${document.querySelectorAll('[role=radiogroup][aria-label=Accent] [tabindex="0"]').length}`);
+        must(at === "Indigo true Indigo 1", `ArrowRight from Graphite: ${at} (Indigo true Indigo 1 wanted)`);
+      });
+      await p.keyboard.press("ArrowRight"); await esc(p);
+      await step(p, `${T}-d2-accent-jade-window`, async () => { await p.getByRole("textbox", { name: "Message" }).focus(); });
+      await step(p, `${T}-d2-palette`, async () => {
+        await p.keyboard.press("Control+k"); await p.keyboard.type("accent"); await p.waitForTimeout(250);
+        const rows = await p.locator("[role=dialog] button[data-i]").allInnerTexts();
+        must(rows.length === 5 && rows.some((r) => /Accent: Jade\s*now/.test(r)), `the palette: ${JSON.stringify(rows)}`);
+        await p.screenshot({ path: `${OUT}/${T}-d2-palette-rows.png` });
+        await p.keyboard.press("ArrowDown"); await p.keyboard.press("ArrowDown"); await p.keyboard.press("Enter"); await p.waitForTimeout(200);
+        must(await p.evaluate(() => localStorage.getItem("tazuna.accent")) === "Amber", "the palette's Accent: Amber did not take");
+      });
+      await p.evaluate(() => { localStorage.removeItem("tazuna.accent"); });
+      log.push(`${theme} D2 page errors: ${JSON.stringify(p.errs.slice(0, 5))}`);
+      await ctx.close();
+    } }
+  // the accent is an attribute, not the root's inline style: a plugin's theme.set (that style) outlives a flip of the theme
+  // and a change in Settings, and wins over the chosen accent; Indigo takes the attribute off
+  { const [ctx, p] = await ctxOf({ theme: "dark" });
+    const now = () => p.evaluate(() => `${getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()} ${document.documentElement.dataset.accent ?? "-"}`);
+    await step(p, "d2-plugin-accent-kept", async () => {
+      await p.evaluate(() => document.documentElement.style.setProperty("--accent", "#b4473a"));
+      await p.keyboard.press("Control+Shift+L"); await p.waitForTimeout(200);
+      must((await now()) === "#b4473a -", `after a flip: ${await now()}`);
+      await p.keyboard.press("Control+,"); await p.getByRole("radio", { name: "Jade" }).click(); await p.waitForTimeout(200);
+      must((await now()) === "#b4473a jade", `after Jade in Settings: ${await now()}`);
+      await esc(p); await p.keyboard.press("Control+Shift+L"); await p.waitForTimeout(200);
+      must((await now()) === "#b4473a jade", `after a second flip: ${await now()}`);
+      // the plugin off: the chosen accent, in the theme of now (dark again)
+      await p.evaluate(() => document.documentElement.style.removeProperty("--accent")); await p.waitForTimeout(100);
+      must((await now()) === "#6cc3a0 jade", `the plugin gone: ${await now()}`);
+      await p.keyboard.press("Control+,"); await p.getByRole("radio", { name: "Indigo" }).click(); await p.waitForTimeout(200);
+      must((await now()) === "#8f9bf0 -", `Indigo: ${await now()}`);
+    });
+    await esc(p); await ctx.close(); }
+  // what means a state keeps the live indigo under any accent: the status bar's meters, the sidebar's working row, a
+  // running step's spinner (an amber or rose accent read as a warning or an error)
+  for (const theme of ["dark", "light"]) for (const accent of ["Amber", "Rose"]) {
+    const [ctx, p] = await ctxOf({ theme, extra: `localStorage.setItem("tazuna.accent", "${accent}");` }), N = `${theme[0]}-d2-state-${accent.toLowerCase()}`;
+    await step(p, N, async () => {
+      await open(p, "Fix the flaky retry test"); await p.waitForTimeout(300);
+      const seen = await p.evaluate(() => {
+        const live = getComputedStyle(document.documentElement).getPropertyValue("--live").trim(), want = (h) => `rgb(${[1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)).join(", ")})`;
+        const fills = [...document.querySelectorAll(".bg-live")].map((e) => getComputedStyle(e).backgroundColor), marks = [...document.querySelectorAll(".text-live")].map((e) => getComputedStyle(e).color);
+        return { accent: getComputedStyle(document.documentElement).getPropertyValue("--accent").trim(), live, fills: fills.length, marks: marks.length, off: [...fills, ...marks].filter((c) => c !== want(live)) };
+      });
+      log.push(`${N}: ${JSON.stringify(seen)}`);
+      must(seen.live === (theme === "dark" ? "#8f9bf0" : "#3d4aa8") && seen.accent !== seen.live, `the tokens: ${JSON.stringify(seen)}`);
+      must(seen.fills >= 2 && seen.marks >= 2 && !seen.off.length, `the state marks: ${JSON.stringify(seen)}`);
+    });
+    await ctx.close();
+  }
+  // D3: in a plain chat the last answer keeps its numbers and the older ones show theirs on hover and focus, their actions
+  // too; an agent's run (and a chat's answers by the agent) keep every line
+  { const [ctx, p] = await ctxOf({}), shown = () => p.evaluate(() => [...document.querySelectorAll("[data-msg] div.scroll-mb-3")].map((e) => getComputedStyle(e).opacity));
+    const answers = p.locator("[data-msg]").filter({ has: p.locator("div.scroll-mb-3") });
+    await step(p, "d3-chat-numbers", async () => {
+      await open(p, "Question 1"); await p.mouse.move(5, 400); await p.waitForTimeout(300);
+      const o = await shown();
+      must(o.length > 2 && o.slice(0, -1).every((x) => x === "0") && o.at(-1) === "1", `the chat's lines: ${o} (the last alone wanted)`);
+    });
+    await step(p, "d3-chat-hover", async () => {
+      await answers.nth(-2).hover(); await p.waitForTimeout(300);
+      must((await answers.nth(-2).locator("div.scroll-mb-3").evaluate((e) => getComputedStyle(e).opacity)) === "1", "an older answer's line did not show on hover");
+    });
+    // by keyboard: its line shows on the receipt's focus, and its actions (the next Tab stops: WebKit's Tab skips buttons,
+    // so focused here) while one of them has it
+    await step(p, "d3-chat-focus", async () => {
+      const older = answers.nth(-3), seen = () => older.evaluate((m) => [m.querySelector("div.scroll-mb-3"), m.querySelector("div.scroll-mb-3 span.inline-flex")].map((e) => getComputedStyle(e).opacity).join() + ` ${document.activeElement?.textContent}`);
+      await p.mouse.move(5, 400); await older.locator("div.scroll-mb-3 button").first().focus(); await p.waitForTimeout(300);
+      must((await seen()).startsWith("1,0"), `the receipt focused: ${await seen()} (its line alone wanted)`);
+      await older.locator("div.scroll-mb-3 span.inline-flex button").last().focus(); await p.waitForTimeout(300);
+      must(/^1,1 Copy/.test(await seen()), `Copy focused: ${await seen()} (its line and actions wanted)`);
+    });
+    await step(p, "d3-agent-numbers", async () => { await open(p, "Why is the CI build"); await p.mouse.move(5, 400); await p.waitForTimeout(300); const o = await shown(); must(o.length > 1 && o.every((x) => x === "1"), `an agent's run: ${o}`); });
+    await step(p, "d3-handoff-numbers", async () => { await open(p, "Will it rain in Berlin"); await p.mouse.move(5, 400); await p.waitForTimeout(300); const o = await shown(); must(o.length === 3 && o.every((x) => x === "1"), `a chat's answers by the agent: ${o}`); });
+    await ctx.close(); }
+  // a chat whose last reply failed at once (no answer, nothing spent, so no receipt): the answer before it keeps its line
+  { const failed = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { const m = p?.msg; if (m?.type === "view" && m.session_id === "c5" && !m.blocks.some((b) => b.text === "And edge case 9?"))
+      m.blocks.push({ kind: "prompt", text: "And edge case 9?" }, { kind: "notice", text: "[500]: the provider could not answer", error: true }, { kind: "done", ok: false, secs: 0, turns: 0, cost: 0, usage: { input: 0, cache_write: 0, cache_read: 0, output: 0 }, stopped: false });
+      return emit(e, p); }; })();`;
+    const [ctx, p] = await ctxOf({ extra: failed }), shown = () => p.evaluate(() => [...document.querySelectorAll("[data-msg] div.scroll-mb-3")].map((e) => getComputedStyle(e).opacity));
+    await step(p, "d3-chat-failed-last", async () => {
+      await open(p, "Question 1"); await p.getByText("the provider could not answer").first().waitFor({ timeout: 4000 }); await p.mouse.move(5, 400); await p.waitForTimeout(300);
+      const o = await shown();
+      must(o.length > 2 && o.slice(0, -1).every((x) => x === "0") && o.at(-1) === "1", `after a failed last reply: ${o} (the last answer's line alone wanted)`);
+    });
+    await ctx.close(); }
+  // D4: the mode pill's tints: full warn-tinted with a filled shield and its words, plan in the accent, the rest grey; the
+  // menu keeps its descriptions (the mock answers a mode with the view in it)
+  { const modes = `(() => { const T = window.__TAURI_INTERNALS__, inv = T.invoke.bind(T); T.invoke = async (c, a) => { if (c === "op" && a?.msg?.op === "mode") { setTimeout(() => window.__again((m) => ({ ...m, mode: a.msg.mode })), 10); return null; } return inv(c, a); }; })();`;
+    for (const [theme, w, h] of [["dark", 1280, 800], ["light", 1280, 800], ["dark", 760, 640]]) {
+      const [ctx, p] = await ctxOf({ theme, w, h, extra: LAST + modes }), N = `${theme[0]}-d4${w === 1280 ? "" : `-w${w}`}`;
+      const pill = p.locator("[data-composer] button[aria-haspopup=menu]").filter({ hasText: /^(auto|ask|edits|review|plan|full)/ });
+      if (w < 1000) { await p.getByRole("button", { name: "Conversations", exact: true }).click(); await p.waitForTimeout(250); }
+      await open(p, "Why is the CI build");
+      for (const m of ["full", "plan", "ask"]) await step(p, `${N}-mode-${m}`, async () => {
+        await pill.click(); await p.getByRole("menuitemradio").filter({ hasText: new RegExp(`^${m}`) }).click(); await p.mouse.move(5, 400); await p.waitForTimeout(300);
+        const s = await pill.evaluate((b) => ({ tint: (b.className.match(/tz-mode-\w+/) ?? [""])[0], text: b.innerText.trim(), fill: b.querySelector("svg").getAttribute("fill"), color: getComputedStyle(b).color }));
+        log.push(`${N} ${m}: ${JSON.stringify(s)}`);
+        const want = { full: ["tz-mode-full", "full · never asks", "currentColor"], plan: ["tz-mode-plan", "plan", "none"], ask: ["", "ask", "none"] }[m];
+        must(s.tint === want[0] && s.text === want[1] && s.fill === want[2], `${m}: ${JSON.stringify(s)}, wanted ${want}`);
+        await p.locator("[data-composer]").screenshot({ path: `${OUT}/${N}-mode-${m}-box.png` });
+      });
+      await step(p, `${N}-mode-menu`, async () => { await pill.click(); must((await p.getByRole("menuitemradio").count()) === 6 && (await p.getByText("never asks, not even before destructive commands").isVisible()), "the mode menu lost its descriptions"); });
+      await esc(p);
+      // plan keeps the live indigo under every accent, never the accent (under Amber it looked like full)
+      if (w === 1280) for (const accent of ["indigo", "jade", "amber", "rose", "graphite"]) await step(p, `${N}-plan-vs-full-${accent}`, async () => {
+        await p.evaluate((a) => { if (a === "indigo") delete document.documentElement.dataset.accent; else document.documentElement.dataset.accent = a; }, accent);
+        const read = async (m) => { await pill.click(); await p.getByRole("menuitemradio").filter({ hasText: new RegExp(`^${m}`) }).click(); await p.mouse.move(5, 400); await p.waitForTimeout(250);
+          return pill.evaluate((b) => { const cs = getComputedStyle(b), root = getComputedStyle(document.documentElement), hex = (v) => `rgb(${[1, 3, 5].map((i) => parseInt(root.getPropertyValue(v).trim().slice(i, i + 2), 16)).join(", ")})`;
+            return { color: cs.color, border: cs.borderColor, liveInk: hex("--live-ink"), warn: hex("--warn") }; }); };
+        const plan = await read("plan");
+        if (accent === "amber") await p.locator("[data-composer]").screenshot({ path: `${OUT}/${N}-plan-amber-box.png` });
+        const full = await read("full");
+        log.push(`${N} ${accent}: plan ${plan.color} ${plan.border}, full ${full.color} ${full.border}`);
+        must(plan.color === plan.liveInk && full.color === full.warn && plan.border !== full.border, `${accent}: plan ${JSON.stringify(plan)}, full ${JSON.stringify(full)}`);
+      });
+      await ctx.close();
+    } }
   { const [ctx, p] = await ctxOf({ setup: false }); await step(p, "first-run-setup", async () => { await p.waitForTimeout(600); }); await ctx.close(); }
   fs.writeFileSync(`${OUT}/log.txt`, log.join("\n"));
   console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok", `· ${log.length} steps in ${OUT}`);

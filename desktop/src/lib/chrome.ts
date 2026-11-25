@@ -90,9 +90,12 @@ export function installExits() {
   }).observe(root, { childList: true, subtree: true });
 }
 
-/** How the window looks, chosen in Settings and kept on this machine: light or dark (or the system's), the text size (the
- * webview's own zoom, as a browser's), and the type answers are set in. */
-export const THEME = "tazuna.theme", ZOOM = "tazuna.zoom", PROSE = "tazuna.prose";
+/** How the window looks, chosen in Settings and kept on this machine: light or dark (or the system's), the accent, the text
+ * size (the webview's own zoom, as a browser's), and the type answers are set in. */
+export const THEME = "tazuna.theme", ACCENT = "tazuna.accent", ZOOM = "tazuna.zoom", PROSE = "tazuna.prose";
+/** The accents (design review 13, D2 of mockups/v10.html): Indigo, styles.css's own tokens, or one drawn for both themes
+ * in styles.css (`[data-accent=…]`). */
+export const ACCENTS = ["Indigo", "Jade", "Amber", "Rose", "Graphite"];
 export const TEXT_SIZES: [string, string][] = [["0.9", "Small"], ["1", "Default"], ["1.1", "Large"], ["1.25", "Larger"]];
 
 /** One of them changed: kept, and applied now. */
@@ -115,6 +118,11 @@ export function applyLooks() {
     probe.remove();
   }
   document.documentElement.classList.toggle("dark", darkNow());
+  // the accent as an attribute styles.css draws (design review 13): the root's inline style is a plugin's (theme.set), and
+  // the accent set there wiped a plugin's own on every flip of the theme
+  const accent = localStorage.getItem(ACCENT) ?? "";
+  if (accent !== "Indigo" && ACCENTS.includes(accent)) document.documentElement.dataset.accent = accent.toLowerCase();
+  else delete document.documentElement.dataset.accent;
   document.documentElement.classList.toggle("prose-sans", localStorage.getItem(PROSE) === "sans");
   const zoom = Number(localStorage.getItem(ZOOM)) || 1;
   // only inside the app's window: a browser has its own zoom. The window's top row divides by it (`--tz-pt`, styles.css)

@@ -87,7 +87,7 @@ export function ReviewView({ start, turns, onClose, onSend }: {
     return (
       <div onClick={comment} role="button" tabIndex={0} aria-label={`${c ? "Edit the comment on" : "Comment on"} line ${at}: ${l.line.slice(0, 80)}`}
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); comment(); } }}
-        className={`group flex min-w-0 cursor-pointer ${kind === "+" ? "bg-ok/10" : kind === "-" ? "bg-bad/10" : ""} hover:bg-accent-soft`}>
+        className={`group flex min-w-0 cursor-pointer ${kind === "+" ? "bg-ok/10" : kind === "-" ? "bg-bad/10" : ""} hover:bg-hover`}>
         {num !== "new" && <span className="w-10 flex-none select-none pr-2 text-right text-faint">{l.old ?? ""}</span>}
         {num !== "old" && <span className="w-10 flex-none select-none pr-2 text-right text-faint">{l.new ?? ""}</span>}
         <span className={`w-4 flex-none select-none ${kind === "+" ? "text-ok" : kind === "-" ? "text-bad" : "text-faint"}`}>{kind === " " ? "" : kind}</span>

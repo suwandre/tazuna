@@ -13,9 +13,12 @@
   --ink: #23221e; --ink-2: #3f3c35; --muted: #5b574f; --faint: #69655d;
   --line: #e3ded3; --line-soft: #ece8df; --line-strong: #d8d2c5;
   --accent: #3d4aa8; --accent-ink: #2f3a8f; --accent-soft: #e7e8f6; --on-accent: #ffffff;
+  /* the live state's own indigo (design review 13): what runs and how full a meter is keep it whatever accent is chosen, so
+     an amber or rose accent never reads as a warning or an error */
+  --live: #3d4aa8; --live-ink: #2f3a8f; --live-soft: #e7e8f6;
   /* Semantic colours are text too: keep 4.5:1 on field, hover and selected, not only paper. */
   --ok: #347045; --bad: #aa4236; --warn: #8c5811;
---code-string: #7a5a1c; --code-number: #8a4a6b; --code-keyword: var(--accent-ink); --code-comment: var(--faint);
+--code-string: #7a5a1c; --code-number: #8a4a6b; --code-keyword: var(--live-ink); --code-comment: var(--faint);
   --shadow-composer: 0 1px 2px #2321190d, 0 4px 14px #23211908;
   --shadow-pop: 0 2px 6px #2321190f, 0 14px 36px #23211924; --pop: var(--card);
   /* behind a dialog: darker in both themes (until desktop 0.1.74 the ink at 15%, which in dark lightened the window to grey) */
@@ -33,14 +36,33 @@
   --ink: #ece8df; --ink-2: #d2cdc2; --muted: #afaa9e; --faint: #a29d95;
   --line: #35322c; --line-soft: #2b2925; --line-strong: #423e37;
   --accent: #8f9bf0; --accent-ink: #aab3f5; --accent-soft: #272a44; --on-accent: #14152a;
+  --live: #8f9bf0; --live-ink: #aab3f5; --live-soft: #272a44;
   --ok: #7cc08f; --bad: #e08b7f; --warn: #e0b46a;
---code-string: #d6b878; --code-number: #d9a0c0; --code-keyword: var(--accent-ink); --code-comment: var(--faint);
+--code-string: #d6b878; --code-number: #d9a0c0; --code-keyword: var(--live-ink); --code-comment: var(--faint);
   --shadow-composer: none;
   --shadow-pop: 0 0 0 1px #ffffff0a, 0 10px 32px #00000080; --pop: #2e2c27;
   --scrim: #0000008c;
   --desk: #121110; --shadow-sheet: 0 0 0 1px #ffffff14, 0 1px 2px #00000080, 0 12px 34px #00000066;
   color-scheme: dark;
 }
+/* the user's accent (design review 13, D2 of mockups/v10.html), each drawn for both themes: on the root (lib/chrome.ts sets
+   data-accent; none for Indigo, the tokens above) and on Settings' swatches, which so show the theme's own. selected and
+   accent-soft are the accent on the sheet (12%, and 9%, or 10% in dark), where every text level still reads 4.5:1. Rules,
+   not the root's inline style: that is a plugin's (theme.set), and it still wins over them */
+[data-accent=indigo] { --accent: #3d4aa8; --accent-ink: #2f3a8f; }
+.dark[data-accent=indigo], .dark [data-accent=indigo] { --accent: #8f9bf0; --accent-ink: #aab3f5; }
+[data-accent=jade] { --accent: #2f7a5e; --accent-ink: #256a51; --selected: #e3ebe5; --accent-soft: #e9eee9; }
+.dark[data-accent=jade], .dark [data-accent=jade] { --accent: #6cc3a0; --accent-ink: #8fd3b7; --selected: #2a332b; --accent-soft: #292f28; }
+[data-accent=amber] { --accent: #9a5f12; --accent-ink: #82500f; --selected: #efe7dc; --accent-soft: #f2ece2; }
+.dark[data-accent=amber], .dark [data-accent=amber] { --accent: #e3b25f; --accent-ink: #ecc683; --selected: #383123; --accent-soft: #342e22; }
+[data-accent=rose] { --accent: #a8425f; --accent-ink: #8e3550; --selected: #f1e4e5; --accent-soft: #f4e9e9; }
+.dark[data-accent=rose], .dark [data-accent=rose] { --accent: #ec8fae; --accent-ink: #f2adc4; --selected: #392c2d; --accent-soft: #352a2a; }
+[data-accent=graphite] { --accent: #45433e; --accent-ink: #33312d; --selected: #e5e4e1; --accent-soft: #ebeae6; }
+.dark[data-accent=graphite], .dark [data-accent=graphite] { --accent: #c9c4b9; --accent-ink: #ddd8ce; --selected: #35332e; --accent-soft: #32302b; }
+.dark[data-accent] { --on-accent: #16151a; }
+/* a selected row is ringed in the accent, so it never reads as a hovered one: under Graphite, and Amber or Rose in dark, its
+   fill is a hover's lightness, and faint text keeps it from going darker (light) or lighter (dark) (design review 13) */
+.bg-selected { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
 
 @theme {
   --color-canvas: var(--canvas); --color-main: var(--main); --color-sidebar: var(--sidebar); --color-card: var(--card);
@@ -48,6 +70,7 @@
   --color-ink: var(--ink); --color-ink-2: var(--ink-2); --color-muted: var(--muted); --color-faint: var(--faint);
   --color-line: var(--line); --color-line-soft: var(--line-soft); --color-line-strong: var(--line-strong);
   --color-accent: var(--accent); --color-accent-ink: var(--accent-ink); --color-accent-soft: var(--accent-soft); --color-on-accent: var(--on-accent);
+  --color-live: var(--live); --color-live-ink: var(--live-ink); --color-live-soft: var(--live-soft);
   --color-ok: var(--ok); --color-bad: var(--bad); --color-warn: var(--warn); --color-scrim: var(--scrim); --color-desk: var(--desk);
   --font-ui: "Geist", system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, monospace;
@@ -104,6 +127,11 @@ button.bg-accent:not(:disabled):hover { background-color: var(--accent-ink); }
 @keyframes tz-sweep { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 .tz-live { background: linear-gradient(90deg, var(--muted) 35%, var(--ink) 50%, var(--muted) 65%) 0 0 / 200% 100%;
   -webkit-background-clip: text; background-clip: text; color: transparent; animation: tz-sweep 1.6s linear infinite; }
+/* the reply's own live status, "Working" (design review 13, D1 of mockups/v10.html): slower, and to the live indigo's ink
+   (a state: never the chosen accent), so it reads as the reply and not as one of its steps */
+@keyframes tz-shimmer { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+.tz-shimmer { background: linear-gradient(90deg, var(--muted) 40%, var(--live-ink) 50%, var(--muted) 60%) 0 0 / 250% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; animation: tz-shimmer 1.8s linear infinite; }
 @keyframes tz-dot { 0%, 20% { opacity: 0; } 40%, 100% { opacity: 1; } }
 .tz-dots span { animation: tz-dot 1.2s infinite; } .tz-dots span:nth-child(2) { animation-delay: .2s; } .tz-dots span:nth-child(3) { animation-delay: .4s; }
 /* what floats over the page (a menu, a popover, a dialog) lifts off it: until desktop 0.1.87 the only shadow was the
@@ -218,6 +246,19 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
 .tz-mark { background: linear-gradient(#2a2824, #1d1c19); color: #ece8df; }
 .dark .tz-mark { box-shadow: inset 0 0 0 1px #ffffff1f; }
 @keyframes tz-px { from { opacity: .2; } to { opacity: 1; } }
-.tz-px { animation: tz-px 3s infinite linear(0, 0 var(--at), 1 var(--at), 1); }
-/* a spinner still turns (slower): standing still it said "stuck", and it is the only sign that a reply runs */
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } .animate-spin { animation: spin 1.6s linear infinite !important; } }
+/* without linear() (Safari 16, macOS 14.0) a stepped way: each pixel brightens in three steps a little after the one before
+   it (`--lag`), a band going round */
+.tz-px { animation: tz-px 3s steps(3, end) var(--lag, 0s) infinite; }
+@supports (animation-timing-function: linear(0, 1)) { .tz-px { animation: tz-px 3s infinite linear(0, 0 var(--at), 1 var(--at), 1); } }
+/* the mode pill says how much freedom it gives (design review 13, D4 of mockups/v10.html): full, which never asks, in the
+   warn colour on a 12% warn ground; plan, which only reads, in the live indigo (a state: in an amber accent it read as
+   full); the other modes keep the pills' grey. Unlayered,
+   so a hover keeps the tint (the border still turns, as every bordered button's does) */
+.tz-mode-full { border-color: color-mix(in srgb, var(--warn) 55%, var(--line-strong)); background-color: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); }
+.tz-mode-plan { border-color: color-mix(in srgb, var(--live) 45%, var(--line-strong)); color: var(--live-ink); }
+/* a webview without color-mix (Safari 16.1 and older): the field under the warn text (5.0:1 light, 7.0:1 dark) and full borders */
+@supports not (color: color-mix(in srgb, red 50%, blue)) { .tz-mode-full { background-color: var(--field); border-color: var(--warn); } .tz-mode-plan { border-color: var(--live); } }
+/* a spinner still turns (slower): standing still it said "stuck". The reply's own status is the mark, which stands still
+   with its words plain (design review 13: its seconds still count); a shimmer stopped half-way read as two colours */
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } .animate-spin { animation: spin 1.6s linear infinite !important; }
+  .tz-live, .tz-shimmer { background: none; color: inherit; } }

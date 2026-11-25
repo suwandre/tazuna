@@ -15,7 +15,7 @@ import { checkUpdate, useUpdate } from "../lib/update";
 
 function Meter({ pct }: { pct: number }) {
   return <span className="inline-block h-1 w-[30px] overflow-hidden rounded-sm bg-line-strong" aria-hidden="true">
-    <i className={`block h-full ${pct >= 90 ? "bg-bad" : pct >= 75 ? "bg-warn" : "bg-accent"}`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} /></span>;
+    <i className={`block h-full ${pct >= 90 ? "bg-bad" : pct >= 75 ? "bg-warn" : "bg-live"}`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} /></span>;
 }
 
 const tone: Record<Level, string> = { ok: "bg-ok", low: "bg-warn", out: "bg-bad", unknown: "bg-faint" };
@@ -55,7 +55,7 @@ function Card({ all, here }: { all: Item[]; here: Item[] }) {
               <span key={i.key} className={`grid grid-cols-[1fr_70px_112px] items-center gap-2.5 px-3.5 py-[5px] ${here.includes(i) ? "bg-accent-soft" : ""}`}>
                 <span className="min-w-0"><span className="block text-ink">{i.label}</span>
                   {(here.includes(i) || i.note) && <span className="block text-[11.5px] text-faint" title={exactly(i.resetsAt)}>{[here.includes(i) && "this conversation", i.note].filter(Boolean).join(", ")}</span>}</span>
-                <span>{i.pct != null && <span className="block h-1 w-[70px] overflow-hidden rounded-sm bg-line-strong"><i className={`block h-full ${i.level === "out" ? "bg-bad" : i.level === "low" ? "bg-warn" : "bg-accent"}`} style={{ width: `${Math.min(100, i.pct)}%` }} /></span>}</span>
+                <span>{i.pct != null && <span className="block h-1 w-[70px] overflow-hidden rounded-sm bg-line-strong"><i className={`block h-full ${i.level === "out" ? "bg-bad" : i.level === "low" ? "bg-warn" : "bg-live"}`} style={{ width: `${Math.min(100, i.pct)}%` }} /></span>}</span>
                 <span className={`text-right tabular-nums ${i.level === "ok" ? "text-ink" : ink[i.level]}`}>{i.value}</span>
               </span>
             ))}

@@ -252,7 +252,8 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSe
             if (e.key === "Tab" && e.shiftKey && asking) { e.preventDefault(); [...document.querySelectorAll<HTMLButtonElement>("[data-asking] button:not(:disabled)")].pop()?.focus(); }
             else if (e.key === "Tab" && e.shiftKey && onMode) { e.preventDefault(); nextMode(); } if (e.key === "Escape" && busy) onStop?.(); if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(busy && (e.metaKey || e.ctrlKey)); } }}
           placeholder={readOnly ? "Try writing here. Nothing will be sent." : busy ? `Type your next message: it goes after this reply · ${keysOf("⌘↵")} sends it now` : "Ask anything, or describe a change…  / for commands, @ for files"} className="max-h-[40vh] w-full resize-none overflow-y-auto bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
-        <div className="flex items-center gap-1.5">
+        {/* a container: the mode pill says more where the row has room (design review 13, D4) */}
+        <div className="@container flex items-center gap-1.5">
           <Slot name="composer.pills" props={{ composer: bag }} />
           <span className="flex-1" />
           {busy && !ready
@@ -351,16 +352,18 @@ export function WherePill({ composer: c }: { composer: ComposerBag }) {
 }
 
 export function ModePill({ composer: c }: { composer: ComposerBag }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(false), full = c.session.mode === "full";
   // in a plain chat too: a question it hands to the agent asks for each command (in every mode but full), and a chat in
   // the home folder, not a repo, starts in ask; hidden there, 17 questions came with no way to see or change the mode
   // (the user, 2026-11-24)
   return (
     <span className="relative">
-      <button disabled={!c.onMode} onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open} title={c.readOnly ? "Permission mode — available in the desktop app" : "Permission mode (shift-tab)"} className={pill}>
-        {/* full never asks: in the warning colour, so it is never on unnoticed */}
-        <Shield size={14} strokeWidth={1.5} className={c.session.mode === "full" ? "text-warn" : undefined} />
-        <span className={c.session.mode === "full" ? "text-warn" : undefined}>{c.session.mode}</span><ChevronDown size={13} strokeWidth={1.5} className="text-faint" />
+      {/* full never asks: warn-tinted, its shield filled and its words saying so where the row has room, so it is never on
+          unnoticed; plan, which only reads, in the live indigo (design review 13, D4 of mockups/v10.html; styles.css) */}
+      <button disabled={!c.onMode} onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open} title={c.readOnly ? "Permission mode — available in the desktop app" : "Permission mode (shift-tab)"}
+        className={`${pill} ${full ? "tz-mode-full" : c.session.mode === "plan" ? "tz-mode-plan" : ""}`}>
+        <Shield size={14} strokeWidth={1.5} fill={full ? "currentColor" : "none"} />
+        <span>{c.session.mode}{full && <span className="hidden @min-[520px]:inline"> · never asks</span>}</span><ChevronDown size={13} strokeWidth={1.5} className={full ? undefined : "text-faint"} />
       </button>
       {open && (
         <Menu onClose={() => setOpen(false)} width={320}>

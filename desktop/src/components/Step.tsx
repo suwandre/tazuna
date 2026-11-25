@@ -117,8 +117,8 @@ export function Step({ t }: { t: ToolStep }) {
       <div className="flex items-center gap-2">
       <button disabled={!more} onClick={() => setOpen(!open)} className="flex min-w-0 items-center gap-2 py-0.5 text-left disabled:cursor-default">
         {/* still going: the icon moves and the words shimmer (the CLI's spinner, here) */}
-        {thinking ? <Brain size={14} strokeWidth={1.5} className={`flex-none ${t.running ? "animate-pulse text-accent" : "text-faint"}`} />
-          : t.running ? <LoaderCircle size={14} strokeWidth={1.75} className="flex-none animate-spin text-accent" />
+        {thinking ? <Brain size={14} strokeWidth={1.5} className={`flex-none ${t.running ? "animate-pulse text-live" : "text-faint"}`} />
+          : t.running ? <LoaderCircle size={14} strokeWidth={1.75} className="flex-none animate-spin text-live" />
           // cut off when its reply was stopped: neither done nor failed
           : t.stopped || t.declined ? <Square size={10} strokeWidth={2} fill="currentColor" className="mx-0.5 flex-none text-faint" aria-label={t.declined ? "declined" : "stopped"} />
           : t.ok ? <Check size={14} strokeWidth={1.5} className="flex-none text-ok" />

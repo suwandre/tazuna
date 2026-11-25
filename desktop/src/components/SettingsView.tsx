@@ -7,9 +7,9 @@ import { safeMode } from "../lib/plugins";
 import { HOTKEY, core, defaultHotkey, type GalleryItem, type Hook, type Mcp, type Provider, type Settings, type SignIn } from "../lib/tazuna";
 import { matchesWords } from "../lib/types";
 import { dryRun, summary, widgets, type UserWidget } from "../lib/widgets";
-import { PROSE, TEXT_SIZES, THEME, ZOOM, look } from "../lib/chrome";
+import { ACCENT, ACCENTS, PROSE, TEXT_SIZES, THEME, ZOOM, look } from "../lib/chrome";
 import { Parts } from "./Sep";
-import { accentButton, Segmented, dialogShell, quietButton } from "./Controls";
+import { accentButton, Segmented, Swatches, dialogShell, quietButton } from "./Controls";
 import { ClaudeButtons, ClaudeNote, useClaude } from "./Setup";
 
 // Settings: provider keys (saved by tazuna, never shown again), the data policy for this session, the router. The
@@ -36,7 +36,7 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
   const [tab, setTabNow] = useState(() => localStorage.getItem(TAB) || "Appearance");
   const setTab = (t: string) => { localStorage.setItem(TAB, t); setTabNow(t); };
   // how the window looks (lib/chrome.ts keeps and applies it)
-  const [looks, setLooks] = useState(() => ({ theme: localStorage.getItem(THEME) ?? "system", zoom: localStorage.getItem(ZOOM) ?? "1", prose: localStorage.getItem(PROSE) ?? "serif" }));
+  const [looks, setLooks] = useState(() => ({ theme: localStorage.getItem(THEME) ?? "system", accent: localStorage.getItem(ACCENT) ?? "Indigo", zoom: localStorage.getItem(ZOOM) ?? "1", prose: localStorage.getItem(PROSE) ?? "serif" }));
   const setLook = (key: string, name: keyof typeof looks, v: string) => { look(key, v); setLooks((l) => ({ ...l, [name]: v })); };
   // a provider's key field shows when asked for (seven open fields down the page read as a form to fill in)
   const [keyFor, setKeyFor] = useState<string | null>(focus ?? null);
@@ -218,6 +218,10 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
           <Section title="Appearance">
             <Row title="Theme" note="System follows your computer's light and dark.">
               <Segmented label="Theme" value={looks.theme} options={[["system", "System"], ["light", "Light"], ["dark", "Dark"]]} onChange={(v) => setLook(THEME, "theme", v)} />
+            </Row>
+            {/* design review 13 (D2): five accents, each drawn for both themes; a swatch shows the theme's own (styles.css) */}
+            <Row title="Accent" note="Buttons, focus and selection.">
+              <Swatches label="Accent" value={looks.accent} options={ACCENTS} onChange={(v) => setLook(ACCENT, "accent", v)} />
             </Row>
             <Row title="Text size" note="Everything in the window, larger or smaller.">
               <Segmented label="Text size" value={looks.zoom} options={TEXT_SIZES} onChange={(v) => setLook(ZOOM, "zoom", v)} />

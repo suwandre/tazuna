@@ -99,10 +99,10 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide, opened, onClose,
   }
   const place = noPlace ? "" : t.place;
   const twoLines = !sub && !!place;
-  const dot = opened && <span title="Open" className="size-1.5 flex-none rounded-full bg-accent" />;
+  const dot = opened && <span title="Open" className="size-1.5 flex-none rounded-full bg-live" />;
   return (
     <a ref={row} data-flip={sub ? undefined : t.id} data-tip-clip={(t.full ?? t.title).toLowerCase() === t.title.toLowerCase() ? "" : undefined} onClick={onClick} {...press(onClick)} title={onClick ? t.full ?? t.title : "Example conversation · available in the desktop app"} className={`group flex items-center gap-2 truncate rounded-md px-[9px] ${twoLines ? "py-[5px]" : "py-1.5"} text-ink-2 transition-colors duration-150 ${onClick ? "hover:bg-hover" : "cursor-default"} ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
-      {sub && <span className={`size-1.5 flex-none rounded-full ${t.running ? "bg-accent shadow-[0_0_0_3px_var(--accent-soft)]" : "bg-faint"}`} />}
+      {sub && <span className={`size-1.5 flex-none rounded-full ${t.running ? "bg-live shadow-[0_0_0_3px_var(--live-soft)]" : "bg-faint"}`} />}
       {twoLines ? (
         <span className="min-w-0 flex-1">
           {/* where it ran and when, under its title: the model left the row (design review 9: "DeepSeek V4.1 Flas…" took
@@ -131,7 +131,7 @@ function OpenRow({ o, active, onSwitch, onClose }: { o: Open; active: boolean; o
       className={`group flex items-center gap-2 rounded-md px-[9px] py-[5px] text-ink-2 hover:bg-hover ${active ? "bg-selected text-ink" : ""}`}>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5 text-ink">
-          {o.state === "working" ? <LoaderCircle size={12} strokeWidth={2} className="flex-none animate-spin text-accent" aria-hidden="true" />
+          {o.state === "working" ? <LoaderCircle size={12} strokeWidth={2} className="flex-none animate-spin text-live" aria-hidden="true" />
             // one waiting for you: a dot in the warning's colour (an "asks" badge said it a third time, under "Needs you" and
             // over "waiting for your answer", and took the title's room; design review 11)
             : <span className={`size-1.5 flex-none rounded-full ${STATE[o.state][0]}`} />}
@@ -167,7 +167,7 @@ type Props = {
 };
 
 const STATE: Record<string, [string, string]> = {
-  working: ["bg-accent shadow-[0_0_0_3px_var(--accent-soft)]", "working"],
+  working: ["bg-live shadow-[0_0_0_3px_var(--live-soft)]", "working"],
   asking: ["bg-warn shadow-[0_0_0_3px_color-mix(in_srgb,var(--warn)_25%,transparent)]", "waiting for your answer"],
   idle: ["bg-faint", "idle"],
   stopped: ["bg-bad", "stopped"],
@@ -212,7 +212,8 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
       {/* the window's one top row (design review 12, A2 of mockups/v9.html): the traffic lights, then the brand on their line,
           the sheet's header centred on it too (y 28); a drag region, its words too ("deep": Tauri's drag ignores children) */}
       <div data-tauri-drag-region="deep" className={`-mx-2.5 mb-1.5 flex h-[calc(48*var(--tz-pt))] flex-none items-center gap-2 pt-[calc(8*var(--tz-pt))] font-semibold tracking-[-0.01em] ${macOverlay ? "pl-[calc(92*var(--tz-pt))]" : "pl-[18px]"}`}>
-        <Mark size={20} />
+        {/* at work while any open conversation's reply runs (design review 13, D1) */}
+        <Mark size={20} working={working.length > 0} />
         <span>tazuna</span>
         {onDismiss && <button type="button" onClick={onDismiss} aria-label="Close conversations" title="Close conversations" className="ml-auto mr-2.5 grid size-7 place-items-center rounded-md text-muted hover:bg-hover hover:text-ink"><X {...icon} /></button>}
       </div>
@@ -262,7 +263,7 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
             <button disabled={!onOpenProject} onClick={() => onOpenProject?.(p)} title={onOpenProject ? p.path : "Available in the desktop app"}
               className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-1 pr-[9px] text-left enabled:hover:bg-hover disabled:cursor-default disabled:text-muted">
               <span className="flex-1 truncate">{p.name}</span>
-              {p.pending ? <span className="rounded-full bg-accent px-1.5 text-[10.5px] font-semibold leading-[17px] text-on-accent">{p.pending}</span> : null}
+              {p.pending ? <span className="rounded-full bg-live px-1.5 text-[10.5px] font-semibold leading-[17px] text-on-accent">{p.pending}</span> : null}
             </button>
           </div>
           {shown && p.threads.slice(0, 15).map((t) => <ThreadRow key={t.id} t={t} active={t.id === active} sub onClick={onOpenThread && (() => onOpenThread(t, p))}

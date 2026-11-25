@@ -41,6 +41,15 @@ function calls(v: View): (Call & { block: number })[] {
   });
 }
 
+/** The running reply's output tokens so far (design review 13, D1: "↓ 1.2k tokens" on its Working row): the output of the
+ * model calls that began after the last finished turn, read from the view alone, so a reply begun out of sight or a side
+ * chat drawn again counts the same (not after the last message: one queued during the reply adds a prompt). A subagent's
+ * tokens are its whole context, not output: they stay on its own row. */
+export const replyOut = (v: View | null | undefined) => {
+  const done = (v?.blocks ?? []).reduce((n, b, i) => (b.kind === "done" ? i : n), -1);
+  return (v?.calls ?? []).filter((c) => c.block > done).reduce((n, c) => n + c.out, 0);
+};
+
 /** The prompts shown before the core refused them (the router's check, then the refusal) whose words are what went back
  * into the box: left out with their refusal, so a send again does not show it twice (`refused` as messages() has it). The
  * prompt is the nearest before the refusal past notices that are no error (a mode picked during the router's check). */
@@ -251,6 +260,9 @@ export function demoView() {
   const ask = (blocks: unknown[], what: string) => askedInput({ ...v, blocks, asking: { tool: "Edit", what, note: "", once: false, queued: 0 } } as unknown as View);
   if (ask([ed("1", "/p/a.ts"), ed("2", "/p/b.ts")], "/p/a.ts")?.file_path !== "/p/a.ts" || ask([ed("1", "/p/src/a.ts")], "src/a.ts")?.file_path !== "/p/src/a.ts"
     || ask([ed("1", "/p/x/a.ts"), ed("2", "/p/y/a.ts")], "a.ts") !== null || ask([ed("1", "/p/b.ts")], "/p/a.ts") !== null) throw new Error("view: askedInput");
+  // a reply's tokens: the calls after the last finished turn, a message queued during it not starting again
+  const running = { ...v, blocks: [...v.blocks, { kind: "prompt", text: "d" }], calls: [...v.calls!, call(7, null)] } as View;
+  if (replyOut(v) !== 0 || replyOut(running) !== 10 || replyOut({ ...running, blocks: [...running.blocks, { kind: "prompt", text: "e" }], calls: [...running.calls!, call(9, null)] } as View) !== 20 || replyOut(null) !== 0) throw new Error("view: replyOut");
   console.log("view ok");
 }
 
