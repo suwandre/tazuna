@@ -31,7 +31,7 @@ export function SideChat({ view, onSend, onStop, onAnswer, onClose }: {
         <button onClick={onClose} title="Close the side chat" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
       </div>
       {messages.length === 0 && !busy && <div className="px-4 pt-4 text-[12.5px] text-faint">{!view ? "Starting…" : ready ? "Ask about the conversation: what it decided and why, what is left, what a step did." : "Not in plan mode, so nothing is sent."}</div>}
-      <Transcript messages={messages} busy={busy} activity={view?.asking ? undefined : view?.activity} out={busy ? replyOut(view) : 0} jumps={false} />
+      <Transcript messages={messages} busy={busy} activity={view?.asking ? undefined : view?.activity} asking={!!view?.asking} out={busy ? replyOut(view) : 0} jumps={false} />
       {view?.asking && <Approval asking={view.asking} onAnswer={onAnswer} keys={false} />}
       {/* the box's bottom on the main box's line (both 22 px over the sheet's edge; design review 10) */}
       <div className="px-3 pb-[22px]">

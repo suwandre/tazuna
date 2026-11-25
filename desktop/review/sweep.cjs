@@ -27,7 +27,7 @@ const log = [];
   const ctxOf = async ({ theme = "dark", w = 1280, h = 800, setup = true, extra = "", mac = false, scale = 1, motion = "no-preference" } = {}) => {
     // a Linux agent: on a Mac one the app leaves its shortcuts to the native menus, which a browser does not have. `mac`:
     // a Mac's agent all the same, for the title bar's row (the overlay's traffic lights drawn where the real window has them).
-    // `scale` 2: a Retina screen's device pixels (the mark's cells, design review 13); `motion` "reduce": reduced motion
+    // `scale` 2: a Retina screen's device pixels; `motion` "reduce": reduced motion
     const ctx = await browser.newContext({ viewport: { width: w, height: h }, colorScheme: theme, userAgent: "Mozilla/5.0 (X11; Linux x86_64) Chrome/140", deviceScaleFactor: scale, reducedMotion: motion });
     await ctx.addInitScript(mac ? MOCK.replace("X11; Linux x86_64) Chrome/140", "Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15") + (process.env.LIGHTS === "0" ? "" : LIGHTS) : MOCK);
     if (extra) await ctx.addInitScript(extra);
@@ -665,6 +665,7 @@ const log = [];
       await open(p, "Bump the TLS library"); await p.getByText("rewrites the remote's history").waitFor({ timeout: 4000 }); await p.waitForTimeout(700);
       must(!(await p.getByRole("button", { name: /^Always/ }).count()), "a once-only question offers Always");
       must(!/bg-accent/.test(await p.getByRole("button", { name: /^Allow/ }).getAttribute("class")), "Allow is the filled accent button");
+      must(!(await p.locator(".tz-mark-write, .tz-mark-pulse").count()), "the mark is still moving while the reply waits for permission");
     });
     await step(p, "d-asks-typing", async () => {
       await box.click(); await p.waitForTimeout(900); await box.pressSequentially("explain why", { delay: 60 });
@@ -928,7 +929,7 @@ const log = [];
     });
     await ctx.close(); }
   // design review 13, D1-D4 of mockups/v10.html
-  // D1: the mark at work on the running reply's Working row, at 2x (its cells on whole device pixels), and the sidebar's
+  // D1: the mark writes on the running reply's Working row and pulses in the sidebar;
   // mark at work; with reduced motion all of it still. Its tokens are the output of the calls after the last finished turn,
   // from the view alone: a reply begun out of sight counts its calls at once, a message queued during it does not start the
   // count again, and a subagent's tokens (its whole context) are not added
@@ -937,23 +938,48 @@ const log = [];
     for (const [motion, R] of [["no-preference", ""], ["reduce", "-still"]]) for (const theme of ["dark", "light"]) {
       const [ctx, p] = await ctxOf({ theme, extra: live + LAST, scale: 2, motion }), N = `${theme[0]}-d1-working${R}`;
       const fold = p.locator("main button[aria-expanded]").filter({ hasText: /^Working/ });
+      const brand = side(p).locator(".tz-mark");
       const text = () => fold.evaluate((b) => b.innerText.replace(/\s+/g, " ").trim());
       await step(p, N, async () => {
+        const ready = await p.locator("main .tz-mark").evaluate((mark) => [mark.querySelectorAll("path").length, mark.getAnimations({ subtree: true }).length]);
+        must(ready.join() === "4,0", `new chat's mark: ${ready} (four still strokes wanted)`);
         await open(p, "Fix the flaky retry test"); await fold.waitFor({ timeout: 4000 }); await p.mouse.move(5, 400); await p.waitForTimeout(300);
         const seen = await fold.evaluate((b) => {
-          const mark = b.querySelector(".tz-mark"), r = mark?.getBoundingClientRect(), px = b.querySelectorAll(".tz-px"), cs = px[0] && getComputedStyle(px[0]), word = b.querySelector(".tz-shimmer");
-          return { size: r?.width, at: r && [r.left, r.top], crisp: mark?.querySelector("svg").getAttribute("shape-rendering"), px: px.length, anim: cs?.animationName, opacity: cs?.opacity,
+          const mark = b.querySelector(".tz-mark"), guide = mark.querySelector(".tz-mark-guide"), word = b.querySelector(".tz-shimmer");
+          const paths = [...mark.querySelectorAll(".tz-mark-strokes > path")];
+          const frames = (ms) => paths.map((path) => {
+            const [anim] = path.getAnimations();
+            if (anim) { anim.pause(); anim.currentTime = ms; }
+            return getComputedStyle(path).clipPath;
+          });
+          const start = frames(0), drawing = frames(200), complete = frames(1100), holding = frames(2500);
+          const anim = paths.map((path) => getComputedStyle(path).animationName);
+          for (const path of paths) for (const a of path.getAnimations()) a.play();
+          return { size: mark.getBoundingClientRect().width, anim, start, drawing, complete, holding, guide: getComputedStyle(guide).display,
             shimmer: word ? getComputedStyle(word).backgroundImage.slice(0, 15) : "", text: b.innerText.replace(/\s+/g, " ").trim() };
         });
         log.push(`${N}: ${JSON.stringify(seen)}`);
-        must(seen.px === 30, `no mark at work on the row: ${JSON.stringify(seen)}`);
-        // a multiple of 10 on the 10-unit grid: at 2x a cell's pitch is whole device pixels, and crispEdges snaps the cells to
-        // them wherever the line puts the tile (the -row PNG shows them)
-        must(seen.size % 10 === 0 && seen.crisp === "crispEdges", `the tile's cells miss the device pixels: ${JSON.stringify(seen)}`);
-        must(motion === "reduce" ? seen.anim === "none" && seen.opacity === "1" && seen.shimmer === "none" : seen.anim === "tz-px" && seen.shimmer.startsWith("linear-gradient"), `${motion}: ${JSON.stringify(seen)}`);
-        must((await side(p).locator(".tz-mark .tz-px").count()) === 30, "the sidebar's mark is not at work while a reply runs");
+        must(seen.size === 10 && seen.anim.length === 4, `no 10 px, four-stroke mark at work on the row: ${JSON.stringify(seen)}`);
+        if (R) {
+          must(seen.anim.every((a) => a === "none") && seen.start.every((c) => c === "none") && seen.guide === "none" && seen.shimmer === "none", "reduced motion did not show the still mark and plain text");
+        } else {
+          must(seen.anim.join() === "tz-mark-crown,tz-mark-first,tz-mark-second,tz-mark-hook" && seen.guide !== "none" && seen.shimmer.startsWith("linear-gradient"), "the Working row did not write the mark");
+          must(seen.start[0] !== seen.drawing[0] && seen.drawing[0] !== seen.complete[0] && seen.start.slice(1).join() === seen.drawing.slice(1).join(), "the crown did not draw smoothly ahead of the other strokes");
+          must(seen.start.every((c, i) => c !== seen.complete[i]) && seen.complete.join() === seen.holding.join(), "the completed hand was not held");
+        }
+        const pulse = await brand.evaluate((mark) => {
+          const svg = mark.querySelector("svg"), [anim] = svg.getAnimations();
+          if (!anim) return { opacity: +getComputedStyle(svg).opacity };
+          anim.pause(); anim.currentTime = 0;
+          const dim = +getComputedStyle(svg).opacity;
+          anim.currentTime = 1200;
+          const bright = +getComputedStyle(svg).opacity;
+          anim.play();
+          return { dim, bright, duration: anim.effect.getTiming().duration, strokes: mark.querySelectorAll("path").length };
+        });
+        must(R ? pulse.opacity === 1 : pulse.dim === .67 && pulse.bright === 1 && pulse.duration === 2400 && pulse.strokes === 4, `sidebar mark: ${JSON.stringify(pulse)}`);
         await fold.screenshot({ path: `${OUT}/${N}-row.png` });
-        await side(p).locator(".tz-mark").screenshot({ path: `${OUT}/${N}-brand.png` });
+        await brand.screenshot({ path: `${OUT}/${N}-brand.png` });
       });
       if (!R && theme === "dark") {
         // the reply was running when the window first saw it: its call is counted at once (the call before it, a finished
@@ -971,7 +997,13 @@ const log = [];
         });
       }
       // a conversation at rest beside it: the sidebar's mark still works, for the reply running in the other
-      if (!R) await step(p, `${N}-other`, async () => { await open(p, "Why is the CI build"); must((await side(p).locator(".tz-mark .tz-px").count()) === 30, "the sidebar's mark stopped while p1 runs"); });
+      if (!R) await step(p, `${N}-other`, async () => {
+        await open(p, "Why is the CI build");
+        must(await brand.locator("svg").evaluate((svg) => getComputedStyle(svg).animationName) === "tz-mark-pulse", "the sidebar's mark stopped while p1 runs");
+        await p.getByTitle(/^The receipt/).last().click();
+        const receipt = await p.locator("main .tz-slip .tz-mark").evaluate((mark) => [mark.querySelectorAll("path").length, mark.getAnimations({ subtree: true }).length]);
+        must(receipt.join() === "4,0", `receipt's mark: ${receipt} (four still strokes wanted)`);
+      });
       await ctx.close();
     } }
   // a side chat drawn again (away to another conversation and back; its own is working, so it stays open) still counts its
@@ -981,6 +1013,7 @@ const log = [];
     await step(p, "d1-side-chat-remount", async () => {
       await open(p, "Fix the flaky retry test"); await p.getByRole("button", { name: "Side chat", exact: true }).click(); await st.waitFor({ timeout: 4000 });
       must(/↓ 1\.2k tokens/.test(await st.innerText()), `the side chat: "${await st.innerText()}"`);
+      must((await st.locator(".tz-mark-write .tz-mark-strokes > path").count()) === 4, "the standalone Working row does not write the mark");
       await open(p, "Why is the CI build"); must(!(await st.count()), "the side chat shows beside another conversation");
       // back by its working row, titled by its first message
       await open(p, "The retry test fails on CI"); await st.waitFor({ timeout: 4000 });

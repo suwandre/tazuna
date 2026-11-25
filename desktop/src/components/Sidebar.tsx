@@ -213,7 +213,7 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
           the sheet's header centred on it too (y 28); a drag region, its words too ("deep": Tauri's drag ignores children) */}
       <div data-tauri-drag-region="deep" className={`-mx-2.5 mb-1.5 flex h-[calc(48*var(--tz-pt))] flex-none items-center gap-2 pt-[calc(8*var(--tz-pt))] font-semibold tracking-[-0.01em] ${macOverlay ? "pl-[calc(92*var(--tz-pt))]" : "pl-[18px]"}`}>
         {/* at work while any open conversation's reply runs (design review 13, D1) */}
-        <Mark size={20} working={working.length > 0} />
+        <Mark motion={working.length > 0 ? "pulse" : "still"} />
         <span>tazuna</span>
         {onDismiss && <button type="button" onClick={onDismiss} aria-label="Close conversations" title="Close conversations" className="ml-auto mr-2.5 grid size-7 place-items-center rounded-md text-muted hover:bg-hover hover:text-ink"><X {...icon} /></button>}
       </div>

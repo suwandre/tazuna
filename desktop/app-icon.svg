@@ -1,46 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- tazuna's app icon (design review 13, mockups/logo.html option E): 手 as a 9×9 bitmap, the rein's loop at its foot, paper
-       on ink, on macOS's icon grid (an 824 px body inside 1024, its shadow below). The UI tile's cells (components/Mark.tsx:
-       0.75 wide at a pitch of 1), 60 px a unit (44 px cells) here, centred: the glyph spans 524 of the 824 body, about 64% (at 80 px a unit it
-       nearly touched the tile's edges in the Dock, the user, 2026-11-25), and every edge is a whole pixel at 1024 and 512. The marks it
-       was chosen from, and the one before it (mockups/marks/a-rein-loop-indigo.svg, desktop 0.1.95 to 0.1.124), stay in
-       mockups/. `npx tauri icon app-icon.png` makes src-tauri/icons from the PNG of this file. -->
+  <!-- Stroke Order (mockups/logo-directions.html) on the macOS icon grid. `npx tauri icon app-icon.png` makes src-tauri/icons. -->
   <defs>
-    <filter id="s" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity=".28"/></filter>
-    <linearGradient id="ink" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2824"/><stop offset="1" stop-color="#1d1c19"/></linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity=".28"/>
+    </filter>
   </defs>
-  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#ink)" filter="url(#s)"/>
-  <rect x="100.5" y="100.5" width="823" height="823" rx="185.5" fill="none" stroke="#ffffff" stroke-opacity=".08"/>
-  <g fill="#ece8df" shape-rendering="crispEdges">
-    <rect x="610" y="250" width="44" height="44"/>
-    <rect x="670" y="250" width="44" height="44"/>
-    <rect x="430" y="310" width="44" height="44"/>
-    <rect x="490" y="310" width="44" height="44"/>
-    <rect x="550" y="310" width="44" height="44"/>
-    <rect x="490" y="370" width="44" height="44"/>
-    <rect x="310" y="430" width="44" height="44"/>
-    <rect x="370" y="430" width="44" height="44"/>
-    <rect x="430" y="430" width="44" height="44"/>
-    <rect x="490" y="430" width="44" height="44"/>
-    <rect x="550" y="430" width="44" height="44"/>
-    <rect x="610" y="430" width="44" height="44"/>
-    <rect x="670" y="430" width="44" height="44"/>
-    <rect x="490" y="490" width="44" height="44"/>
-    <rect x="250" y="550" width="44" height="44"/>
-    <rect x="310" y="550" width="44" height="44"/>
-    <rect x="370" y="550" width="44" height="44"/>
-    <rect x="430" y="550" width="44" height="44"/>
-    <rect x="490" y="550" width="44" height="44"/>
-    <rect x="550" y="550" width="44" height="44"/>
-    <rect x="610" y="550" width="44" height="44"/>
-    <rect x="670" y="550" width="44" height="44"/>
-    <rect x="730" y="550" width="44" height="44"/>
-    <rect x="490" y="610" width="44" height="44"/>
-    <rect x="490" y="670" width="44" height="44"/>
-    <rect x="310" y="670" width="44" height="44"/>
-    <rect x="310" y="730" width="44" height="44"/>
-    <rect x="370" y="730" width="44" height="44"/>
-    <rect x="430" y="730" width="44" height="44"/>
-    <rect x="490" y="730" width="44" height="44"/>
-  </g>
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="#111113" filter="url(#shadow)"/>
+  <rect x="104" y="104" width="816" height="816" rx="182" fill="none" stroke="#fff" stroke-width="8" stroke-opacity=".18"/>
+  <path fill="#f0f0f2" transform="scale(64)" d="M5 5h3V4h3v1H8v1H5zM5 7h3v1H5zM4 9h4v1H4zM9 6h1v6H6v-1h3z"/>
 </svg>
