@@ -192,7 +192,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         // one bar per model call, the newest on the right; the mouse over a bar names that call, a click lists them all
         let mut label = match v.hover_call.filter(|i| *i < data.len()) {
             Some(i) => {
-                let c = s.calls.get(i);
+                let c = s.call_time(i);
                 let mut l = vec![Span::styled(format!("#{} ", i + 1), st(th.faint)), Span::styled(human(data[i]), st(th.text)), Span::styled(" out", st(th.faint))];
                 if let Some(ms) = c.and_then(|c| c.ttft_ms) {
                     l.extend([Span::styled(" · ", st(th.faint)), Span::styled(format!("{:.1}s", ms / 1000.0), st(th.text)), Span::styled(" first", st(th.faint))]);
