@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tazuna — Stroke Order in motion</title>
+<style>
+:root {
+  color-scheme: dark;
+  --desk: #111113; --panel: #18181b; --line: #38383e;
+  --ink: #f0f0f2; --muted: #aaaab2; --accent: #8f9bf0; --accent-wash: #272a44;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--desk); color: var(--ink); font: 14px/1.55 system-ui, sans-serif; }
+main { max-width: 1408px; margin: auto; padding: 0 36px; }
+a { color: var(--accent); text-underline-offset: .2em; }
+button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.bank { position: absolute; width: 0; height: 0; overflow: hidden; }
+.bar, .section-head, .option-id, .control-line { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.bar { border-bottom: 1px solid var(--line); padding: 16px 0; }
+.brand { color: var(--ink); font: 700 17px/1 var(--mono); letter-spacing: -.05em; text-decoration: none; }
+.meta { margin: 0; font: 11px/1.5 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.accent { color: var(--accent); }
+h1, h2, h3 { margin: 0; font-weight: 650; letter-spacing: -.05em; line-height: 1.08; }
+h1 { font-size: clamp(40px, 6vw, 86px); line-height: .99; margin: 10px 0 14px; }
+h2 { font-size: clamp(29px, 3.4vw, 43px); }
+h3 { font-size: 23px; }
+p { margin: 0; }
+.hero { padding: 38px 0 28px; display: grid; grid-template-columns: 1.15fr 1fr; align-items: end; gap: 30px; }
+.intro { font-size: 16px; color: var(--muted); max-width: 47ch; }
+.take { border: 1px solid var(--line); border-left: 2px solid var(--accent); padding: 18px 20px; background: var(--panel); }
+.take p + p { margin-top: 8px; }
+.controls { padding: 13px 0; border-block: 1px solid var(--line); }
+.control-line { justify-content: flex-start; }
+.control-line .meta { margin-right: auto; }
+.control-line .mode { color: var(--muted); min-width: 8ch; }
+button { color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 3px; padding: 6px 10px; font: 600 12px/1.4 system-ui, sans-serif; }
+button:not(:disabled) { cursor: pointer; }
+button:not(:disabled):hover { border-color: var(--accent); }
+button:disabled { color: var(--muted); opacity: .65; }
+label { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; }
+input[type=checkbox] { accent-color: var(--accent); }
+.section { margin-top: 29px; }
+.section-head { align-items: end; margin-bottom: 14px; }
+.section-head p { max-width: 65ch; }
+.lane, .contexts, .terminal-grid { display: grid; gap: 12px; }
+.lane { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.contexts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.terminal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.card { border: 1px solid var(--line); border-radius: 4px; background: var(--panel); min-width: 0; overflow: hidden; }
+.card-head { padding: 14px 15px; }
+.card-head h3 { margin: 6px 0 4px; }
+.card-head p:not(.meta), .note { color: var(--muted); font-size: 13px; }
+.option { display: flex; flex-direction: column; }
+.option .card-head { flex: 1; }
+.badge { color: var(--accent); background: var(--accent-wash); padding: 3px 6px; }
+.stage { padding: 8px; border-top: 1px solid var(--line); display: grid; gap: 6px; grid-template-columns: repeat(2, minmax(0, 1fr)); background: #101012; }
+.look { padding: 13px 7px 10px; display: grid; grid-template-rows: 64px 16px auto; justify-items: center; gap: 6px; min-width: 0; }
+.dark-surface { --surface: #211f1b; --fg: #ece8df; --dim: #beb7a9; --edge: #454139; }
+.light-surface { --surface: #fbfaf7; --fg: #23221e; --dim: #5c574f; --edge: #ded8cf; }
+.look, .sample { color: var(--fg); background: var(--surface); }
+.look .meta, .sample .meta { color: var(--dim); }
+.mini-contexts { grid-row: 3; justify-self: stretch; display: grid; gap: 5px; padding: 6px 2px 0; border-top: 1px solid var(--edge); }
+.mini-contexts p { display: flex; align-items: center; gap: 5px; min-height: 20px; font-size: 11px; }
+.note { padding: 11px 15px 13px; }
+.tile { display: inline-grid; place-items: center; width: var(--size); height: var(--size); flex: none; color: #f0f0f2; background: #111113; border-radius: 22%; box-shadow: inset 0 0 0 1px #ffffff29; }
+.tile svg { width: 100%; height: 100%; fill: currentColor; overflow: visible; }
+.stroke { --phase: 0s; }
+.stroke:nth-child(2) { --phase: -1.8s; }
+.stroke:nth-child(3) { --phase: -1.2s; }
+.stroke:nth-child(4) { --phase: -.6s; }
+.write-guide { opacity: .2; }
+.write-reveal .stroke { animation: write-crown 2.8s ease-out infinite; }
+.write-reveal .stroke:nth-child(2) { animation-name: write-first; }
+.write-reveal .stroke:nth-child(3) { animation-name: write-second; }
+.write-reveal .stroke:nth-child(4) { animation-name: write-hook; }
+@keyframes write-crown {
+  0% { clip-path: inset(0 100% 0 0) fill-box; }
+  12%, 100% { clip-path: inset(0) fill-box; }
+}
+@keyframes write-first {
+  0%, 9% { clip-path: inset(0 100% 0 0) fill-box; }
+  21%, 100% { clip-path: inset(0) fill-box; }
+}
+@keyframes write-second {
+  0%, 18% { clip-path: inset(0 100% 0 0) fill-box; }
+  30%, 100% { clip-path: inset(0) fill-box; }
+}
+@keyframes write-hook {
+  0%, 27% { clip-path: inset(0 0 100% 0) fill-box; }
+  39%, 100% { clip-path: inset(0) fill-box; }
+}
+.chase .stroke { animation: chase 2.4s step-end var(--phase) infinite; }
+@keyframes chase { 0% { fill: #8f9bf0; opacity: 1; } 25%, 100% { fill: currentColor; opacity: .55; } }
+.breathe svg { animation: breathe 2.4s ease-in-out infinite; }
+@keyframes breathe { 0%, 100% { opacity: .67; } 50% { opacity: 1; } }
+.states .stroke:first-child { animation: thinking 5.6s step-end infinite; }
+.states .stroke:last-child { animation: cue-hook 5.6s step-end infinite; }
+@keyframes thinking { 0% { fill: #8f9bf0; } 30%, 100% { fill: currentColor; } }
+@keyframes cue-hook { 0%, 70%, 100% { fill: currentColor; } 30% { fill: #8f9bf0; } }
+.state-text { grid-row: 2; display: grid; text-align: center; font: 11px/1.4 var(--mono); }
+.state-text span { grid-area: 1 / 1; opacity: 0; }
+.state-text span:first-child { opacity: 1; animation: state-think 5.6s step-end infinite; }
+.state-text span:nth-child(2) { animation: state-run 5.6s step-end infinite; }
+.state-text span:nth-child(3) { animation: state-done 5.6s step-end infinite; }
+@keyframes state-think { 0% { opacity: 1; } 30%, 100% { opacity: 0; } }
+@keyframes state-run { 0%, 70%, 100% { opacity: 0; } 30% { opacity: 1; } }
+@keyframes state-done { 0% { opacity: 0; } 70%, 100% { opacity: 1; } }
+.pair { display: grid; gap: 1px; border-block: 1px solid var(--line); background: var(--line); }
+.sample { padding: 9px 12px; }
+.sample .meta { margin-bottom: 6px; font-size: 10px; }
+.reply { font-size: 12.5px; display: flex; align-items: center; gap: 6px; min-height: 22px; }
+.reply small, .sidebar-state { color: var(--dim); font-size: 11px; }
+.reply-fold { border-top: 1px solid var(--edge); padding-top: 4px; margin-top: 4px; }
+.sidebar-line { display: flex; align-items: center; gap: 8px; min-height: 53px; padding: 2px 8px; border: 1px solid var(--edge); }
+.sidebar-label { font-weight: 650; }
+.sidebar-state { margin-left: auto; }
+.empty-line { display: flex; align-items: center; gap: 10px; min-height: 53px; }
+.empty-line strong { font-size: 16px; }
+.empty-line small { color: var(--dim); display: block; }
+.receipt-mark { display: flex; align-items: center; gap: 7px; font-size: 12.5px; padding: 3px 0 1px; }
+.fallback { margin-top: 13px; padding: 9px 12px; background: var(--panel); border: 1px solid var(--line); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.fallback p:last-child { color: var(--muted); font-size: 13px; }
+.terminal-body { padding: 14px 15px; font: 13px/1.6 var(--mono); background: #101012; border-block: 1px solid var(--line); overflow-wrap: anywhere; }
+.tty-brand { display: inline-flex; align-items: center; color: var(--accent); }
+.tty-hand { display: inline-flex; width: 2ch; justify-content: center; align-items: center; color: #14152a; background: var(--accent); }
+.tty-hand svg, .term-pulse svg, .term-hold svg { width: 1.3em; height: 1.2em; fill: currentColor; display: block; }
+.tty-row { display: flex; gap: .65em; align-items: baseline; min-height: 1.6em; }
+.term-pulse, .term-hold { color: var(--accent); display: inline-flex; align-self: center; flex: none; }
+.term-pulse { animation: tty-pulse 1.44s step-end infinite; }
+@keyframes tty-pulse { 0%, 83.333%, 100% { opacity: .6; } 16.667%, 66.667% { opacity: .8; } 33.333%, 50% { opacity: 1; } }
+.term-frames { min-width: 1ch; display: inline-grid; text-align: center; }
+.term-frames span { grid-area: 1 / 1; opacity: 0; color: var(--accent); animation: tty-frame 1.44s step-end var(--delay, 0s) infinite; }
+.term-frames span:first-child { opacity: 1; }
+.term-frames span:nth-child(2) { --delay: -1.2s; }
+.term-frames span:nth-child(3) { --delay: -.96s; }
+.term-frames span:nth-child(4) { animation-name: tty-hook; --delay: -.72s; }
+@keyframes tty-frame { 0% { opacity: 1; } 16.667%, 100% { opacity: 0; } }
+@keyframes tty-hook { 0% { opacity: 1; } 50%, 100% { opacity: 0; } }
+.frames { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 0 15px 14px; }
+.frames code { font-family: var(--mono); border: 1px solid var(--line); padding: 2px 6px; }
+.foot { margin: 24px 0 0; padding: 13px 0 24px; color: var(--muted); border-top: 1px solid var(--line); font-size: 12px; }
+html[data-paused] * { animation-play-state: paused !important; }
+html[data-reduced] * { animation: none !important; }
+html[data-reduced] .write-guide { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; }
+  .write-guide { display: none; }
+}
+@media (max-width: 930px) {
+  .hero, .lane { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .contexts { grid-template-columns: 1fr; }
+  .contexts .pair { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  main { padding-inline: 14px; }
+  .hero, .terminal-grid { grid-template-columns: 1fr; }
+  .hero { padding-top: 30px; gap: 16px; }
+  .stage { gap: 3px; padding: 4px; }
+  .look { padding-inline: 2px; }
+  h3 { font-size: 20px; }
+}
+@media (max-width: 410px) {
+  .lane, .contexts .pair { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" class="bank" aria-hidden="true">
+  <defs>
+    <path id="crown" d="M5 5h3V4h3v1H8v1H5z"/>
+    <path id="first-bar" d="M5 7h3v1H5z"/>
+    <path id="second-bar" d="M4 9h4v1H4z"/>
+    <path id="hook" d="M9 6h1v6H6v-1h3z"/>
+  </defs>
+</svg>
+<main>
+  <header class="bar">
+    <a class="brand" href="./logo-directions.html#stroke-order-card">tazuna</a>
+    <p class="meta">Identity study / Motion</p>
+  </header>
+  <section class="hero" aria-labelledby="title">
+    <div>
+      <p class="meta accent">Stroke Order / 12</p>
+      <h1 id="title">The hand at work.</h1>
+      <p class="intro">Four motion studies for the new mark. Compare the movement up close, then judge it where it actually has to work: at 10 and 20 pixels.</p>
+    </div>
+    <aside class="take">
+      <p class="meta accent">My take</p>
+      <p><strong>Yes: the working mark should change with the icon.</strong> Today, the reply and sidebar both draw the old bitmap in stroke order. Use the new four-stroke mark in both, but give the reply the more noticeable motion. Keep the empty screen static and leave generic tool and loading spinners alone.</p>
+    </aside>
+  </section>
+  <div class="controls control-line" role="group" aria-label="Motion controls">
+    <p class="meta">Playback / 1× · timings per cycle</p>
+    <button type="button" id="pause">Pause</button>
+    <button type="button" id="replay">Replay</button>
+    <label><input type="checkbox" id="reduce"> Preview reduced motion</label>
+    <span class="mode" role="status" id="mode">Playing</span>
+  </div>
+
+  <section class="section" aria-labelledby="studies-title">
+    <div class="section-head">
+      <h2 id="studies-title">Four motion studies</h2>
+      <p class="meta">64 px detail · 10 px reply · 20 px sidebar</p>
+    </div>
+    <div class="lane" id="studies"></div>
+  </section>
+
+  <section class="section" aria-labelledby="contexts-title" id="placements">
+    <div class="section-head">
+      <h2 id="contexts-title">Where I’d use each one</h2>
+      <p class="meta">Actual desktop sizes · dark + light</p>
+    </div>
+    <div class="contexts" id="contexts"></div>
+    <div class="fallback" id="fallback"></div>
+  </section>
+
+  <section class="section" aria-labelledby="tui-title">
+    <div class="section-head">
+      <h2 id="tui-title">Terminal: keep the text mark</h2>
+      <p class="meta">Color spans + fixed-width cells, not SVG</p>
+    </div>
+    <div class="terminal-grid" id="terminal"></div>
+  </section>
+  <noscript><p>Enable JavaScript to render the motion studies and playback controls.</p></noscript>
+  <footer class="foot">Motion prototype only. Nothing changes in the app. “Empty start” is the new-chat view, not a loading screen or a separate native splash.</footer>
+</main>
+<script>
+const strokes = ['crown', 'first-bar', 'second-bar', 'hook'].map(id =>
+  `<use class="stroke" href="#${id}"/>`).join('');
+const hand = (write = false) => `<svg viewBox="0 0 16 16" aria-hidden="true">${write
+  ? `<g class="write-guide">${strokes}</g><g class="write-reveal">${strokes}</g>` : strokes}</svg>`;
+
+const tile = (size, motion = '') =>
+  `<span class="tile ${motion}" style="--size:${size}px" aria-hidden="true">${hand(motion === 'write')}</span>`;
+
+const surfaces = render => ['dark', 'light'].map(theme => render(theme)).join('');
+const states = `<div class="state-text" aria-hidden="true"><span>Thinking</span><span>Running tool</span><span>Done</span></div>`;
+const studies = [
+  { key: 'write', title: 'Write & hold', badge: 'Reply pick', speed: '2.8 s / cycle',
+    why: 'The crown and two bars sweep left to right, then the hook draws down. Strokes overlap slightly and finish at ~1.1 s.',
+    trade: 'A faint outline stays visible as the strokes draw. Hold the full hand for ~1.7 s, then return to the faint mark.' },
+  { key: 'chase', title: 'Indigo pass', badge: 'Alternative', speed: '600 ms / stroke',
+    why: 'One stroke at a time takes the live indigo. The other three stay visible.',
+    trade: 'Clearer at a glance, but busier for long runs and less visible at 10 px.' },
+  { key: 'breathe', title: 'Whole-mark pulse', badge: 'Sidebar pick', speed: '2.4 s / cycle',
+    why: 'The complete hand gently changes brightness. No stroke or tile moves.',
+    trade: 'Keeps the silhouette in peripheral vision; less specific than writing the strokes.' },
+  { key: 'states', title: 'State cue', badge: 'Experiment', speed: '5.6 s / demo',
+    why: 'Thinking lights the crown; tool work lights the hook; done leaves the whole mark settled.',
+    trade: 'Easy to miss without the text. Drive it from events, not time; the loop only demonstrates the states.' },
+];
+
+document.querySelector('#studies').innerHTML = studies.map(({key, title, badge, speed, why, trade}, index) => `
+  <article class="card option" aria-labelledby="option-${key}">
+    <div class="card-head">
+      <div class="option-id"><p class="meta">0${index + 1}</p><p class="meta badge">${badge}</p></div>
+      <h3 id="option-${key}">${title}</h3>
+      <p>${why}</p>
+    </div>
+    <div class="stage">${surfaces(theme => `<div class="look ${theme}-surface">${tile(64, key)}
+      ${key === 'states' ? states : `<p class="meta">${theme}</p>`}
+      <div class="mini-contexts"><p>${tile(10, key)} Working</p><p>${tile(20, key)} tazuna</p></div>
+    </div>`)}</div>
+    <div class="note"><p class="meta accent">${speed}</p><p>${trade}</p></div>
+  </article>`).join('');
+
+const useCases = [
+  { key: 'reply', title: 'Reply working row', badge: '01 / Write & hold',
+    why: 'Carry the same motion into the work fold. When a permission request takes over or the reply ends, stop the motion with the status.',
+    sample: () => `<div class="reply">${tile(10, 'write')}<strong>Working</strong><small>12 s · ↓1.2k tokens</small></div>
+      <div class="reply reply-fold"><span aria-hidden="true">⌄</span>${tile(10, 'write')}<strong>Working</strong><small>· read 2 files</small></div>` },
+  { key: 'sidebar', title: 'Sidebar brand', badge: '03 / Whole-mark pulse',
+    why: 'Use the quieter pulse while any open thread is working. A pulse says the app is active without drawing the eye up to the titlebar.',
+    sample: () => `<div class="sidebar-line">${tile(20, 'breathe')}<span class="sidebar-label">tazuna</span><span class="sidebar-state">1 working</span></div>` },
+  { key: 'empty', title: 'New chat & receipts', badge: 'Static / no loop',
+    why: 'A ready screen and a finished receipt aren’t loading states. Show the complete mark from the start.',
+    sample: () => `<div class="empty-line">${tile(40)}<div><strong>What are we working on?</strong><small>New chat · ready</small></div></div>
+      <div class="receipt-mark">${tile(20)}<span>Worked 18 s</span></div>` },
+];
+
+document.querySelector('#contexts').innerHTML = useCases.map(({key, title, badge, why, sample}) => `
+  <article class="card" aria-labelledby="context-${key}">
+    <div class="card-head"><p class="meta accent">${badge}</p><h3 id="context-${key}">${title}</h3></div>
+    <div class="pair">${surfaces(theme => `<div class="sample ${theme}-surface"><p class="meta">${theme} / ${key === 'reply' ? '10' : key === 'sidebar' ? '20' : '40 + 20'} px</p>${sample()}</div>`)}</div>
+    <p class="note">${why}</p>
+  </article>`).join('');
+
+document.querySelector('#fallback').innerHTML = `
+  <p class="meta accent">Reduced motion / always still</p>${tile(10)}${tile(20)}
+  <p>Full mark, steady “Working” text, elapsed time still counts. No dimming or moving label.</p>`;
+
+const termHand = cls => `<span class="${cls}" role="img" aria-label="Hand glyph">${hand()}</span>`;
+const frameGlyphs = ['▔', '─', '━', '┘'];
+const statusFrames = frameGlyphs.map(glyph => `<span>${glyph}</span>`).join('');
+document.querySelector('#terminal').innerHTML = `
+  <article class="card" aria-labelledby="tty-keep">
+    <div class="card-head"><p class="meta accent">Recommended / no extra cells</p><h3 id="tty-keep">Pulse the whole glyph</h3></div>
+    <div class="terminal-body">
+      <p><span class="tty-brand" role="img" aria-label="Hand between terminal half blocks">▐<span class="tty-hand">${hand()}</span>▌</span> tazuna</p>
+      <p class="tty-row">${termHand('term-pulse')} <span>Working 12 s · thinking</span></p>
+    </div>
+    <p class="note">Keep the welcome static. In the live row, use the same terminal-font hand each frame; only its foreground changes. Six 240 ms beats on the existing 80 ms tick. The browser draws a surrogate for the glyph.</p>
+    <div class="frames" aria-label="Pulse frames from dim to bright and back">${['60%', '80%', '100%', '100%', '80%', '60%'].map(frame => `<code>${frame}</code>`).join('')}</div>
+  </article>
+  <article class="card" aria-labelledby="tty-stroke">
+    <div class="card-head"><p class="meta accent">Alternative / one extra cell</p><h3 id="tty-stroke">Show the stroke beside it</h3></div>
+    <div class="terminal-body">
+      <p class="tty-row">${termHand('term-hold')} <span class="term-frames" aria-hidden="true">${statusFrames}</span> <span>Working 12 s · running tests</span></p>
+      <p class="meta">Indeterminate / not percent complete</p>
+    </div>
+    <p class="note">Use one fixed-width block or box-drawing cell for the crown, two bars and hook. Advance every 240 ms; hold the hook for three beats. Don’t replace the generic per-tool spinner.</p>
+    <div class="frames" aria-label="Crown, first bar, second bar, then hook held for three beats">${frameGlyphs.map(frame => `<code>${frame}</code>`).join('')}<code>┘</code><code>┘</code></div>
+  </article>`;
+
+const root = document.documentElement;
+const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const pause = document.querySelector('#pause');
+const replay = document.querySelector('#replay');
+const reduce = document.querySelector('#reduce');
+const mode = document.querySelector('#mode');
+function updateControls() {
+  const still = motion.matches || reduce.checked;
+  root.toggleAttribute('data-reduced', still);
+  const paused = root.hasAttribute('data-paused');
+  pause.textContent = paused ? 'Play' : 'Pause';
+  pause.disabled = replay.disabled = still;
+  mode.textContent = still ? 'Still' : paused ? 'Paused' : 'Playing';
+}
+pause.addEventListener('click', () => {
+  root.toggleAttribute('data-paused');
+  updateControls();
+});
+replay.addEventListener('click', () => {
+  document.getAnimations().forEach(animation => { animation.currentTime = 0; });
+});
+reduce.addEventListener('change', updateControls);
+motion.addEventListener('change', updateControls);
+updateControls();
+</script>
+</body>
+</html>
