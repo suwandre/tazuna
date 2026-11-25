@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.227 (2026-11-25): each call's timing on its own receipt row
+
+- A call's time to first token, speed and duration stay on its own receipt row: a call that never finished no longer
+  hands its row the next call's timing, and a rewind keeps the timings of the calls that remain (#58).
+- Calls on tazuna's own loop are timed from when the request goes out, not from when the tool results came back (#59).
+
 ## 0.1.226 (2026-11-25): plans priced at their API rates, not billed; TokenRouter
 
 - A run on a plan's key (Mistral Vibe first) is priced at the provider's API rates where they are known (DeepSeek V4.1
