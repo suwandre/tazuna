@@ -308,7 +308,12 @@ impl Copied {
 /// Windows Terminal, iTerm2, kitty, WezTerm, Ghostty; tmux with `set-clipboard on`). Otherwise the system's: pbcopy on
 /// macOS, the clipboard API on Windows, wl-copy, xclip or xsel on Linux; the terminal when none of them takes it. Copying
 /// ran pbcopy everywhere until 0.1.77: "pbcopy: program not found" on Windows.
+/// TAZUNA_CLIPBOARD_FILE stands in for the clipboard (copies are written there, reads come from there): a test rig never
+/// touches the real one.
 pub fn copy_text(text: &str) -> std::io::Result<Copied> {
+    if let Some(f) = std::env::var_os("TAZUNA_CLIPBOARD_FILE") {
+        return std::fs::write(f, text).map(|_| Copied::Clipboard);
+    }
     let remote = std::env::var_os("SSH_TTY").is_some() || std::env::var_os("SSH_CONNECTION").is_some();
     if !remote && system_copy(text).is_ok() {
         return Ok(Copied::Clipboard);
@@ -318,6 +323,24 @@ pub fn copy_text(text: &str) -> std::io::Result<Copied> {
     write!(out, "\x1b]52;c;{}\x07", base64(text.as_bytes()))?;
     out.flush()?;
     Ok(Copied::Terminal)
+}
+
+/// The clipboard's text, where it can be read: pbpaste on macOS, wl-paste, xclip or xsel on Linux (TAZUNA_CLIPBOARD_FILE
+/// where set). None over SSH, where copies go through the terminal (OSC 52) and cannot be read back, on Windows (copy
+/// on release is off there), and without a tool.
+pub fn read_text() -> Option<String> {
+    if let Some(f) = std::env::var_os("TAZUNA_CLIPBOARD_FILE") {
+        return std::fs::read_to_string(f).ok();
+    }
+    if std::env::var_os("SSH_TTY").is_some() || std::env::var_os("SSH_CONNECTION").is_some() || cfg!(windows) {
+        return None;
+    }
+    let run = |cmd: &str, args: &[&str]| Command::new(cmd).args(args).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+    if cfg!(target_os = "macos") {
+        return run("pbpaste", &[]);
+    }
+    std::env::var_os("WAYLAND_DISPLAY").and_then(|_| run("wl-paste", &["--no-newline"]))
+        .or_else(|| run("xclip", &["-selection", "clipboard", "-o"])).or_else(|| run("xsel", &["--clipboard", "--output"]))
 }
 
 fn system_copy(text: &str) -> std::io::Result<()> {

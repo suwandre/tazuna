@@ -3,7 +3,7 @@
 use super::*;
 use ratatui::layout::{Constraint, Layout};
 
-pub(super) const OPTS: Opts = Opts { prompt: PromptStyle::Quote, group_tools: true, durations: false };
+pub(super) const OPTS: Opts = Opts { group_tools: true, durations: false };
 pub(super) const MAX_WIDTH: u16 = 92;
 
 pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
@@ -42,33 +42,34 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     // as it takes (six at most, then it scrolls) with the `@` and `/` completions under it, or the placeholder. It was one
     // row that showed the end of a draft and no completions (design review 11).
     let (glyph, label, color) = activity(s, v, th);
-    // while a reply runs: how long it has been at it, counted from when it began as the window's fold says it, and the
-    // key that stops it ("⠹ thinking" said neither, design review 11); a retry's wait and a question keep their own words
-    let busy = v.asking.is_none() && s.retry_in(v.clock_ms).is_none() && s.waiting_note.is_none()
-        && matches!(s.activity, Activity::Starting | Activity::Waiting | Activity::Thinking | Activity::Writing | Activity::Tool | Activity::Verifying);
-    let said = if busy {
-        vec![Span::styled(format!("{glyph} "), st(color)), Span::styled(format!("Working {}", wait_str(s.working_for(v.clock_ms) / 1000.0)), st(th.text)),
-            Span::styled(esc_hint(v), st(th.faint))]
-    } else {
-        vec![Span::styled(format!("{glyph} {label}"), st(color))]
-    };
+    // while a reply runs: the state in short and the key that stops it; its time, output and step are on the working row
+    // at the transcript's end (design review 13; "⠹ Working 12 s" stood here since review 11). A retry's wait and a
+    // question keep their own words.
+    let busy = working(s, v);
+    let said = vec![Span::styled(format!("{glyph} {}", if busy { "working" } else { &label }), st(color)), Span::styled(if busy { esc_hint(v) } else { "" }, st(th.faint))];
     let typing = v.live && !v.input.is_empty() && v.asking.is_none();
     // a note for a moment ("copied 12 chars", the design ctrl-t switched to); while typing it is the row under the draft
     let note = if typing { String::new() } else { v.toast.as_ref().map_or(String::new(), |(t, _)| format!("{t}   ")) };
     // a question in a narrow column has the row to itself (its "?" says who is waited for): beside "● needs you" the
     // answers were cut to "a al" at 40 columns
     let alone = v.asking.is_some() && col.width < 60;
-    let status = Line::from(if alone { vec![] } else { [vec![
-        Span::styled(note, st(th.ok)),
-        // the permission mode when it is not auto, as cockpit's box says it; full even beside a question
-        Span::styled(if v.live && v.mode != "auto" && (v.asking.is_none() || v.mode == "full") { format!("[{}]  ", v.mode) } else { String::new() }, st(if v.mode == "full" { th.warn } else { th.dim })),
-    ], said, vec![
-        Span::styled(if v.live { String::new() } else { format!("   {}", play_str(v, "paused")) }, st(th.faint)),
-        Span::styled(if v.live { "" } else { "   tab · e · q" }, st(th.faint)),
-    ]].concat() });
     // the text starts one column left of the column, so the prompt's `›` (after a space, as composer_rows draws it) stands
     // on the column's edge with or without a draft
     let shift = u16::from(col.x > full.x);
+    let rest = [said, vec![
+        Span::styled(if v.live { String::new() } else { format!("   {}", play_str(v, "paused")) }, st(th.faint)),
+        Span::styled(if v.live { "" } else { "   tab · e · q" }, st(th.faint)),
+    ]].concat();
+    // the permission mode as a pill, always, auto too (design review 13: auto showed nothing, beside a question nothing but
+    // full did). Where it would leave a draft under 30 columns (9 at 60 columns), it shrinks: full to its dot and "full",
+    // the others to the dot.
+    let room = |pill: &[Span]| ((col.width + shift) as usize).saturating_sub(note.width() + Line::from(pill.to_vec()).width() + Line::from(rest.clone()).width() + 4);
+    let mut pill = if v.live { mode_pill(&v.mode, th, false) } else { vec![] };
+    if typing && room(&pill) < 30 {
+        pill = mode_pill(&v.mode, th, true);
+    }
+    pill.push(Span::raw(if v.live { "  " } else { "" }));
+    let status = Line::from(if alone { vec![] } else { [vec![Span::styled(note, st(th.ok))], pill, rest].concat() });
     let text_w = (col.width + shift).saturating_sub(if alone { 0 } else { status.width() as u16 + 2 });
     // as many rows of the draft as leave the header, three rows of transcript and the completions' row on screen
     let fixed = 8 + u16::from(!(one_row || extra.is_empty()));

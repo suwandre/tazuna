@@ -59,9 +59,72 @@ pub struct Tool {
     pub done_ms: Option<f64>,
     /// A subagent this call started (Task/Agent): how many tool calls it has made, and the latest one.
     pub sub: Option<(usize, String)>,
+    /// An edit's place in its file (`locate`): found by its old text when it was asked for, by its new text when its result
+    /// came, so the screen reads no file while it draws (design review 13).
+    pub at: Option<Located>,
+}
+
+/// Where an edit is in its file: the line it starts on, and the lines just above and under it.
+pub type Located = (usize, Option<String>, Option<String>);
+
+/// Where `needle` is in the file at `path`, when the file holds it exactly once (twice, the edit's place cannot be told);
+/// None for anything but a regular file up to 4 MB, which is all it reads.
+pub fn locate(path: &std::path::Path, needle: &str) -> Option<Located> {
+    // a regular file only, and not a big one: /dev/zero, a FIFO or a tty would never end the read (on the screen's thread)
+    let m = std::fs::metadata(path).ok()?;
+    if needle.is_empty() || !m.is_file() || m.len() > 4 << 20 {
+        return None;
+    }
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut found = text.match_indices(needle);
+    let (at, _) = found.next()?;
+    if found.next().is_some() {
+        return None;
+    }
+    let line = text[..at].matches('\n').count() + 1;
+    let near = |i: usize| text.lines().nth(i).map(String::from);
+    Some((line, if line > 1 { near(line - 2) } else { None }, near(line - 1 + needle.lines().count())))
+}
+
+/// How many lines two texts share at their start and, after those, at their end.
+pub fn common_ends(o: &[&str], n: &[&str]) -> (usize, usize) {
+    let p = o.iter().zip(n).take_while(|(a, b)| a == b).count();
+    (p, o[p..].iter().rev().zip(n[p..].iter().rev()).take_while(|(a, b)| a == b).count())
+}
+
+/// The lines an edit adds and removes: the lines its old and new text share at either end are context, not change.
+pub fn change_counts(old: &str, new: &str) -> (u64, u64) {
+    let (o, n): (Vec<&str>, Vec<&str>) = (old.lines().collect(), new.lines().collect());
+    let (p, q) = common_ends(&o, &n);
+    ((n.len() - p - q) as u64, (o.len() - p - q) as u64)
+}
+
+/// A file a run changed with its edit tools (the line under its answer): the lines added and removed, or written over
+/// whole (a write onto a file that was there: its lines are all new, "+200" said nothing of what changed).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileChange {
+    pub path: String,
+    pub added: u64,
+    pub removed: u64,
+    pub rewritten: bool,
 }
 
 impl Tool {
+    /// What an edit tool replaced, as (old, new) pairs, borrowed from its input: a write or a notebook cell all new. None
+    /// for any other tool.
+    pub fn replaced(&self) -> Option<Vec<(&str, &str)>> {
+        fn s(v: &Value) -> &str {
+            v.as_str().unwrap_or_default()
+        }
+        Some(match self.name.strip_prefix("mcp__lean__").unwrap_or(&self.name) {
+            "Edit" | "edit" => vec![(crate::ui::tool_arg(self, "old"), crate::ui::tool_arg(self, "new"))],
+            "MultiEdit" => self.input["edits"].as_array().into_iter().flatten().map(|e| (s(&e["old_string"]), s(&e["new_string"]))).collect(),
+            "Write" | "write" => vec![("", s(&self.input["content"]))],
+            "NotebookEdit" => vec![("", s(&self.input["new_source"]))],
+            _ => return None,
+        })
+    }
+
     /// A call the user said no to. Its result is the sentence written for the model ("The user declined this. Ask what
     /// they want instead…"), which the screen showed in red as an error and counted as a failure (design review 11).
     pub fn declined(&self) -> bool {
@@ -120,6 +183,8 @@ pub struct Summary {
     /// Its subagents' model calls (in its cost, not among the calls), fixed when it ended; those of a background subagent
     /// that go on after it count in the run whose total they are in (they kept counting on the first, design review 12).
     pub sub_calls: usize,
+    /// The files its edit tools changed, fixed when it ended: the line under the answer was worked out again every frame.
+    pub changes: Vec<FileChange>,
 }
 
 /// How one run was paid, fixed when it ended: a receipt under an answer says this, not what the conversation's model of
@@ -333,6 +398,9 @@ pub struct Session {
     /// the answer is already streaming (15 ms before the first token after a 2 s pause, 2026-11-03), too late to time it.
     ready_at: Option<f64>,
     usage_at_result: Usage,
+    /// The totals when the transcript was last cut (`truncate`): the next run's share counts from here, not from the last
+    /// Done left, which would hand it the cut part's spend.
+    cut_at: Option<(f64, Usage)>,
     /// An interrupt was requested; the next result ends a stopped run.
     stopping: bool,
     /// The open permission questions, oldest first, each as its tool and input: the screen marks the call the front one
@@ -377,8 +445,8 @@ pub fn unix_now() -> u64 {
 /// A run's own share of the session's totals: `cost` and `usage` less those at the previous run's end. The totals only
 /// grow (a new conversation is a new Session, a /clear's restarted count is folded in): where they went down, a turn's
 /// share was the whole conversation's ("$0 … the same without the cache $4.14" after /clear, design review 12).
-fn run_share(blocks: &[Block], cost: f64, usage: Usage) -> (f64, Usage) {
-    let Some((pc, pu)) = blocks.iter().rev().find_map(|b| if let Block::Done(d) = b { Some((d.cost, d.usage)) } else { None }) else { return (cost, usage) };
+fn run_share(blocks: &[Block], cost: f64, usage: Usage, cut: Option<(f64, Usage)>) -> (f64, Usage) {
+    let Some((pc, pu)) = cut.or_else(|| blocks.iter().rev().find_map(|b| if let Block::Done(d) = b { Some((d.cost, d.usage)) } else { None })) else { return (cost, usage) };
     ((cost - pc).max(0.0), Usage { input: usage.input.saturating_sub(pu.input), cache_write: usage.cache_write.saturating_sub(pu.cache_write),
         cache_read: usage.cache_read.saturating_sub(pu.cache_read), output: usage.output.saturating_sub(pu.output) })
 }
@@ -460,6 +528,7 @@ impl Session {
             cache_ttl_ms: None,
             ready_at: None,
             usage_at_result: Usage::default(),
+            cut_at: None,
             stopping: false,
             asked: Default::default(),
             verify_cancelled: false,
@@ -544,6 +613,12 @@ impl Session {
     /// began it, or the tests.
     pub fn working_for(&self, now_ms: f64) -> f64 {
         self.run_since.map_or(0.0, |r| (now_ms - r).max(0.0))
+    }
+
+    /// The run in progress's output tokens so far: its finished calls' as reported, the one in flight's as estimated (the
+    /// working row's "↓ 1.2k tokens", design review 13).
+    pub fn run_output(&self) -> u64 {
+        self.usage.output.saturating_sub(self.usage_at_result.output) + self.call_start.map_or(0, |_| self.call_est as u64)
     }
 
     /// Work begins at `at_ms` (a message, a call, the tests, a fix round) unless some already runs.
@@ -742,13 +817,44 @@ impl Session {
     #[inline(never)]
     fn end_run(&mut self, ok: bool, secs: f64, turns: u64, stopped: bool, marked: bool, priced: bool, estimate: bool, lost: u32) {
         let (cost, usage) = (self.cost(), self.usage);
-        let (run_cost, run_usage) = run_share(&self.blocks, cost, usage);
+        // after a cut, from where it was cut (the Done left is older than that)
+        let (run_cost, run_usage) = run_share(&self.blocks, cost, usage, self.cut_at.take());
         let bill = self.bill(marked);
         let uncounted = self.call_bill.iter().skip(self.billed).map(|b| b.uncounted).sum::<u32>() + lost;
         let subs: usize = self.sub_events.keys().map(|id| self.sub_calls(id)).sum();
         let sub_calls = subs.saturating_sub(std::mem::replace(&mut self.subs_counted, subs));
         self.billed = self.call_bill.len();
-        self.push(Block::Done(Summary { ok, secs, turns, cost, usage, stopped, run_cost: priced.then_some(run_cost), run_usage, bill, estimate, uncounted, sub_calls }));
+        let changes = self.run_changes();
+        self.push(Block::Done(Summary { ok, secs, turns, cost, usage, stopped, run_cost: priced.then_some(run_cost), run_usage, bill, estimate, uncounted, sub_calls, changes }));
+    }
+
+    /// The files the run ending now changed with its edit tools, in the order first changed (design review 13). A write
+    /// is a rewrite where claude says it updated the file, or where the session read or changed that path before (the own
+    /// loop's write answers "ok" either way, and the file is not looked at: a replay would find it written already).
+    fn run_changes(&self) -> Vec<FileChange> {
+        let from = self.blocks.iter().rposition(|b| matches!(b, Block::Done(_))).map_or(0, |k| k + 1);
+        let path_of = |t: &Tool| crate::ui::tool_arg(t, "path").to_string();
+        let mut out: Vec<FileChange> = Vec::new();
+        for (i, b) in self.blocks.iter().enumerate().skip(from) {
+            let Block::Tool(t) = b else { continue };
+            let Some(pairs) = t.replaced().filter(|_| t.result.is_some() && !t.error && !path_of(t).is_empty()) else { continue };
+            let path = path_of(t);
+            let rel = crate::ui::repo_path(&self.cwd, &path);
+            let write = matches!(crate::ui::short_name(&t.name), "write");
+            let result = t.result.as_deref().unwrap_or_default();
+            let seen = || self.blocks[..i].iter().any(|b| matches!(b, Block::Tool(x) if path_of(x) == path && matches!(crate::ui::short_name(&x.name), "read" | "edit" | "write")));
+            let rewritten = write && !result.starts_with("File created") && (result.contains("has been updated") || seen());
+            let k = out.iter().position(|c| c.path == rel).unwrap_or_else(|| {
+                out.push(FileChange { path: rel, added: 0, removed: 0, rewritten: false });
+                out.len() - 1
+            });
+            out[k].rewritten |= rewritten;
+            for (old, new) in pairs {
+                let (a, r) = change_counts(old, new);
+                (out[k].added, out[k].removed) = (out[k].added + a, out[k].removed + r);
+            }
+        }
+        out
     }
 
     /// A run the process took with it (a hard stop, a crash): no result comes, so it ends here, with what it spent so far
@@ -830,10 +936,18 @@ impl Session {
         self.rejected = self.rejected.iter().filter(|&&i| !gone(i)).map(|&i| i - (0..i).filter(|&j| gone(j)).count()).collect();
     }
 
-    /// The transcript back to its first `n` blocks (/rewind).
+    /// The transcript back to its first `n` blocks (/rewind, the window's edit from a message), and the model calls made
+    /// from there on with it: the window's receipts and token counts kept the calls of the cut part (design review 13).
     pub fn truncate(&mut self, n: usize) {
         self.blocks.truncate(n);
         self.unmark(|i| i >= n);
+        let k = self.call_blocks.partition_point(|&b| b < n);
+        self.call_blocks.truncate(k);
+        self.turn_usage.truncate(k);
+        self.call_bill.truncate(k);
+        self.calls.truncate(k);
+        self.billed = self.billed.min(k);
+        (self.cut_at, self.usage_at_result) = (Some((self.cost(), self.usage)), self.usage);
     }
 
     fn push(&mut self, b: Block) {
@@ -1290,9 +1404,13 @@ impl Session {
                         self.todos = c["input"]["todos"].as_array().into_iter().flatten().map(|t| (s(&t["status"]), s(&t["content"]))).collect();
                     }
                     if c["type"] == "tool_use" {
-                        let id = s(&c["id"]);
+                        let (id, cwd) = (s(&c["id"]), self.cwd.clone());
                         if let Some(t) = self.tool_mut(&id) {
                             t.input = c["input"].clone();
+                            // an edit asked for: where its old text is now
+                            if crate::ui::short_name(&t.name) == "edit" && t.result.is_none() {
+                                t.at = locate(&std::path::Path::new(&cwd).join(crate::ui::tool_arg(t, "path")), crate::ui::tool_arg(t, "old"));
+                            }
                         }
                     }
                 }
@@ -1309,7 +1427,12 @@ impl Session {
                     };
                     let error = c["is_error"].as_bool().unwrap_or(false);
                     self.ready_at = Some(at_ms);
+                    let cwd = self.cwd.clone();
                     if let Some(t) = self.tool_mut(&s(&c["tool_use_id"])) {
+                        // an edit done: where its new text landed
+                        if crate::ui::short_name(&t.name) == "edit" {
+                            t.at = if error { None } else { locate(&std::path::Path::new(&cwd).join(crate::ui::tool_arg(t, "path")), crate::ui::tool_arg(t, "new")) };
+                        }
                         // a command that ran and failed is a failure on screen too: the lean tool server reports it as
                         // text alone ("[exit 1]", which every provider's model reads the same), and the step was ticked
                         // green (design review, 2026-11-19)
@@ -1461,6 +1584,7 @@ impl Session {
                             started_ms: self.now_ms,
                             done_ms: None,
                             sub: None,
+                            at: None,
                         }));
                         self.activity = Activity::Tool;
                     }
@@ -1716,6 +1840,46 @@ pub fn exit_line(output: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The window's edit from a message cuts the transcript and the model calls made after it: the calls' receipts and
+    /// token counts kept the cut part's, and the next run's receipt carried the cut run's spend (design review 13).
+    #[test]
+    fn a_cut_transcript_drops_the_calls_made_after_it() {
+        let mut s = Session::new("", "medium");
+        // a run: its message, one call with `out` output tokens, the process's running total cost at its end
+        let run = |s: &mut Session, text: &str, out: u64, total: f64, at: f64| {
+            s.apply(&json!({"type": "harness_user", "text": text}), at);
+            s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), at + 1.0);
+            s.apply(&json!({"type": "stream_event", "event": {"type": "message_delta", "usage": {"input_tokens": 10, "output_tokens": out}}}), at + 2.0);
+            s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": total}), at + 3.0);
+        };
+        run(&mut s, "first", 100, 0.10, 0.0);
+        let cut = s.blocks.len();
+        run(&mut s, "second", 200, 0.30, 10.0);
+        assert_eq!((s.turn_usage.len(), s.calls.len(), s.calls_view().len()), (2, 2, 2));
+        s.truncate(cut);
+        assert_eq!((s.turn_usage.len(), s.call_blocks.len(), s.call_bill.len(), s.calls.len()), (1, 1, 1, 1));
+        assert_eq!(s.calls_view()[0]["out"], 100, "the first call's figures stay");
+        // the run after the cut: its own calls' tokens and cost, not the cut run's as well
+        run(&mut s, "second, again", 50, 0.35, 20.0);
+        let Some(Block::Done(d)) = s.blocks.last() else { panic!("a Done") };
+        assert_eq!((d.run_usage.output, d.run_usage.input), (50, 10));
+        assert!((d.run_cost.unwrap() - 0.05).abs() < 1e-9, "{:?}", d.run_cost);
+    }
+
+    /// An edit is placed only in a regular file up to 4 MB: a device or a FIFO would never end the read (design review 13).
+    #[test]
+    #[cfg(unix)]
+    fn an_edit_is_placed_only_in_a_regular_file() {
+        let dir = std::env::temp_dir().join(format!("tazuna-locate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.rs"), "one\ntwo\nthree\n").unwrap();
+        assert_eq!(locate(&dir.join("a.rs"), "two"), Some((2, Some("one".into()), Some("three".into()))));
+        let fifo = dir.join("pipe");
+        let _ = std::process::Command::new("mkfifo").arg(&fifo).status();
+        assert_eq!((locate(std::path::Path::new("/dev/zero"), "x"), locate(&fifo, "x"), locate(&dir, "x")), (None, None, None), "returns at once");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// Every recorded call of every model, replayed through this code: the speed it shows against output over the time
     /// after the first token, and calls no real model could make (over 1,500 tok/s, or under 2). Reads the user's

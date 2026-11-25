@@ -4,7 +4,7 @@
 mod cockpit;
 mod zen;
 
-use crate::session::{Activity, Block, Session, Tool};
+use crate::session::{Activity, Block, Located, Session, Tool, change_counts, common_ends};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -19,7 +19,10 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 /// `accent` for the live state or the thing to act on, `ok` and `err` for results only, `warn` for limits, risk and a
 /// question that waits for you; the text levels are `text`, `ink2` (names and labels), `dim` and `faint`.
 pub struct Theme {
+    /// The background colours are mixed from, and the ink on the accent's tile.
     pub bg: Color,
+    /// What the screen is painted with: `bg`, or the terminal's own (Color::Reset) with `--theme terminal`.
+    pub canvas: Color,
     pub surface: Color,
     /// Behind code, as the desktop's `field`.
     pub field: Color,
@@ -42,33 +45,196 @@ const fn hex(c: u32) -> Color {
 // teal and violet, grey and pink, neon magenta and yellow), none of them the desktop app's (design review, 2026-11-19).
 // bg canvas, surface card, border line-strong (the hairline `line` is lost on a terminal's cell grid), dim muted.
 const DARK: Theme = Theme {
-    bg: hex(0x171613), surface: hex(0x211f1b), field: hex(0x2a2823), border: hex(0x3a3731), text: hex(0xece8df), ink2: hex(0xd2cdc2),
+    bg: hex(0x171613), canvas: hex(0x171613), surface: hex(0x211f1b), field: hex(0x2a2823), border: hex(0x3a3731), text: hex(0xece8df), ink2: hex(0xd2cdc2),
     dim: hex(0xafaa9e), faint: hex(0x9a958d), accent: hex(0x8f9bf0), warn: hex(0xe0b46a), err: hex(0xe08b7f), ok: hex(0x7cc08f),
 };
 const LIGHT: Theme = Theme {
-    bg: hex(0xf6f4ef), surface: hex(0xfffefb), field: hex(0xefebe3), border: hex(0xd8d2c5), text: hex(0x23221e), ink2: hex(0x3f3c35),
+    bg: hex(0xf6f4ef), canvas: hex(0xf6f4ef), surface: hex(0xfffefb), field: hex(0xefebe3), border: hex(0xd8d2c5), text: hex(0x23221e), ink2: hex(0x3f3c35),
     dim: hex(0x5b574f), faint: hex(0x69655d), accent: hex(0x3d4aa8), warn: hex(0xa76a14), err: hex(0xb4473a), ok: hex(0x3b7d4f),
 };
 
-/// `--theme light`, and a terminal that does not say it takes 24-bit colour: set once at start (`setup_colors`).
+/// The light palette (`--theme light`, or a light terminal), and a terminal that does not say it takes 24-bit colour: set
+/// once at start (`setup_colors`).
 static LIGHT_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static INDEXED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// `--theme terminal`: the palette on the terminal's own background, built once at start.
+static TERMINAL: std::sync::OnceLock<Theme> = std::sync::OnceLock::new();
 
 /// The theme, and whether colours go out as 24-bit: only where the terminal says so (COLORTERM truecolor or 24bit;
-/// macOS Terminal before 26 sets none and shows 24-bit colours wrong), else as the nearest of the 256.
-pub fn setup_colors(light: bool) {
+/// macOS Terminal before 26 sets none and shows 24-bit colours wrong), else as the nearest of the 256. `theme` is
+/// `--theme`'s word; `bg` the background the terminal reported (`terminal_background`): auto and terminal take light or
+/// dark from it (design review 13: a light terminal opened in the dark palette until `--theme light`).
+pub fn setup_colors(theme: &str, bg: Option<(u8, u8, u8)>) {
     use std::sync::atomic::Ordering::Relaxed;
+    let light = light_for(theme, bg);
     LIGHT_ON.store(light, Relaxed);
     INDEXED.store(!matches!(std::env::var("COLORTERM").as_deref(), Ok("truecolor" | "24bit")), Relaxed);
+    if theme == "terminal" {
+        let _ = TERMINAL.set(on_terminal(if light { &LIGHT } else { &DARK }, bg));
+    }
+}
+
+/// The light palette for `--theme light`, and for auto and terminal on a light background (its perceived brightness past
+/// half); dark without an answer.
+fn light_for(theme: &str, bg: Option<(u8, u8, u8)>) -> bool {
+    match theme {
+        "light" => true,
+        "dark" => false,
+        _ => bg.is_some_and(|(r, g, b)| 299 * r as u32 + 587 * g as u32 + 114 * b as u32 > 127_500),
+    }
+}
+
+/// `base` on the terminal's own background: the canvas left to the terminal, so its colour and padding show no frame
+/// around tazuna; panels, bands and pills on a surface a step from what it reported. A terminal that did not say (Windows,
+/// screen, mosh, tmux before 3.3) keeps the theme's canvas: under its unknown colour a band could vanish or glare.
+fn on_terminal(base: &Theme, bg: Option<(u8, u8, u8)>) -> Theme {
+    let Some((r, g, b)) = bg else { return Theme { ..*base } };
+    let ground = Color::Rgb(r, g, b);
+    Theme { bg: ground, canvas: Color::Reset, surface: lerp(ground, base.text, 0.06), field: lerp(ground, base.text, 0.10), ..*base }
+}
+
+/// What the terminal said when asked at start (`terminal_background`): its background, the keys typed while it answered
+/// (read with the answers, so they go into the message box), and whether it left the question open: an answer may still
+/// come, and the live screen drops it if it does.
+#[derive(Default)]
+pub struct Probe {
+    pub bg: Option<(u8, u8, u8)>,
+    pub typed: String,
+    /// An Enter typed after them: the draft is sent, as an Enter typed while tazuna starts sends it (0.1.194).
+    pub enter: bool,
+    /// Ctrl-C among them: tazuna ends before its screen opens, as it would have on that key.
+    pub quit: bool,
+    pub unanswered: bool,
+}
+
+/// The terminal's background as it reports it (OSC 11), for `--theme auto|terminal`. A device-attributes query goes
+/// behind it: terminals answer that one, in order, so one that keeps quiet about its background (tmux before 3.3) is known
+/// at once; one that answers neither gets 150 ms, over ssh a second. Asked in raw mode, so no answer is echoed. Not asked
+/// at all while keys wait in the input: they would be read with the answers (type-ahead kept since 0.1.194); keys that
+/// come during the wait are handed back in `typed`. On stdin, not /dev/tty: macOS's poll() reports /dev/tty invalid at
+/// once, and a read then waited for ever on a terminal that never answers.
+#[cfg(unix)]
+pub fn terminal_background() -> Probe {
+    use std::io::Write;
+    let ready = |ms: i32| {
+        let mut p = libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 };
+        // SAFETY: one pollfd on stdin
+        unsafe { libc::poll(&mut p, 1, ms) > 0 && p.revents & libc::POLLIN != 0 }
+    };
+    // SAFETY: plain libc calls on stdin's descriptor; termios is plain data, filled by tcgetattr before use
+    unsafe {
+        if libc::isatty(0) != 1 || libc::isatty(1) != 1 || ready(0) {
+            return Probe::default();
+        }
+        let mut old: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(0, &mut old) != 0 {
+            return Probe::default();
+        }
+        let mut raw = old;
+        libc::cfmakeraw(&mut raw);
+        libc::tcsetattr(0, libc::TCSANOW, &raw);
+        let mut out = std::io::stdout();
+        let _ = out.write_all(b"\x1b]11;?\x1b\\\x1b[c").and_then(|_| out.flush());
+        let remote = std::env::var_os("SSH_CONNECTION").is_some() || std::env::var_os("SSH_TTY").is_some();
+        let end = std::time::Instant::now() + std::time::Duration::from_millis(if remote { 1000 } else { 150 });
+        let (mut got, mut answered) = (Vec::new(), false);
+        while !answered {
+            let left = end.saturating_duration_since(std::time::Instant::now()).as_millis() as i32;
+            if left <= 0 || !ready(left) {
+                break;
+            }
+            let mut buf = [0u8; 256];
+            match libc::read(0, buf.as_mut_ptr().cast(), buf.len()) {
+                n if n > 0 => got.extend_from_slice(&buf[..n as usize]),
+                _ => break,
+            }
+            answered = attributes_answered(&got);
+        }
+        libc::tcsetattr(0, libc::TCSANOW, &old);
+        Probe { unanswered: !answered, ..split_answers(&got) }
+    }
+}
+
+#[cfg(not(unix))]
+pub fn terminal_background() -> Probe {
+    Probe::default()
+}
+
+/// What came in while the terminal was asked: its background (OSC 11) and the keys typed meanwhile, as the message box
+/// would have taken them: the answers and any other escape sequence (an arrow key's) dropped whole, backspace applied, a
+/// last Enter sending the draft (`Probe::enter`) and Ctrl-C ending tazuna (`Probe::quit`).
+fn split_answers(got: &[u8]) -> Probe {
+    let (bg, text) = (osc11_colour(got), String::from_utf8_lossy(got));
+    let (mut typed, mut quit, mut c) = (String::new(), false, text.chars().peekable());
+    while let Some(ch) = c.next() {
+        match ch {
+            '\x1b' => match c.next() {
+                // OSC (the background's answer): to BEL or ST
+                Some(']') => while let Some(x) = c.next() {
+                    if x == '\x07' || (x == '\x1b' && c.next_if_eq(&'\\').is_some()) {
+                        break;
+                    }
+                },
+                // CSI (the device attributes' answer, an arrow key): to its final byte
+                Some('[') => while c.next().is_some_and(|x| !('\x40'..='\x7e').contains(&x)) {},
+                // SS3 (an arrow key in application mode), or Alt and a key: one more
+                Some('O') => _ = c.next(),
+                _ => {}
+            },
+            '\x7f' | '\x08' => _ = typed.pop(),
+            '\x03' => quit = true,
+            '\r' | '\n' => typed.push('\n'),
+            x if !x.is_control() => typed.push(x),
+            _ => {}
+        }
+    }
+    let enter = typed.ends_with('\n');
+    Probe { bg, typed: typed.trim_end_matches('\n').to_string(), enter, quit, unanswered: false }
+}
+
+/// The device-attributes answer (`ESC [ ? 62;22 c`) is in: nothing more is coming.
+fn attributes_answered(got: &[u8]) -> bool {
+    got.windows(3).enumerate().filter(|(_, w)| w == b"\x1b[?").any(|(i, _)| {
+        got[i + 3..].iter().position(|b| !(b.is_ascii_digit() || *b == b';')).is_some_and(|k| got[i + 3 + k] == b'c')
+    })
+}
+
+/// The colour in an OSC 11 answer, `ESC ] 11 ; rgb:RRRR/GGGG/BBBB` (1 to 4 hex digits a channel) ended by BEL or ST.
+fn osc11_colour(got: &[u8]) -> Option<(u8, u8, u8)> {
+    let text = String::from_utf8_lossy(got);
+    let rest = &text[text.find("]11;")? + 4..];
+    let body = rest.split(['\x07', '\x1b']).next()?;
+    let mut ch = body.strip_prefix("rgb:").or_else(|| body.strip_prefix("rgba:"))?.split('/').map(|h| {
+        let v = u32::from_str_radix(h, 16).ok().filter(|_| (1..=4).contains(&h.len()))?;
+        Some((v * 255 / ((1 << (4 * h.len())) - 1)) as u8)
+    });
+    Some((ch.next()??, ch.next()??, ch.next()??))
 }
 
 /// The frame's colours as the nearest of the 256, where the terminal takes no more. On the drawn cells, not on the
 /// theme: the effects mix colours of their own.
 pub fn fit_colors(buf: &mut ratatui::buffer::Buffer) {
-    if !INDEXED.load(std::sync::atomic::Ordering::Relaxed) {
-        return;
+    use std::sync::atomic::Ordering::Relaxed;
+    if INDEXED.load(Relaxed) {
+        fit_to_256(buf, Design::Zen.theme(), LIGHT_ON.load(Relaxed));
     }
-    let fit = |c: Color| if let Color::Rgb(r, g, b) = c { Color::Indexed(to_256(r, g, b)) } else { c };
+}
+
+/// The colours a frame mixes for the diff's bands and marks and for a pill's ground, and the cube colour each takes in 256
+/// colours ([dark, light]): the nearest of the 256 rounded a 16% tint into the background's own grey, so the bands and the
+/// pills vanished (design review 13).
+fn tints(th: &Theme) -> [(Color, [u8; 2]); 6] {
+    [(lerp(th.bg, th.err, 0.16), [52, 224]), (lerp(th.bg, th.ok, 0.16), [22, 194]), (lerp(th.bg, th.err, 0.38), [88, 217]),
+        (lerp(th.bg, th.ok, 0.38), [28, 157]), (lerp(th.bg, th.warn, 0.18), [58, 223]), (th.surface, [236, 254])]
+}
+
+fn fit_to_256(buf: &mut ratatui::buffer::Buffer, th: &Theme, light: bool) {
+    let tints = tints(th);
+    let fit = |c: Color| match (tints.iter().find(|(t, _)| *t == c), c) {
+        (Some((_, cube)), _) => Color::Indexed(cube[usize::from(light)]),
+        (None, Color::Rgb(r, g, b)) => Color::Indexed(to_256(r, g, b)),
+        _ => c,
+    };
     for cell in &mut buf.content {
         (cell.fg, cell.bg) = (fit(cell.fg), fit(cell.bg));
     }
@@ -92,9 +258,10 @@ pub enum Design {
 }
 
 impl Design {
-    /// One palette for every design (they differ in arrangement); the light one with `--theme light`.
+    /// One palette for every design (they differ in arrangement); the light one on a light terminal or with `--theme
+    /// light`, on the terminal's own background with `--theme terminal`.
     pub fn theme(self) -> &'static Theme {
-        if LIGHT_ON.load(std::sync::atomic::Ordering::Relaxed) { &LIGHT } else { &DARK }
+        TERMINAL.get().unwrap_or(if LIGHT_ON.load(std::sync::atomic::Ordering::Relaxed) { &LIGHT } else { &DARK })
     }
 
     /// `--design N`, a replay's digit and the saved choice. The numbers are the ones scripts know from the four designs:
@@ -438,7 +605,7 @@ pub struct DiffPanel {
 
 pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
     let th = v.design.theme();
-    f.render_widget(ratatui::widgets::Block::new().style(Style::new().bg(th.bg)), f.area());
+    f.render_widget(ratatui::widgets::Block::new().style(Style::new().bg(th.canvas)), f.area());
     let areas = match v.design {
         Design::Cockpit => cockpit::draw(f, s, v, th),
         Design::Zen => zen::draw(f, s, v, th),
@@ -467,7 +634,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
         for y in area.y..area.bottom() {
             for x in area.x..area.right() {
                 if let Some(c) = buf.cell_mut((x, y)) {
-                    c.set_style(Style::new().fg(th.border).bg(th.bg).remove_modifier(Modifier::all()));
+                    c.set_style(Style::new().fg(th.border).bg(th.canvas).remove_modifier(Modifier::all()));
                 }
             }
         }
@@ -523,7 +690,7 @@ fn overlay(f: &mut Frame, th: &Theme, area: Rect, title: &str, count: &str, keys
     let left = room.saturating_sub(if count.is_empty() { 0 } else { count.width() + 4 });
     let name = ellipsis(name, left);
     let more = if more.is_empty() || left < name.width() + 6 { String::new() } else { format!("  {}", ellipsis(more, left - name.width() - 2)) };
-    let mut block = Block::new().borders(Borders::ALL).border_style(st(th.border)).style(Style::new().bg(th.bg))
+    let mut block = Block::new().borders(Borders::ALL).border_style(st(th.border)).style(Style::new().bg(th.canvas))
         .title_top(Line::from(vec![Span::raw(" "), Span::styled(name, st(th.text).add_modifier(Modifier::BOLD)), Span::styled(more, st(th.faint)), Span::raw(" ")]));
     if !count.is_empty() {
         block = block.title_top(Line::from(vec![Span::styled(format!(" {count} "), st(th.faint)), Span::styled("─", st(th.border))]).right_aligned());
@@ -774,15 +941,8 @@ pub fn written_by_tools(s: &Session, skip: &[String]) -> Vec<Changed> {
         if path.is_empty() || t.error {
             continue;
         }
-        let pairs: Vec<(String, String)> = match t.name.as_str() {
-            "Edit" | "edit" => vec![(tool_arg(t, "old").to_string(), tool_arg(t, "new").to_string())],
-            "MultiEdit" => t.input["edits"].as_array().into_iter().flatten()
-                .map(|e| (e["old_string"].as_str().unwrap_or_default().to_string(), e["new_string"].as_str().unwrap_or_default().to_string())).collect(),
-            "Write" | "write" => vec![(String::new(), t.input["content"].as_str().unwrap_or_default().to_string())],
-            "NotebookEdit" => vec![(String::new(), t.input["new_source"].as_str().unwrap_or_default().to_string())],
-            _ => continue,
-        };
-        let f = rel(s, path);
+        let Some(pairs) = t.replaced() else { continue };
+        let f = repo_path(&s.cwd, path);
         if skip.contains(&f) {
             continue;
         }
@@ -801,6 +961,86 @@ pub fn written_by_tools(s: &Session, skip: &[String]) -> Vec<Changed> {
             d.extend(new.lines().map(|l| format!("+{l}")));
             c.removed += old.lines().count() as u64;
             c.added += new.lines().count() as u64;
+        }
+    }
+    out
+}
+
+/// The span of `a` that differs from `b`, in characters, widened to whole words: None where the two share nothing at
+/// either end (the whole line is new), or `a` lost nothing.
+fn changed_span(a: &str, b: &str) -> Option<(usize, usize)> {
+    let (x, y): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let pre = x.iter().zip(&y).take_while(|(p, q)| p == q).count();
+    let suf = x[pre..].iter().rev().zip(y[pre..].iter().rev()).take_while(|(p, q)| p == q).count();
+    let word = |c: &char| c.is_alphanumeric() || *c == '_';
+    let start = (0..=pre).rev().find(|&i| i == 0 || !word(&x[i - 1])).unwrap_or(0);
+    let end = (x.len() - suf..=x.len()).find(|&i| i == x.len() || !word(&x[i])).unwrap_or(x.len());
+    (pre + suf > 0 && start < end).then_some((start, end))
+}
+
+/// An edit as diff rows the column's width (desktop/mockups/v10.html T3): the old and new line numbers in a gutter where
+/// the file shows where it went (else the bar), a line of the file above and under it and the lines it kept as context,
+/// its removed and added lines on bands of the err and ok colours mixed into the background, and the words a line changed
+/// on a stronger band against the line that replaced it. No syntax colours: a grammar engine is not worth its size here.
+fn diff_rows(old: &str, new: &str, at: Option<Located>, th: &Theme, width: usize, limit: usize) -> Vec<Prefixed> {
+    let tabs = |l: &str| l.replace('\t', "    ");
+    let (o, n): (Vec<String>, Vec<String>) = (old.lines().map(tabs).collect(), new.lines().map(tabs).collect());
+    let (or, nr): (Vec<&str>, Vec<&str>) = (o.iter().map(String::as_str).collect(), n.iter().map(String::as_str).collect());
+    let (p, q) = common_ends(&or, &nr);
+    let start = at.as_ref().map(|a| a.0);
+    let num = |k: usize| start.map(|s| s + k);
+    // (old line, new line, sign, text, the changed span)
+    let mut rows: Vec<(Option<usize>, Option<usize>, char, String, Option<(usize, usize)>)> = Vec::new();
+    // context past three lines folds to a `⋯` row, and the file's line above or under goes with it: it sat beside lines it
+    // is not next to
+    let skipped = (None, None, '⋯', String::new(), None);
+    match &at {
+        _ if p > 3 => rows.push(skipped.clone()),
+        Some((line, Some(above), _)) => rows.push((Some(line - 1), Some(line - 1), ' ', tabs(above), None)),
+        _ => {}
+    }
+    rows.extend((p.saturating_sub(3)..p).map(|k| (num(k), num(k), ' ', o[k].clone(), None)));
+    let (gone, came) = (&o[p..o.len() - q], &n[p..n.len() - q]);
+    rows.extend(gone.iter().enumerate().map(|(j, l)| (num(p + j), None, '-', l.clone(), came.get(j).and_then(|r| changed_span(l, r)))));
+    rows.extend(came.iter().enumerate().map(|(j, l)| (None, num(p + j), '+', l.clone(), gone.get(j).and_then(|r| changed_span(l, r)))));
+    rows.extend((0..q.min(3)).map(|j| (num(o.len() - q + j), num(n.len() - q + j), ' ', o[o.len() - q + j].clone(), None)));
+    match &at {
+        _ if q > 3 => rows.push(skipped),
+        Some((_, _, Some(under))) => rows.push((num(o.len()), num(n.len()), ' ', tabs(under), None)),
+        _ => {}
+    }
+    let w = rows.iter().flat_map(|r| [r.0, r.1]).flatten().max().map_or(0, |m| m.to_string().len());
+    let cell = |x: Option<usize>| x.map_or(String::new(), |x| x.to_string());
+    let mut out: Vec<Prefixed> = Vec::new();
+    for (i, (a, b, sign, text, mark)) in rows.iter().enumerate() {
+        if i == limit {
+            out.push((Line::from(vec![Span::raw("    "), Span::styled(format!("… +{}", lines_n(rows.len() - limit)), st(th.faint))]), vec![]));
+            break;
+        }
+        let (fg, band) = match sign {
+            '-' => (th.err, Some(lerp(th.bg, th.err, 0.16))),
+            '+' => (th.ok, Some(lerp(th.bg, th.ok, 0.16))),
+            _ => (th.dim, None),
+        };
+        let on = |s: Style| band.map_or(s, |c| s.bg(c));
+        let gutter = if start.is_some() { format!("    {:>w$} {:>w$} ", cell(*a), cell(*b)) } else { format!("    {BAR}") };
+        if *sign == '⋯' {
+            out.push((Line::from(vec![Span::raw(" ".repeat(gutter.width())), Span::styled("⋯", st(th.faint))]), vec![]));
+            continue;
+        }
+        let body: Vec<char> = format!("{sign} {text}").chars().collect();
+        let mut spans = vec![Span::styled(gutter.clone(), on(st(th.faint)))];
+        let (x, y) = mark.map_or((body.len(), body.len()), |(x, y)| (x + 2, y + 2));
+        spans.push(Span::styled(body[..x].iter().collect::<String>(), on(st(fg))));
+        spans.push(Span::styled(body[x..y].iter().collect::<String>(), st(fg).bg(lerp(th.bg, fg, 0.38))));
+        spans.push(Span::styled(body[y..].iter().collect::<String>(), on(st(fg))));
+        spans.retain(|s| !s.content.is_empty());
+        let cont = [Span::styled(" ".repeat(gutter.width() + 2), on(Style::new()))];
+        for mut l in wrap(Line::from(spans), width.max(10), &cont) {
+            if let Some(c) = band {
+                l.spans.push(Span::styled(" ".repeat(width.max(10).saturating_sub(l.width())), Style::new().bg(c)));
+            }
+            out.push((l, vec![]));
         }
     }
     out
@@ -1780,6 +2020,38 @@ fn rel(s: &Session, p: &str) -> String {
     p.strip_prefix(&s.cwd).map(|r| r.trim_start_matches('/')).unwrap_or(p).to_string()
 }
 
+/// A file a tool named (absolute, or under `cwd`) as git names it: from the repository's root, with `/`, so one file is
+/// one file beside git's list from a subfolder or on Windows (the exit's recap counted it twice, design review 13).
+/// Outside a repository, as `rel`: from `cwd`.
+pub fn repo_path(cwd: &str, path: &str) -> String {
+    let slashes = |p: String| if cfg!(windows) { p.replace('\\', "/") } else { p };
+    let joined = std::path::Path::new(cwd).join(path);
+    let full = slashes(std::fs::canonicalize(&joined).unwrap_or_else(|_| joined.clone()).to_string_lossy().into_owned());
+    match repo_root(cwd) {
+        Some(root) => full.strip_prefix(&root).and_then(|r| r.strip_prefix('/')).map_or(full.clone(), str::to_string),
+        None => slashes(rel_to(cwd, &joined.to_string_lossy())),
+    }
+}
+
+fn rel_to(cwd: &str, p: &str) -> String {
+    p.strip_prefix(cwd).filter(|_| !cwd.is_empty()).map(|r| r.trim_start_matches(['/', '\\'])).unwrap_or(p).to_string()
+}
+
+/// The repository root above `cwd` (git rev-parse --show-toplevel, canonical, with `/`), asked once per folder.
+pub fn repo_root(cwd: &str) -> Option<String> {
+    static KEPT: std::sync::Mutex<Vec<(String, Option<String>)>> = std::sync::Mutex::new(Vec::new());
+    let mut kept = KEPT.lock().ok()?;
+    if let Some((_, root)) = kept.iter().find(|(c, _)| c == cwd) {
+        return root.clone();
+    }
+    let dir = if cwd.is_empty() { std::env::current_dir().ok()? } else { std::path::PathBuf::from(cwd) };
+    let root = std::process::Command::new("git").args(["rev-parse", "--show-toplevel"]).current_dir(&dir).output().ok().filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|r| !r.is_empty())
+        .map(|r| std::fs::canonicalize(&r).map_or(r, |p| p.to_string_lossy().into_owned())).map(|r| if cfg!(windows) { r.replace('\\', "/") } else { r });
+    kept.push((cwd.to_string(), root.clone()));
+    root
+}
+
 pub fn tool_summary(t: &Tool, s: &Session) -> String {
     let i = &t.input;
     let arg = |k: &str| tool_arg(t, k);
@@ -1817,15 +2089,8 @@ const SUMMARY_CHARS: usize = 160;
 
 // ---------------------------------------------------------------- transcript
 
-#[derive(Clone, Copy, PartialEq)]
-pub enum PromptStyle {
-    Bar,
-    Quote,
-}
-
 /// How a design wants the shared transcript drawn.
 pub struct Opts {
-    pub prompt: PromptStyle,
     /// Collapse runs of finished tool calls into one line (unless expanded).
     pub group_tools: bool,
     /// Show how long each tool took.
@@ -1834,15 +2099,16 @@ pub struct Opts {
 
 type Prefixed = (Line<'static>, Vec<Span<'static>>);
 
-/// The bar down the side of what is set apart: your message (cockpit), a quote, a tool's output. One glyph for the
-/// three; the output's was the box-drawing line (design review 11).
+/// The bar down the side of what is set apart: your message, a quote, a tool's output. One glyph for the three; the
+/// output's was the box-drawing line (design review 11).
 const BAR: &str = "▎ ";
 
 const PROMPT_LINES: usize = 8;
 const TOOL_LINES: usize = 10;
 
-/// Builds the wrapped transcript; also returns how many rows the newest block takes.
-pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> (Vec<Line<'static>>, usize, Vec<Option<usize>>) {
+/// Builds the wrapped transcript; also returns how many rows the newest block takes and how many rows under it are not
+/// its own (the working row), for the effect that fades a new block in.
+pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> (Vec<Line<'static>>, (usize, usize), Vec<Option<usize>>) {
     let mut lines: Vec<Line<'static>> = Vec::new();
     // the block each line belongs to (None: the gap between blocks)
     let mut owners: Vec<Option<usize>> = Vec::new();
@@ -1886,16 +2152,33 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
         for (l, cont) in body {
             lines.extend(wrap(l, width.max(10), &cont));
         }
-        // the block under the mouse is shaded: a click opens or closes it
-        if v.hover.is_some_and(|h| (i..group_end).contains(&h)) {
+        // your message on a band the column's width, so it stands out when you scroll back (design review 13)
+        if matches!(b, Block::Prompt(_)) {
             for l in &mut lines[before..] {
+                l.spans.push(Span::raw(" ".repeat(width.saturating_sub(l.width()))));
                 l.style = l.style.bg(th.surface);
+            }
+        }
+        // the block under the mouse is shaded: a click opens or closes it. Your message is on the surface already: a step
+        // past it, so a folded long one shows it opens (design review 13)
+        if v.hover.is_some_and(|h| (i..group_end).contains(&h)) {
+            let shade = if matches!(b, Block::Prompt(_)) { th.field } else { th.surface };
+            for l in &mut lines[before..] {
+                l.style = l.style.bg(shade);
             }
         }
         owners.resize(lines.len(), Some(i));
         last_rows = lines.len() - before;
         i = group_end;
     }
+    // the run at work, at the live end: rows of no block, so a new block's fade leaves them be (design review 13)
+    let before = lines.len();
+    if working(s, v) && !lines.is_empty() {
+        lines.push(Line::default());
+        lines.extend(wrap(working_row(s, v, th), width.max(10), &[Span::raw("   ")]));
+        owners.resize(lines.len(), None);
+    }
+    let tail = lines.len() - before;
     let footer = background_lines(s, v, th, width);
     if !footer.is_empty() {
         last_rows = 0; // the newest block is no longer the bottom rows: no effect on them
@@ -1905,7 +2188,63 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
             owners.push(owner);
         }
     }
-    (lines, last_rows, owners)
+    (lines, (last_rows, tail), owners)
+}
+
+/// A run is at work and nothing else speaks for it (a question, a retry's wait and a provider's keep-alive have words of
+/// their own): the working row shows, and zen's status says it in short.
+pub fn working(s: &Session, v: &View) -> bool {
+    v.live && v.asking.is_none() && s.retry_in(v.clock_ms).is_none() && s.waiting_note.is_none()
+        && matches!(s.activity, Activity::Starting | Activity::Waiting | Activity::Thinking | Activity::Writing | Activity::Tool | Activity::Verifying)
+}
+
+/// The working row (desktop/mockups/v10.html T1): the mark pulsing between the accent and a dimmer one, "Working" with one
+/// cell lit in the accent, then the time, the output so far and the step. Both move on the spinner's 80 ms frame, which is
+/// drawn anyway: no timer and no frame of their own. Until design review 13 the run said only "⠋ Working 12 s", at the
+/// status line's right edge.
+fn working_row(s: &Session, v: &View, th: &Theme) -> Line<'static> {
+    const WORD: &str = "Working";
+    let frame = (v.clock_ms / 80.0) as usize;
+    let pulse = 0.5 + 0.5 * (frame as f64 / 20.0 * std::f64::consts::TAU).cos();
+    let mut spans = vec![Span::styled("手", st(lerp(lerp(th.accent, th.bg, 0.45), th.accent, pulse)).add_modifier(Modifier::BOLD)), Span::raw(" ")];
+    let lit = frame % (WORD.len() + 5);
+    spans.extend(WORD.chars().enumerate().map(|(i, c)| Span::styled(c.to_string(), st(if i == lit { th.accent } else { th.dim }).add_modifier(Modifier::BOLD))));
+    let mut facts = vec![wait_str(s.working_for(v.clock_ms) / 1000.0)];
+    if s.run_output() > 0 {
+        facts.push(format!("↓ {} tokens", human(s.run_output())));
+    }
+    facts.push(doing(s));
+    // each fact whole, the dot held to the one before it: the row breaks between facts at 60 columns
+    spans.push(Span::styled(format!("  {}", facts.iter().map(|f| whole(f)).collect::<Vec<_>>().join("\u{a0}· ")), st(th.faint)));
+    Line::from(spans)
+}
+
+/// What the run does now, in a few words: "editing main.rs", "running ls -la", "thinking".
+fn doing(s: &Session) -> String {
+    let open = s.blocks.iter().rev().find_map(|b| match b {
+        Block::Tool(t) if t.result.is_none() && t.done_ms.is_none() => Some(t),
+        _ => None,
+    });
+    match (s.activity, open) {
+        (Activity::Tool, Some(t)) => {
+            let name = short_name(&t.name);
+            let verb = match name {
+                "edit" | "write" | "NotebookEdit" => "editing",
+                "read" => "reading",
+                "bash" => "running",
+                "Grep" | "Glob" | "search" | "WebSearch" => "searching",
+                "fetch" | "WebFetch" => "fetching",
+                _ => name,
+            };
+            match tool_summary(t, s) {
+                what if what == "…" || what.is_empty() => verb.to_string(),
+                what => format!("{verb} {}", ellipsis(&what, 40)),
+            }
+        }
+        (Activity::Writing, _) => "writing".into(),
+        (Activity::Verifying, _) => "running the tests".into(),
+        _ => "thinking".into(),
+    }
 }
 
 /// The rows of a running background task under the transcript are owned by `TASK_ROW + its place in View::running`, not
@@ -1961,7 +2300,7 @@ fn lerp(a: Color, b: Color, t: f64) -> Color {
 /// Draws the transcript's lines that fit, `scroll` rows up from the end. Returns the newest block's rows (when at the
 /// bottom) and the block on each screen row.
 /// Also returns the transcript line on the area's first row (a mouse selection holds lines, not rows).
-pub fn render_transcript(f: &mut Frame, area: Rect, (lines, last_rows, owners): (Vec<Line<'static>>, usize, Vec<Option<usize>>), scroll: usize, th: &Theme) -> (Option<Rect>, Vec<Option<usize>>, usize) {
+pub fn render_transcript(f: &mut Frame, area: Rect, (lines, (last_rows, tail), owners): (Vec<Line<'static>>, (usize, usize), Vec<Option<usize>>), scroll: usize, th: &Theme) -> (Option<Rect>, Vec<Option<usize>>, usize) {
     // scrolled up: the last row says how far the end is (nothing said the view was not at the end, design review 11);
     // the transcript keeps the rows above it
     let marked = scroll > 0 && area.height > 2 && lines.len() > area.height as usize;
@@ -1978,11 +2317,52 @@ pub fn render_transcript(f: &mut Frame, area: Rect, (lines, last_rows, owners): 
         f.render_widget(Paragraph::new(Span::styled(pill, Style::new().fg(th.ink2).bg(th.field))), at);
     }
     let rows = owners.into_iter().skip(start).take(h).collect();
-    let last = (scroll == 0 && last_rows > 0 && shown > 0).then(|| {
-        let rows = last_rows.min(shown) as u16;
-        Rect { y: area.y + shown as u16 - rows, height: rows, ..area }
+    // the newest block's rows, above the rows of no block under it
+    let last = (scroll == 0 && last_rows > 0 && shown > tail).then(|| {
+        let rows = last_rows.min(shown - tail) as u16;
+        Rect { y: area.y + (shown - tail) as u16 - rows, height: rows, ..area }
     });
     (last, rows, start)
+}
+
+/// The line tazuna leaves in the terminal after a conversation, over the way back to it (design review 13,
+/// desktop/mockups/v10.html T6): "手 tazuna · 3 turns · 2 files changed +5 −1 · $0.04 · 4 min". This sitting's runs only:
+/// those after the notice a continued (`-c`) or resumed (/resume) conversation opens with, which follows the earlier
+/// conversation's replayed blocks. Its files are git's since the conversation began (`git`) and those its runs' edit tools
+/// changed outside git; the money as the header splits it (`cost_str`); the time is the runs' own. None before a run
+/// finished: the last line was a session file's path, or nothing.
+pub fn recap(s: &Session, git: &[Changed]) -> Option<String> {
+    let opened = |t: &str| ["── continued from here", "── resumed session", "This conversation ran on"].iter().any(|n| t.starts_with(n));
+    let from = s.blocks.iter().rposition(|b| matches!(b, Block::Notice { text, .. } if opened(text))).map_or(0, |k| k + 1);
+    let runs: Vec<&crate::session::Summary> = s.blocks[from..].iter().filter_map(|b| if let Block::Done(d) = b { Some(d) } else { None }).collect();
+    if runs.is_empty() {
+        return None;
+    }
+    let mut files: Vec<(&str, u64, u64)> = git.iter().map(|c| (c.path.as_str(), c.added, c.removed)).collect();
+    for c in runs.iter().flat_map(|d| &d.changes) {
+        match files.iter().position(|f| f.0 == c.path) {
+            Some(k) if k >= git.len() => (files[k].1, files[k].2) = (files[k].1 + c.added, files[k].2 + c.removed),
+            Some(_) => {}
+            None => files.push((&c.path, c.added, c.removed)),
+        }
+    }
+    let mut parts = vec!["手 tazuna".to_string(), format!("{} turn{}", runs.len(), if runs.len() == 1 { "" } else { "s" })];
+    if !files.is_empty() {
+        let (added, removed) = files.iter().fold((0, 0), |(a, r), f| (a + f.1, r + f.2));
+        parts.push(format!("{} changed +{added} −{removed}", files_n(files.len())));
+    }
+    let known: Vec<(f64, bool)> = runs.iter().filter_map(|d| d.run_cost.map(|c| (c, d.bill.as_ref().is_some_and(|b| b.plan)))).collect();
+    let about = if runs.iter().any(|d| d.estimate || d.run_cost.is_none()) { "≈" } else { "" };
+    let (paid, plan): (f64, f64) = (known.iter().filter(|k| !k.1).map(|k| k.0).sum(), known.iter().filter(|k| k.1).map(|k| k.0).sum());
+    parts.push(match (known.is_empty(), paid > 0.0, plan > 0.0) {
+        (true, ..) => "cost not known".to_string(),
+        (_, true, true) => format!("{about}{} + {} on Claude plan", usd(paid), usd(plan)),
+        (_, false, true) => format!("{about}{} on Claude plan", usd(plan)),
+        _ => format!("{about}{}", usd(paid)),
+    });
+    let secs: f64 = runs.iter().map(|d| d.secs).sum();
+    parts.push(if secs < 60.0 { format!("{secs:.0} s") } else { format!("{} min", (secs / 60.0).round() as u64) });
+    Some(parts.join(" · "))
 }
 
 /// tazuna's mark in two cells, as the window's: 手 (te, the hand of 手綱, the reins) on the accent, between half blocks that
@@ -2105,7 +2485,7 @@ fn news_lines(n: &crate::versions::News, th: &Theme) -> Vec<Prefixed> {
 
 fn block_lines(b: &Block, i: usize, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool, width: usize) -> Vec<Prefixed> {
     match b {
-        Block::Prompt(p) => prompt_lines(p, first_prompt(s, b), th, o, open, width, v.live),
+        Block::Prompt(p) => prompt_lines(p, th, open, width, v.live),
         Block::Verify(x) => verify_lines(x, v, th),
         // a long notice (a provider's error) shows its start until clicked, then all of it
         // a provider's error reads as its message ("provider error: [404] … not found"), the raw reply on a click
@@ -2220,10 +2600,26 @@ fn block_lines(b: &Block, i: usize, s: &Session, v: &View, th: &Theme, o: &Opts,
             // an estimate says so, and a cost nobody can tell is not shown as one (design review 12)
             let cost = d.run_cost.map_or("cost not known".into(), |c| format!("{}{}", if d.estimate { "≈" } else { "" }, usd(c)));
             let mut first = vec![Span::styled(format!("{glyph} {word}"), st(color).add_modifier(Modifier::BOLD)), Span::styled(format!("  {}  {}", whole(&took), whole(&cost)), st(th.dim))];
-            if !open {
+            // what the run changed, file by file, without ctrl-o: it was folded into "ran 4 tools" until opened (design
+            // review 13, desktop/mockups/v10.html T3). Each file whole, so the row wraps between them.
+            // (worked out once, when the run ended: Summary::changes); a file written over whole says so, not "+200"
+            let files = &d.changes;
+            const SHOWN: usize = 4;
+            for (k, c) in files.iter().take(SHOWN).enumerate() {
+                let counts = [(c.added > 0 || c.removed == 0).then(|| format!("+{}", c.added)), (c.removed > 0).then(|| format!("−{}", c.removed))];
+                first.push(Span::styled(format!("{}{}", if k == 0 { "   " } else { "  " }, whole(&c.path)), st(th.text)));
+                let said = if c.rewritten { "rewritten".to_string() } else { counts.into_iter().flatten().collect::<Vec<_>>().join("\u{a0}") };
+                first.push(Span::styled(format!("\u{a0}{said}"), st(if c.rewritten { th.dim } else { th.ok })));
+            }
+            if files.len() > SHOWN {
+                first.push(Span::styled(format!("  {}", whole(&format!("+{} more", files.len() - SHOWN))), st(th.faint)));
+            }
+            if !files.is_empty() && !v.expand_all {
+                first.push(Span::styled(format!("   {}", whole(if v.live { "ctrl-o diffs" } else { "e diffs" })), st(th.faint)));
+            } else if files.is_empty() && !open {
                 first.push(Span::styled(FOLD_SHUT, st(th.faint)));
             }
-            let mut out = vec![(Line::from(first), vec![])];
+            let mut out = vec![(Line::from(first), vec![Span::raw("  ")])];
             if open {
                 // it wraps between its facts, each whole: "· 424" / "tok/s end to end" (design review 13)
                 let facts: Vec<String> = facts.iter().map(|f| whole(f)).collect();
@@ -2265,44 +2661,23 @@ fn verify_lines(x: &crate::session::Verify, v: &View, th: &Theme) -> Vec<Prefixe
     out
 }
 
-/// The opening message is the task; later ones are follow-ups.
-fn first_prompt(s: &Session, b: &Block) -> bool {
-    s.blocks.iter().find(|x| matches!(x, Block::Prompt(_))).is_some_and(|x| std::ptr::eq(x, b))
-}
-
-/// A long prompt shows its first PROMPT_LINES lines until it is opened (a click on it, or ctrl+o for every block).
-fn prompt_lines(p: &str, first: bool, th: &Theme, o: &Opts, open: bool, width: usize, live: bool) -> Vec<Prefixed> {
+/// Your message, the same in both designs: an accent bar down its side and upright text in the second ink, on a band
+/// (`transcript`). Zen set it in dim italics, which read as a note from the model, and cockpit under a "│ you" label
+/// (design review 13, desktop/mockups/v10.html T2). A long one shows its first PROMPT_LINES lines until it is opened (a
+/// click on it, or ctrl+o for every block).
+fn prompt_lines(p: &str, th: &Theme, open: bool, width: usize, live: bool) -> Vec<Prefixed> {
     let md = markdown(p, th, width.saturating_sub(4));
     let keep = if open { md.len() } else { PROMPT_LINES };
     let more = md.len().saturating_sub(keep);
     let fold_hint = if live { "click to show" } else { "e to expand" };
-    let mut out: Vec<Prefixed> = Vec::new();
-    match o.prompt {
-        PromptStyle::Bar => {
-            let bar = || Span::styled(BAR, st(th.faint));
-            // every message of yours is "you" (the first was "task", design review 5)
-            let _ = first;
-            let label = "you";
-            out.push((Line::from(vec![bar(), Span::styled(label, st(th.ink2).add_modifier(Modifier::BOLD))]), vec![bar()]));
-            for (mut l, mut cont) in md.into_iter().take(keep) {
-                l.spans.insert(0, bar());
-                cont.insert(0, bar());
-                out.push((l, cont));
-            }
-            if more > 0 {
-                out.push((Line::from(vec![bar(), Span::styled(format!("… {more} more lines · {fold_hint}"), st(th.faint))]), vec![]));
-            }
-        }
-        PromptStyle::Quote => {
-            // quiet: the task in italics, dimmed, no chrome
-            for (l, cont) in md.into_iter().take(keep) {
-                let spans = l.spans.into_iter().map(|sp| Span::styled(sp.content, st(th.dim).add_modifier(Modifier::ITALIC))).collect::<Vec<_>>();
-                out.push((Line::from(spans), cont));
-            }
-            if more > 0 {
-                out.push((Line::from(Span::styled(format!("… {more} more lines · {fold_hint}"), st(th.faint))), vec![]));
-            }
-        }
+    let bar = || Span::styled(BAR, st(th.accent));
+    let mut out: Vec<Prefixed> = md.into_iter().take(keep).map(|(l, mut cont)| {
+        let ink = l.spans.into_iter().map(|sp| if sp.style.fg == Some(th.text) { Span::styled(sp.content, sp.style.fg(th.ink2)) } else { sp });
+        cont.insert(0, bar());
+        (Line::from([vec![bar()], ink.collect()].concat()), cont)
+    }).collect();
+    if more > 0 {
+        out.push((Line::from(vec![bar(), Span::styled(format!("… {more} more lines · {fold_hint}"), st(th.faint))]), vec![bar()]));
     }
     out
 }
@@ -2324,7 +2699,10 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool,
         (Some(_), _) if t.declined() => "declined".to_string(),
         // a failed command says how it ended ("exit 1"), anything else "error"
         (Some(r), _) if t.error => crate::session::exit_line(r).and_then(|l| l.strip_prefix("[exit ")).map_or("error".to_string(), |c| format!("exit {}", c.trim_end_matches(']'))),
-        (Some(_), "edit") => format!("-{} +{}", arg("old").lines().count(), arg("new").lines().count()),
+        (Some(_), "edit") => {
+            let (added, removed) = change_counts(arg("old"), arg("new"));
+            format!("+{added} −{removed}")
+        }
         (Some(_), "write") => lines_n(arg("content").lines().count()),
         (Some(r), _) => lines_n(r.lines().count()),
         (None, _) if t.done_ms.is_some() => "stopped".to_string(),
@@ -2366,10 +2744,15 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool,
     if !fits && !meta.is_empty() {
         out.push((Line::from(vec![Span::raw("         "), Span::styled(meta.trim_start().to_string(), st(th.faint))]), vec![Span::raw("         ")]));
     }
+    // a click opens one call whole; ctrl-o opens all, each up to a screenful
+    let limit = if name == "edit" && !open { TOOL_LINES } else if name == "TodoWrite" { 30 } else if v.open.is_empty() || v.expand_all { TOOL_LINES * 2 } else { 400 };
+    // edits always show their diff: it is the most useful thing on screen; an opened write its content, as all new
+    match name {
+        "edit" => return [out, diff_rows(arg("old"), arg("new"), t.at.clone(), th, width, limit)].concat(),
+        "write" if open => return [out, diff_rows("", arg("content"), Some((1, None, None)), th, width, limit)].concat(),
+        _ => {}
+    }
     let body: Vec<(String, Color)> = match name {
-        // edits always show their diff: it is the most useful thing on screen
-        "edit" => arg("old").lines().map(|l| (format!("- {l}"), th.err)).chain(arg("new").lines().map(|l| (format!("+ {l}"), th.ok))).collect(),
-        "write" if open => arg("content").lines().map(|l| (format!("+ {l}"), th.ok)).collect(),
         // an opened subagent: its prompt, then its answer
         "Agent" | "Task" if open => prompt.lines().map(|l| (l.to_string(), th.text))
             .chain(t.result.as_deref().unwrap_or_default().lines().map(|l| (l.to_string(), th.dim))).collect(),
@@ -2401,8 +2784,6 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool,
         }
         _ => vec![],
     };
-    // a click opens one call whole; ctrl-o opens all, each up to a screenful
-    let limit = if name == "edit" && !open { TOOL_LINES } else if name == "TodoWrite" { 30 } else if v.open.is_empty() || v.expand_all { TOOL_LINES * 2 } else { 400 };
     for (l, c) in body.iter().take(limit) {
         let mut spans = gutter();
         spans.push(Span::styled(l.replace('\t', "    "), st(*c)));
@@ -2490,7 +2871,7 @@ fn group_lines(blocks: &[Block], s: &Session, v: &View, th: &Theme, o: &Opts, wi
 
 /// Just enough markdown for agent replies: headings, bullets, code fences, `code`, **bold**.
 fn markdown(text: &str, th: &Theme, width: usize) -> Vec<Prefixed> {
-    let mut out = Vec::new();
+    let mut out: Vec<Prefixed> = Vec::new();
     let mut in_code = false;
     let lines: Vec<&str> = text.lines().collect();
     let mut i = 0;
@@ -2526,6 +2907,20 @@ fn markdown(text: &str, th: &Theme, width: usize) -> Vec<Prefixed> {
             continue;
         }
         let t = raw.trim_start();
+        // a formula on lines of its own between `$$` or `\[ \]`: read to its end first. Every line simple TeX: the lines as
+        // maths without the fences; else the block as written, fences and all. Unclosed (still streaming), it is text.
+        if let Some(close) = match t.trim_end() { "$$" => Some("$$"), "\\[" => Some("\\]"), _ => None }
+            && let Some(len) = lines[i..].iter().position(|l| l.trim() == close)
+        {
+            let body = &lines[i..i + len];
+            let set: Option<Vec<String>> = body.iter().map(|l| math(l.trim())).collect();
+            match set.filter(|_| body.iter().any(|l| looks_like_tex(l, true))) {
+                Some(rows) => out.extend(rows.into_iter().map(|m| (Line::from(Span::styled(m, st(th.text).add_modifier(Modifier::ITALIC))), vec![]))),
+                None => out.extend(lines[i - 1..=i + len].iter().map(|l| (Line::from(Span::styled(l.to_string(), st(th.text))), vec![]))),
+            }
+            i += len + 1;
+            continue;
+        }
         // `---` alone on its line: a rule across the column (its three dashes showed, design review 11)
         if t.len() >= 3 && ["-", "*", "_"].iter().any(|c| t.trim_end().chars().all(|x| c.starts_with(x))) {
             out.push((Line::from(Span::styled("─".repeat(width.max(1)), st(th.border))), vec![]));
@@ -2542,7 +2937,13 @@ fn markdown(text: &str, th: &Theme, width: usize) -> Vec<Prefixed> {
             });
             out.push((Line::from([vec![bar()], words.collect()].concat()), vec![bar()]));
         } else if let Some(h) = t.strip_prefix('#') {
-            out.push((Line::from(Span::styled(h.trim_start_matches('#').trim().to_string(), st(th.text).add_modifier(Modifier::BOLD))), vec![]));
+            // air above it and an accent mark before it: a heading sat straight under the paragraph above and read as one
+            // more bold line (design review 13, desktop/mockups/v10.html T5)
+            if out.last().is_some_and(|(l, _)| l.width() > 0) {
+                out.push((Line::default(), vec![]));
+            }
+            out.push((Line::from(vec![Span::styled("▍", st(th.accent)), Span::styled(h.trim_start_matches('#').trim().to_string(), st(th.text).add_modifier(Modifier::BOLD))]),
+                vec![Span::raw(" ")]));
         } else if let Some((num, item)) = t.split_once(". ").filter(|(n, _)| (1..=3).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_digit())) {
             // numbered item: wrapped rows hang under the text, not the number
             let indent = " ".repeat(raw.len() - t.len());
@@ -2584,13 +2985,20 @@ fn inline(s: &str, th: &Theme) -> Vec<Span<'static>> {
                     spans.push(Span::styled(text, bold.fg(th.accent).add_modifier(Modifier::UNDERLINED)));
                     continue;
                 }
-                // *emphasis* in italics and ~~struck~~ text struck: their marks showed (design review 9); a lone "~~"
-                // stays as written
-                let struck = text.matches("~~").count() % 2 == 0;
-                for (k, piece) in if struck { text.split("~~").collect() } else { vec![text.as_str()] }.into_iter().enumerate() {
-                    let base = if k % 2 == 1 { bold.add_modifier(Modifier::CROSSED_OUT) } else { bold };
-                    for (run, em) in emphasis(piece) {
-                        spans.push(Span::styled(run, if em { base.add_modifier(Modifier::ITALIC) } else { base }));
+                for (run, maths) in tex(&text) {
+                    // simple maths in italics, as text (design review 13: it printed its TeX); a link's title stays as it is
+                    if maths {
+                        spans.push(Span::styled(run, bold.add_modifier(Modifier::ITALIC)));
+                        continue;
+                    }
+                    // *emphasis* in italics and ~~struck~~ text struck: their marks showed (design review 9); a lone "~~"
+                    // stays as written
+                    let struck = run.matches("~~").count() % 2 == 0;
+                    for (k, piece) in if struck { run.split("~~").collect() } else { vec![run.as_str()] }.into_iter().enumerate() {
+                        let base = if k % 2 == 1 { bold.add_modifier(Modifier::CROSSED_OUT) } else { bold };
+                        for (part, em) in emphasis(piece) {
+                            spans.push(Span::styled(part, if em { base.add_modifier(Modifier::ITALIC) } else { base }));
+                        }
                     }
                 }
             }
@@ -2598,6 +3006,82 @@ fn inline(s: &str, th: &Theme) -> Vec<Span<'static>> {
     }
     spans.retain(|s| !s.content.is_empty());
     spans
+}
+
+/// Text split into plain runs and simple maths (true), the maths as text (`math`) without its `$$…$$`, `\(…\)`, `\[…\]`
+/// or `$…$` fences. Only what reads as TeX counts (`looks_like_tex`): shell and regular expressions use the same marks
+/// ("$XDG_CONFIG_HOME/$APP_NAME", "cd $(git rev-parse …)/$DIR", "kill $$", "\(abc\)" in a BRE), and a formula `math` cannot
+/// set stays as written, fences and all: half-converted TeX reads worse than its source. A `$…$` also counts only as Pandoc
+/// reads it (no space inside either `$`, no digit after the closing one, design review 13).
+fn tex(s: &str) -> Vec<(String, bool)> {
+    let (mut out, mut plain, mut rest) = (vec![], String::new(), s);
+    while let Some(at) = rest.find(['$', '\\']) {
+        let fence = [("$$", "$$"), ("\\(", "\\)"), ("\\[", "\\]"), ("$", "$")].into_iter().find(|(o, _)| rest[at..].starts_with(o));
+        let found = fence.and_then(|(o, c)| {
+            let from = at + o.len();
+            let end = from + rest[from..].find(c)?;
+            let body = &rest[from..end];
+            let pandoc = o != "$" || !(body.starts_with([' ', '(', '{']) || body.ends_with(' ') || rest[end + 1..].starts_with(|d: char| d.is_ascii_digit()));
+            if pandoc && looks_like_tex(body, o == "$$") { math(body).map(|m| (m, end + c.len())) } else { None }
+        });
+        match found {
+            Some((m, end)) => {
+                plain.push_str(&rest[..at]);
+                out.push((std::mem::take(&mut plain), false));
+                out.push((m, true));
+                rest = &rest[end..];
+            }
+            None => {
+                let step = at + 1; // `$` and `\` are one byte
+                plain.push_str(&rest[..step]);
+                rest = &rest[step..];
+            }
+        }
+    }
+    plain.push_str(rest);
+    out.push((plain, false));
+    out.retain(|(t, _)| !t.is_empty());
+    out
+}
+
+/// TeX and not shell or a pattern: a command (`\Theta`) or a braced index or power (`_{`, `^{`); a bare `^` only in a
+/// display formula (`display`: `$$`), as "/^start$/,/^end$/" and "$x^2$y" are patterns and shell. Words, a lone `_` and
+/// brackets are not enough: "$HOME_DIR/$X", "$(cmd)" and "\(abc\)" read as maths with them.
+fn looks_like_tex(body: &str, display: bool) -> bool {
+    (display && body.contains('^')) || body.contains("_{") || body.contains("^{") || body.as_bytes().windows(2).any(|w| w[0] == b'\\' && w[1].is_ascii_alphabetic())
+}
+
+/// Simple TeX as text: Greek letters and a few symbols as Unicode, `t_{lookup}` as `t_lookup`; None for anything else
+/// (`\frac`, `\sum`, braces left over).
+fn math(body: &str) -> Option<String> {
+    const NAMES: [(&str, &str); 45] = [("alpha", "α"), ("beta", "β"), ("gamma", "γ"), ("delta", "δ"), ("epsilon", "ε"), ("varepsilon", "ε"), ("zeta", "ζ"),
+        ("eta", "η"), ("theta", "θ"), ("iota", "ι"), ("kappa", "κ"), ("lambda", "λ"), ("mu", "μ"), ("nu", "ν"), ("xi", "ξ"), ("pi", "π"), ("rho", "ρ"),
+        ("sigma", "σ"), ("tau", "τ"), ("phi", "φ"), ("varphi", "φ"), ("chi", "χ"), ("psi", "ψ"), ("omega", "ω"), ("Gamma", "Γ"), ("Delta", "Δ"),
+        ("Theta", "Θ"), ("Lambda", "Λ"), ("Xi", "Ξ"), ("Pi", "Π"), ("Sigma", "Σ"), ("Phi", "Φ"), ("Psi", "Ψ"), ("Omega", "Ω"), ("times", "×"),
+        ("cdot", "·"), ("le", "≤"), ("leq", "≤"), ("ge", "≥"), ("geq", "≥"), ("ne", "≠"), ("neq", "≠"), ("to", "→"), ("infty", "∞"), ("approx", "≈")];
+    let (mut out, mut rest) = (String::new(), body.trim());
+    while let Some(c) = rest.chars().next() {
+        if c == '\\' {
+            let name: String = rest[1..].chars().take_while(char::is_ascii_alphabetic).collect();
+            out.push_str(NAMES.iter().find(|(n, _)| *n == name)?.1);
+            rest = &rest[1 + name.len()..];
+        } else if matches!(c, '_' | '^') && rest[1..].starts_with('{') {
+            let end = rest.find('}')?;
+            let inner = &rest[2..end];
+            if inner.contains(['{', '\\']) {
+                return None;
+            }
+            out.push(c);
+            out.push_str(inner);
+            rest = &rest[end + 1..];
+        } else if matches!(c, '{' | '}') {
+            return None;
+        } else {
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    Some(out)
 }
 
 /// Text split into plain runs and `*emphasised*` ones (true), without their asterisks. An asterisk counts only where
@@ -2914,9 +3398,10 @@ pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
             spans.push(Span::styled("▍", st(th.accent)));
         }
         spans.push(Span::styled(placeholder.to_string(), st(th.faint)));
-        // full never asks: its label in the warning colour, so it is never on unnoticed
-        if v.live && v.mode != "auto" {
-            spans.push(Span::styled(format!("  [{}]", v.mode), st(if v.mode == "full" { th.warn } else { th.dim })));
+        // the mode as a pill, auto too; full in the warning colour, so it is never on unnoticed
+        if v.live {
+            spans.push(Span::raw("  "));
+            spans.extend(mode_pill(&v.mode, th, false));
         }
         if !v.vim.is_empty() {
             spans.push(Span::styled(format!("  [{}]", v.vim), st(th.accent)));
@@ -3186,6 +3671,27 @@ pub fn composer_step(v: &View, width: u16, down: bool) -> Option<usize> {
     Some(*end)
 }
 
+/// The permission mode as a pill, auto included (desktop/mockups/v10.html T4): its dot ok for auto, accent for the modes
+/// that ask, and full in the warn colour on a warn-tinted ground, saying what it means. The `[ask]` and `[full]` tags left
+/// auto unsaid, so it could not be told from a missing label (design review 13). `short`, where room is tight: full keeps
+/// its dot and "full", the others their dot.
+pub fn mode_pill(mode: &str, th: &Theme, short: bool) -> Vec<Span<'static>> {
+    let full = mode == "full";
+    let ground = if full { lerp(th.bg, th.warn, 0.18) } else { th.surface };
+    let dot = match mode {
+        "auto" => th.ok,
+        "full" => th.warn,
+        _ => th.accent,
+    };
+    let word = match (full, short) {
+        (true, false) => " full · never asks ".to_string(),
+        (true, true) => " full ".to_string(),
+        (false, false) => format!(" {mode} "),
+        (false, true) => " ".to_string(),
+    };
+    vec![Span::styled(" ●", Style::new().fg(dot).bg(ground)), Span::styled(word, Style::new().fg(if full { th.warn } else { th.dim }).bg(ground))]
+}
+
 /// One row under the input: a note for a moment ("copied 12 chars"), else the completions ("   tab › /compact  /clear").
 fn hint_row(v: &View, th: &Theme, width: u16) -> Option<Line<'static>> {
     if let Some((t, _)) = &v.toast {
@@ -3413,7 +3919,7 @@ mod tests {
 
     #[test]
     fn claude_and_lean_edits_read_the_same() {
-        let tool = |name: &str, input: serde_json::Value| Tool { id: String::new(), name: name.into(), input, result: None, error: false, started_ms: 0.0, done_ms: None, sub: None };
+        let tool = |name: &str, input: serde_json::Value| Tool { id: String::new(), name: name.into(), input, result: None, error: false, started_ms: 0.0, done_ms: None, sub: None, at: None };
         let lean = tool("mcp__lean__edit", serde_json::json!({"path": "/r/a.ts", "old": "x", "new": "y"}));
         let claude = tool("Edit", serde_json::json!({"file_path": "/r/a.ts", "old_string": "x", "new_string": "y", "replace_all": false}));
         for t in [&lean, &claude] {
@@ -3740,9 +4246,9 @@ mod tests {
         let prompt = "Repo: /x. Read scripts/load-secrets.sh from the PR branch.\n\nAnswer with line numbers:\n".to_string() + &"1. How is fetch_secret invoked? ".repeat(40);
         s.blocks.push(Block::Tool(Tool { id: "a".into(), name: "Agent".into(),
             input: serde_json::json!({"subagent_type": "explorer", "description": "Inspect load-secrets.sh retry impact", "prompt": prompt}),
-            result: Some("It runs sequentially.".into()), error: false, started_ms: 0.0, done_ms: Some(6700.0), sub: None }));
+            result: Some("It runs sequentially.".into()), error: false, started_ms: 0.0, done_ms: Some(6700.0), sub: None, at: None }));
         s.blocks.push(Block::Tool(Tool { id: "b".into(), name: "Bash".into(), input: serde_json::json!({"command": format!("gh run view 1 --jq '{}'", "x".repeat(400))}),
-            result: Some("ok".into()), error: false, started_ms: 0.0, done_ms: Some(4300.0), sub: None }));
+            result: Some("ok".into()), error: false, started_ms: 0.0, done_ms: Some(4300.0), sub: None, at: None }));
         let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
         let text = |v: &View| { let (l, _, owners) = transcript(&s, v, Design::Cockpit.theme(), &cockpit::OPTS, 100); (l.iter().map(|l| l.spans.iter().map(|x| x.content.to_string()).collect::<String>()).collect::<Vec<_>>(), owners) };
         let (closed, owners) = text(&v);
@@ -3942,7 +4448,7 @@ mod tests {
         assert_eq!(text[4], "  bash · Tick workflows loss window check · 12s");
         // a click on a task's rows opens it: they belong to the task, not to a block
         assert_eq!(&owners[owners.len() - 4..], [None, Some(TASK_ROW), Some(TASK_ROW), Some(TASK_ROW + 1)]);
-        assert_eq!((last, owners[..owners.len() - 4].iter().all(Option::is_none)), (0, true));
+        assert_eq!((last.0, owners[..owners.len() - 4].iter().all(Option::is_none)), (0, true));
         assert_eq!(lines_n(1), "1 line");
     }
 
@@ -3952,7 +4458,7 @@ mod tests {
         let draw = |n: usize, scroll: usize| {
             let lines: Vec<Line<'static>> = (0..n).map(|i| Line::from(format!("line {i}"))).collect();
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(30, 6)).unwrap();
-            term.draw(|f| { render_transcript(f, f.area(), (lines, 1, vec![None; n]), scroll, th); }).unwrap();
+            term.draw(|f| { render_transcript(f, f.area(), (lines, (1, 0), vec![None; n]), scroll, th); }).unwrap();
             let b = term.backend().buffer().clone();
             (0..6).map(|y| (0..30).map(|x| b[(x, y)].symbol()).collect::<String>().trim().to_string()).collect::<Vec<_>>()
         };
@@ -4124,7 +4630,7 @@ mod tests {
     fn cockpit_tools_show_the_average_and_tokens_an_axis() {
         let mut s = Session::new("", "medium");
         for i in 0..14 {
-            s.blocks.push(Block::Tool(Tool { id: format!("a{i}"), name: "Agent".into(), input: serde_json::json!({"description": "look"}), result: Some("ok".into()), error: false, started_ms: 0.0, done_ms: Some(131_600.0), sub: None }));
+            s.blocks.push(Block::Tool(Tool { id: format!("a{i}"), name: "Agent".into(), input: serde_json::json!({"description": "look"}), result: Some("ok".into()), error: false, started_ms: 0.0, done_ms: Some(131_600.0), sub: None, at: None }));
         }
         s.turn_usage = (0..40).map(|i| crate::session::Usage { input: 10, cache_write: 100, cache_read: 50_000, output: 200 + 300 * (i % 7) }).collect();
         s.calls.push(crate::session::CallTime { ttft_ms: Some(1500.0), gen_ms: 10_000.0, out: 12_000, total_ms: 11_500.0 });
@@ -4244,7 +4750,7 @@ mod tests {
         v.asking = None;
         on(&mut s, serde_json::json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "c1", "is_error": true, "content": "The user declined this. Ask what they want instead, or try another way."}]}}), 2.0);
         let screen = render(&s, &v);
-        assert!(screen.contains("⌁ declined edit") && !screen.contains("failed") && !screen.contains("ran 1 tool") && screen.contains("[ask]"), "{screen}");
+        assert!(screen.contains("⌁ declined edit") && !screen.contains("failed") && !screen.contains("ran 1 tool") && screen.contains(" ● ask "), "{screen}");
         v.expand_all = true;
         let screen = render(&s, &v);
         assert!(screen.contains("declined") && !screen.contains("Ask what they want"), "{screen}");
@@ -4260,17 +4766,17 @@ mod tests {
         let (l, _) = fit_row(line(&[" READY ", " T0 ", " CTX 0 ", " CACHE 0% "]), line(&[" 00:01 "]), 28);
         assert_eq!(l.to_string(), " READY  T0  CTX 0 ");
         assert_eq!(whole_hints("↑↓ model · ← providers · tab provider pin · enter choose · esc close", 50), "↑↓ model · ← providers · tab provider pin");
-        // a reply running: how long it has worked and the key that stops it; with a draft the first esc clears the draft,
-        // and the row says that instead
+        // a reply running: how long it has worked on the working row, the key that stops it in the status; with a draft
+        // the first esc clears the draft, and the status says that instead
         let mut w = Session::new("", "medium");
         on(&mut w, serde_json::json!({"type": "harness_user", "text": "go"}), 1_000.0);
         on(&mut w, serde_json::json!({"type": "stream_event", "event": {"type": "message_start"}}), 1_500.0);
         (v.input, v.hints, v.cursor, v.expand_all, v.clock_ms) = (String::new(), vec![], 0, false, 13_000.0);
         let screen = render(&w, &v);
-        assert!(screen.contains("Working 12 s · esc stops"), "{screen}");
+        assert!(screen.contains("Working  12 s · thinking") && screen.contains(" working · esc stops"), "{screen}");
         (v.input, v.cursor) = ("half a thought".into(), 14);
         let screen = render(&w, &v);
-        assert!(screen.contains("Working 12 s · esc clears the draft") && !screen.contains("esc stops"), "{screen}");
+        assert!(screen.contains("working · esc clears the draft") && !screen.contains("esc stops"), "{screen}");
         v.vim = "INSERT";
         assert!(!render(&w, &v).contains("· esc"), "vim's esc changes mode");
     }
@@ -4414,7 +4920,7 @@ mod tests {
 
     #[test]
     fn fetch_rows_show_a_title_link_and_scroll_sideways() {
-        let tool = |result: &str, url: &str| Tool { id: "f".into(), name: "fetch".into(), input: serde_json::json!({"url": url}), result: Some(result.into()), error: false, started_ms: 0.0, done_ms: Some(1.0), sub: None };
+        let tool = |result: &str, url: &str| Tool { id: "f".into(), name: "fetch".into(), input: serde_json::json!({"url": url}), result: Some(result.into()), error: false, started_ms: 0.0, done_ms: Some(1.0), sub: None, at: None };
         assert_eq!(fetch_label(&tool("[fetched https://x.com/a · \"Crypto prices today\", HTTP 200: web content]\nbody", "https://x.com/a")), "Crypto prices today");
         assert_eq!(fetch_label(&tool("[fetched https://api.coingecko.com/api/v3/global, HTTP 200: web content]\n{}", "https://api.coingecko.com/api/v3/global?x=1")), "api.coingecko.com/api/v3/global");
         let mut p = ListPanel { title: "fetch".into(), head: "  #   took     what".into(), rows: vec![(format!("{:>3}  {:>7}  {}  {}", 1, "0.5s", "✓", "Crypto prices today"), Tone::Plain)], scroll: 0,
@@ -4551,7 +5057,7 @@ mod tests {
     fn files_git_misses_get_the_tools_own_diff() {
         let mut s = Session::new("", "medium");
         s.cwd = "/repo".into();
-        let tool = |id: &str, name: &str, input: serde_json::Value, error: bool| Block::Tool(Tool { id: id.into(), name: name.into(), input, result: Some("ok".into()), error, started_ms: 0.0, done_ms: Some(10.0), sub: None });
+        let tool = |id: &str, name: &str, input: serde_json::Value, error: bool| Block::Tool(Tool { id: id.into(), name: name.into(), input, result: Some("ok".into()), error, started_ms: 0.0, done_ms: Some(10.0), sub: None, at: None });
         s.blocks.push(tool("a", "Edit", serde_json::json!({"file_path": "/repo/src/a.ts", "old_string": "let x = 1;", "new_string": "let x = 2;\nlet y = 3;"}), false));
         s.blocks.push(tool("b", "Write", serde_json::json!({"file_path": "/tmp/notes.md", "content": "one\ntwo"}), false));
         s.blocks.push(tool("c", "Edit", serde_json::json!({"file_path": "/repo/src/b.ts", "old_string": "x", "new_string": "y"}), true));
@@ -4568,17 +5074,14 @@ mod tests {
     #[test]
     fn a_long_prompt_opens_in_full() {
         let th = Design::Cockpit.theme();
-        let o = Opts { prompt: PromptStyle::Bar, group_tools: true, durations: false };
         let p = (1..=20).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n\n");
-        let text = |open| prompt_lines(&p, true, &th, &o, open, 80, true).iter().map(|(l, _)| l.to_string()).collect::<Vec<_>>().join("\n");
+        let text = |open| prompt_lines(&p, th, open, 80, true).iter().map(|(l, _)| l.to_string()).collect::<Vec<_>>().join("\n");
         let closed = text(false);
         assert!(closed.contains("more lines · click to show") && !closed.contains("line 20"), "{closed}");
         let opened = text(true);
         assert!(opened.contains("line 20") && !opened.contains("more lines"), "{opened}");
-        for prompt in [PromptStyle::Bar, PromptStyle::Quote] {
-            let replay = prompt_lines(&p, true, &th, &Opts { prompt, ..o }, false, 80, false).iter().map(|(l, _)| l.to_string()).collect::<String>();
-            assert!(replay.contains("e to expand") && !replay.contains("click to show"), "{replay}");
-        }
+        let replay = prompt_lines(&p, th, false, 80, false).iter().map(|(l, _)| l.to_string()).collect::<String>();
+        assert!(replay.contains("e to expand") && !replay.contains("click to show"), "{replay}");
     }
 
     #[test]
@@ -4592,5 +5095,341 @@ mod tests {
         assert!(rows[1].spans[0].content == "  ", "continuation rows start with the prefix");
         let text: String = rows.iter().flat_map(|r| r.spans.iter().map(|s| s.content.to_string())).collect();
         assert!(text.contains("epsilon"));
+    }
+
+    /// A frame of `s` as `v` draws it at `w`×`h`: its cells, and where the transcript went.
+    fn frame(s: &Session, v: &View, w: u16, h: u16) -> (ratatui::buffer::Buffer, Rect) {
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+        let mut at = Rect::default();
+        term.draw(|f| at = draw(f, s, v).transcript).unwrap();
+        (term.backend().buffer().clone(), at)
+    }
+
+    /// Its rows as text, a cell a character (a wide character's second cell a space).
+    fn rows_of(b: &ratatui::buffer::Buffer) -> Vec<String> {
+        (0..b.area.height).map(|y| (0..b.area.width).map(|x| b[(x, y)].symbol()).collect()).collect()
+    }
+
+    fn apply(s: &mut Session, e: serde_json::Value, at: f64) {
+        s.apply(&e, at);
+    }
+
+    /// Design review 13, T1: while a run works its live end says so, in both designs at 80 and 60 columns: the mark
+    /// pulsing in the accent, "Working" with one cell lit (the next on the next spinner frame), the time, the output so far
+    /// and the step, the row breaking between facts; zen's status keeps a short state. A question or the run's end takes
+    /// the row away.
+    #[test]
+    fn a_run_at_work_says_so_at_the_live_end() {
+        let mut s = Session::new("", "medium");
+        apply(&mut s, serde_json::json!({"type": "harness_user", "text": "change the greeting"}), 1_000.0);
+        apply(&mut s, serde_json::json!({"type": "stream_event", "event": {"type": "message_start"}}), 1_100.0);
+        apply(&mut s, serde_json::json!({"type": "stream_event", "event": {"type": "message_delta", "usage": {"output_tokens": 1200}}}), 2_000.0);
+        apply(&mut s, serde_json::json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "c1", "name": "edit",
+            "input": {"path": "src/components/settings/appearance.rs", "old": "a", "new": "b"}}]}}), 2_100.0);
+        let th = Design::Zen.theme();
+        for design in [Design::Zen, Design::Cockpit] {
+            for (w, h) in [(80u16, 24u16), (60, 20)] {
+                // frame 156 lights "W", 157 "o"; ten frames on the mark is half a pulse away
+                let at = |clock_ms: f64| frame(&s, &View { design, clock_ms, ..live_view() }, w, h).0;
+                let b = at(12_480.0);
+                let rows = rows_of(&b);
+                let screen = rows.join("\n");
+                let y = rows.iter().position(|r| r.contains("Working")).unwrap_or_else(|| panic!("{design:?} {w}: {screen}"));
+                assert!(rows[y].contains("手  Working  12 s · ↓ 1.2k tokens ·") && rows[y + 1].trim_matches([' ', '│']).starts_with("editing src/components/settings/appearance.rs"),
+                    "{design:?} {w}: the facts whole, the row broken between them: {screen}");
+                let (x, yy) = (rows[y].chars().position(|c| c == 'W').unwrap() as u16, y as u16);
+                let lit = |b: &ratatui::buffer::Buffer| (0..7u16).filter(|i| b[(x + i, yy)].fg == th.accent).collect::<Vec<_>>();
+                assert_eq!((lit(&b), lit(&at(12_560.0))), (vec![0], vec![1]), "{design:?} {w}: one cell lit, the next on the next frame");
+                assert_eq!(b[(x, yy)].symbol(), "W");
+                let mark = x - 3;
+                assert!(b[(mark, yy)].symbol() == "手" && b[(mark, yy)].fg != at(13_280.0)[(mark, yy)].fg, "{design:?} {w}: the mark pulses");
+                if design == Design::Zen {
+                    let status = rows.iter().rev().find(|r| !r.trim().is_empty()).unwrap();
+                    assert!(status.contains(" working · esc stops") && !status.contains("12 s"), "{w}: the status in short: {status}");
+                }
+                let asked = View { design, clock_ms: 12_480.0, asking: Some("edit: src/components/settings/appearance.rs".into()), ..live_view() };
+                assert!(!rows_of(&frame(&s, &asked, w, h).0).concat().contains("Working"), "a question speaks for itself");
+            }
+        }
+        apply(&mut s, serde_json::json!({"type": "result", "subtype": "success", "total_cost_usd": 0.0}), 13_000.0);
+        assert!(!rows_of(&frame(&s, &View { design: Design::Zen, clock_ms: 13_100.0, ..live_view() }, 80, 24).0).concat().contains("Working"), "the run is over");
+    }
+
+    /// T2: your message reads as yours, the same in both designs at 80 and 60 columns: an accent bar, upright text in the
+    /// second ink, on a band the transcript's width, wrapped rows too; cockpit's "you" label is gone.
+    #[test]
+    fn your_message_is_a_band_with_an_accent_bar() {
+        let mut s = Session::new("", "medium");
+        apply(&mut s, serde_json::json!({"type": "harness_user", "text": "now add a test for the second line too, and run it with cargo test"}), 0.0);
+        apply(&mut s, serde_json::json!({"type": "result", "subtype": "success", "total_cost_usd": 0.0}), 1.0);
+        let th = Design::Zen.theme();
+        for design in [Design::Zen, Design::Cockpit] {
+            for (w, h) in [(80u16, 24u16), (60, 20)] {
+                let (b, area) = frame(&s, &View { design, ..live_view() }, w, h);
+                let rows = rows_of(&b);
+                let screen = rows.join("\n");
+                let y = rows.iter().position(|r| r.contains("now add a test")).unwrap() as u16;
+                let wrapped = if w == 60 { 2 } else { 1 };
+                for row in y..y + wrapped {
+                    assert_eq!((b[(area.x, row)].symbol(), b[(area.x, row)].fg), ("▎", th.accent), "{design:?} {w}: {screen}");
+                    assert!((area.x..area.right()).all(|x| b[(x, row)].bg == th.surface), "{design:?} {w}: a band the column's width: {screen}");
+                }
+                let first = b[(area.x + 2, y)].clone();
+                assert!(first.symbol() == "n" && first.fg == th.ink2 && !first.modifier.contains(Modifier::ITALIC), "{design:?} {w}: upright, second ink");
+                assert!(b[(area.x, y - 1)].bg != th.surface && b[(area.x, y + wrapped)].bg != th.surface, "air around the band");
+                assert!(!rows.iter().any(|r| r.contains("▎ you") || r.contains("│ you")), "{design:?} {w}: {screen}");
+            }
+        }
+    }
+
+    /// T3: a finished run says what it changed on its Done row, file by file, each file whole at 100, 80 and 60 columns,
+    /// with "1 failed" kept on the tools row and a write over a file it had read as "rewritten"; ctrl-o's diffs are bands of
+    /// the err and ok colours with old and new line numbers (the bar where the file does not hold the edit exactly once),
+    /// the changed words on a stronger band, and context past three lines folded to a `⋯` row.
+    #[test]
+    fn a_run_says_what_it_changed_and_its_diffs_are_bands() {
+        let dir = std::env::temp_dir().join(format!("tazuna-t3-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("main.rs"), "fn main() {\n    println!(\"hello, tazuna\");\n    println!(\"second line\");\n}\n").unwrap();
+        std::fs::write(dir.join("dup.rs"), "x = 2;\nx = 2;\n").unwrap();
+        std::fs::write(dir.join("long.rs"), "a\nb\nc\nd\ne\nNEW\nz\n").unwrap();
+        let mut s = Session::new("", "medium");
+        s.cwd = dir.to_string_lossy().into_owned();
+        let call = |id: &str, name: &str, input: serde_json::Value| serde_json::json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": id, "name": name, "input": input}]}});
+        let done = |id: &str, text: &str, error: bool| serde_json::json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": id, "content": text, "is_error": error}]}});
+        apply(&mut s, serde_json::json!({"type": "harness_user", "text": "change the greeting"}), 0.0);
+        apply(&mut s, call("c1", "edit", serde_json::json!({"path": "main.rs", "old": "    println!(\"hi\");", "new": "    println!(\"hello, tazuna\");\n    println!(\"second line\");"})), 1.0);
+        apply(&mut s, done("c1", "ok", false), 2.0);
+        apply(&mut s, call("c2", "bash", serde_json::json!({"command": "cat nope.txt"})), 3.0);
+        apply(&mut s, done("c2", "cat: nope.txt: No such file or directory\n[exit 1]", true), 4.0);
+        apply(&mut s, call("c3", "write", serde_json::json!({"path": "NOTES.md", "content": "# Notes\n\nGreeting changed.\n"})), 5.0);
+        apply(&mut s, done("c3", "ok", false), 6.0);
+        apply(&mut s, call("c4", "edit", serde_json::json!({"path": "src/components/settings/appearance.rs", "old": "let a = 1;\nkeep", "new": "let b = 1;\nkeep"})), 7.0);
+        apply(&mut s, done("c4", "ok", false), 8.0);
+        apply(&mut s, call("c5", "read", serde_json::json!({"path": "config.rs"})), 8.1);
+        apply(&mut s, done("c5", "old config", false), 8.2);
+        apply(&mut s, call("c6", "write", serde_json::json!({"path": "config.rs", "content": "one\ntwo\nthree\n"})), 8.3);
+        apply(&mut s, done("c6", "ok", false), 8.4);
+        // the file holds the new text twice: where it went cannot be told, so no numbers
+        apply(&mut s, call("c7", "edit", serde_json::json!({"path": "dup.rs", "old": "x = 1;", "new": "x = 2;"})), 8.5);
+        apply(&mut s, done("c7", "ok", false), 8.6);
+        // five shared lines above the change: three shown, the rest and the file's line above fold to ⋯
+        apply(&mut s, call("c8", "edit", serde_json::json!({"path": "long.rs", "old": "a\nb\nc\nd\ne\nOLD", "new": "a\nb\nc\nd\ne\nNEW"})), 8.7);
+        apply(&mut s, done("c8", "ok", false), 8.8);
+        apply(&mut s, serde_json::json!({"type": "result", "subtype": "success", "total_cost_usd": 0.0, "duration_ms": 2000}), 9.0);
+        let th = Design::Zen.theme();
+        for (w, h) in [(100u16, 30u16), (80, 24), (60, 20)] {
+            let rows = rows_of(&frame(&s, &View { design: Design::Zen, ..live_view() }, w, h).0);
+            let screen = rows.join("\n");
+            let at = rows.iter().position(|r| r.contains("✓ Done")).unwrap();
+            let change: Vec<&str> = rows[at..].iter().map(|r| r.trim()).take_while(|r| !r.is_empty()).collect();
+            assert!(change[0].starts_with("✓ Done  2 s  $0   main.rs +2 −1  NOTES.md +3"), "{w}: {screen}");
+            for item in ["src/components/settings/appearance.rs +1 −1", "config.rs rewritten", "+2 more", "ctrl-o diffs"] {
+                assert!(change.iter().any(|r| r.contains(item)), "{w}: {item} whole: {change:#?}");
+            }
+            assert!(screen.contains("1 failed") && !change[0].ends_with('▸'), "{w}: {screen}");
+        }
+        for (w, h) in [(80u16, 70u16), (60, 70)] {
+            let (b, area) = frame(&s, &View { design: Design::Zen, expand_all: true, ..live_view() }, w, h);
+            let rows = rows_of(&b);
+            let screen = rows.join("\n");
+            let row = |t: &str| rows.iter().position(|r| r.contains(t)).unwrap_or_else(|| panic!("{w}: no {t:?} in {screen}"));
+            let text = |y: usize| rows[y][area.x as usize..].trim_end().to_string();
+            let gone = row("println!(\"hi\")");
+            assert_eq!([text(gone - 1), text(gone), text(gone + 1), text(gone + 2), text(gone + 3)].map(|t| t.trim_start().to_string()),
+                ["1 1   fn main() {", "2   -     println!(\"hi\");", "2 +     println!(\"hello, tazuna\");", "3 +     println!(\"second line\");", "3 4   }"],
+                "{w}: line numbers from the file, a line of it above and under: {screen}");
+            let (del, add) = (lerp(th.bg, th.err, 0.16), lerp(th.bg, th.ok, 0.16));
+            let y = gone as u16;
+            assert!(b[(area.right() - 1, y)].bg == del && b[(area.right() - 1, y + 1)].bg == add && b[(area.right() - 1, y - 1)].bg != del, "{w}: bands across: {screen}");
+            let hi = rows[gone].find("hi\"").map(|i| rows[gone][..i].chars().count() as u16).unwrap();
+            let hello = rows[gone + 1].find("hello").map(|i| rows[gone + 1][..i].chars().count() as u16).unwrap();
+            assert!(b[(hi, y)].bg == lerp(th.bg, th.err, 0.38) && b[(hi - 1, y)].bg == del, "{w}: the changed word marked");
+            assert!(b[(hello, y + 1)].bg == lerp(th.bg, th.ok, 0.38) && b[(hello - 2, y + 1)].bg == add, "{w}: and its replacement");
+            // where the file says nothing: the bar, the shared line as context, the line's change marked
+            let a = row("let a = 1;");
+            assert!(text(a).trim_start() == "▎ - let a = 1;" && text(a + 1).trim_start() == "▎ + let b = 1;" && text(a + 2).trim_start() == "▎   keep", "{w}: {screen}");
+            assert!(text(row("# Notes")).trim_start() == "1 + # Notes", "{w}: a write's lines numbered: {screen}");
+            let twice = row("x = 1;");
+            assert!(text(twice).trim_start() == "▎ - x = 1;" && text(twice + 1).trim_start() == "▎ + x = 2;", "{w}: a needle found twice: {screen}");
+            let changed = row("- OLD");
+            assert_eq!([text(changed - 4), text(changed - 3), text(changed - 2), text(changed - 1), text(changed + 1), text(changed + 2)].map(|t| t.trim_start().to_string()),
+                ["⋯", "3 3   c", "4 4   d", "5 5   e", "6 + NEW", "7 7   z"].map(String::from), "{w}: {screen}");
+        }
+        assert_eq!((change_counts("a\nb\nc", "a\nB\nc"), change_counts("", "x\ny"), change_counts("x", "")), ((1, 1), (2, 0), (0, 1)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// T4: the mode is a pill in both designs at 80 and 60 columns, auto included: its dot ok for auto, accent for a mode
+    /// that asks, and full in the warn colour on a warn-tinted ground, saying it never asks. No [ask] or [full] tag is left.
+    #[test]
+    fn the_mode_is_a_pill_auto_included() {
+        let mut s = Session::new("", "medium");
+        s.activity = Activity::Ready;
+        let th = Design::Zen.theme();
+        for design in [Design::Zen, Design::Cockpit] {
+            for (w, h) in [(80u16, 24u16), (60, 20)] {
+                for (mode, word, dot, ground) in [("auto", " auto ", th.ok, th.surface), ("ask", " ask ", th.accent, th.surface), ("plan", " plan ", th.accent, th.surface),
+                    ("full", " full · never asks ", th.warn, lerp(th.bg, th.warn, 0.18))] {
+                    let (b, _) = frame(&s, &View { design, mode: mode.into(), ..live_view() }, w, h);
+                    let rows = rows_of(&b);
+                    let screen = rows.join("\n");
+                    assert!(!screen.contains("[ask]") && !screen.contains("[full]") && !screen.contains("[plan]"), "{design:?} {w}: {screen}");
+                    let y = rows.iter().rposition(|r| r.contains(&format!("●{word}"))).unwrap_or_else(|| panic!("{design:?} {w} {mode}: {screen}"));
+                    let x = rows[y].chars().position(|c| c == '●').map(|i| i as u16).unwrap();
+                    let cell = &b[(x, y as u16)];
+                    assert!(cell.fg == dot && cell.bg == ground && b[(x - 1, y as u16)].bg == ground && b[(x + word.chars().count() as u16, y as u16)].bg == ground,
+                        "{design:?} {w} {mode}: the dot's colour on the pill's ground");
+                }
+            }
+        }
+        // a draft typed while a run works: where the pill would leave it under 30 columns, auto shrinks to its dot and full
+        // to its dot and "full"; with room to spare (idle at 60) it stays whole
+        let mut busy = Session::new("", "medium");
+        apply(&mut busy, serde_json::json!({"type": "harness_user", "text": "go"}), 0.0);
+        let typed = "a follow up typed while it works";
+        for (session, w, mode, shown, gone) in [(&busy, 60u16, "auto", " ● ", "auto"), (&busy, 60, "full", " ● full ", "never asks"), (&s, 60, "auto", " ● auto ", "-"), (&busy, 100, "full", " ● full · never asks ", "-")] {
+            let v = View { design: Design::Zen, input: typed.into(), cursor: typed.len(), mode: mode.into(), ..live_view() };
+            let rows = rows_of(&frame(session, &v, w, 20).0);
+            let status = rows.iter().rev().find(|r| r.contains('●')).unwrap();
+            assert!(status.contains(shown) && !status.contains(gone) && rows.iter().any(|r| r.contains("› a follow")), "{w} {mode}: {rows:#?}");
+        }
+        // cockpit under 110 columns: the pill under the draft, on the box's border (no session panel says the mode there)
+        let v = View { input: typed.into(), cursor: typed.len(), mode: "full".into(), ..live_view() };
+        let rows = rows_of(&frame(&s, &v, 80, 24).0);
+        assert!(rows.iter().any(|r| r.starts_with('╰') && r.contains("● full ")), "{rows:#?}");
+    }
+
+    /// T5: a heading gets air above it and an accent mark, in bold ink; simple TeX reads as text in italics without its
+    /// fences, at 80 and 60 columns. Money, shell variables and TeX it cannot set stay as written.
+    #[test]
+    fn headings_have_air_and_simple_maths_reads_as_text() {
+        let text = "The lookup is constant: $$t_{lookup} = \\Theta(1)$$\nSection 2 follows.\n## Section 2\nLorem ipsum.\n$$\nn \\times m \\le k \\to \\infty\n$$\nIt costs $5 and $10; see $HOME/$USER, \\(\\alpha \\ge \\beta\\) and $\\frac{a}{b}$.";
+        let mut s = Session::new("", "medium");
+        s.activity = Activity::Ready;
+        s.blocks.push(Block::Text { text: text.into(), live: false });
+        let th = Design::Zen.theme();
+        for (w, h) in [(80u16, 24u16), (60, 20)] {
+            let (b, area) = frame(&s, &View { design: Design::Zen, ..live_view() }, w, h);
+            let rows = rows_of(&b);
+            let screen = rows.join("\n");
+            let row = |t: &str| rows.iter().position(|r| r.contains(t)).unwrap_or_else(|| panic!("{w}: no {t:?} in {screen}")) as u16;
+            let y = row("The lookup is constant: t_lookup = Θ(1)");
+            assert!(b[(area.x + 24, y)].modifier.contains(Modifier::ITALIC) && !b[(area.x, y)].modifier.contains(Modifier::ITALIC), "{w}: the maths in italics");
+            let head = row("▍Section 2");
+            assert!(rows[head as usize - 1].trim().is_empty() && rows[head as usize - 2].contains("Section 2 follows."), "{w}: air above the heading: {screen}");
+            assert!(b[(area.x, head)].fg == th.accent && b[(area.x + 1, head)].fg == th.text && b[(area.x + 1, head)].modifier.contains(Modifier::BOLD), "{w}");
+            assert!(b[(area.x, row("n × m ≤ k → ∞"))].modifier.contains(Modifier::ITALIC), "{w}: a display formula without its fences");
+            for kept in ["$5 and $10;", "$HOME/$USER,", "α ≥ β", "$\\frac{a}{b}$."] {
+                assert!(screen.contains(kept), "{w}: {kept}: {screen}");
+            }
+            assert!(!screen.contains("$$") && !screen.contains("\\Theta") && !screen.contains("\\("), "{w}: {screen}");
+        }
+        // shell, patterns, links and code keep their marks: only what reads as TeX is maths (the review's cases)
+        let plain = |t: &str| inline(t, th).iter().map(|sp| sp.content.to_string()).collect::<String>();
+        let maths = |t: &str| inline(t, th).iter().filter(|sp| sp.style.add_modifier.contains(Modifier::ITALIC)).map(|sp| sp.content.to_string()).collect::<Vec<_>>();
+        for kept in ["export $XDG_CONFIG_HOME/$APP_NAME", "cd $(git rev-parse --show-toplevel)/$DIR", "FOO=$BAR_DIR make", "echo $$ then kill $$",
+            "grep '\\(abc\\)\\1' file", "a $x$ variable", "$(a^b)$ stays", "sed -n '/^start$/,/^end$/p'", "grep -E '^foo$|^bar$'", "echo $x^2$y"] {
+            assert_eq!((plain(kept), maths(kept).len()), (kept.to_string(), 0), "{kept}");
+        }
+        assert_eq!(plain("[the $O(n^2)$ algorithm](https://example.com/a) is $n^{2}$"), "the $O(n^2)$ algorithm is n^2", "a link's title stays as written");
+        assert_eq!(maths("$$e^x$$ and \\(x^{2}\\)"), ["e^x", "x^2"], "a bare power in $$, a braced one anywhere");
+        assert_eq!(maths("`$\\alpha$` and $\\alpha$"), ["α"], "a code span keeps its TeX");
+        // a display block sets every line or none: one it cannot set shows as written, fences and all; unclosed it is text
+        let md = |t: &str| markdown(t, th, 80).iter().map(|(l, _)| l.to_string().trim_end().to_string()).collect::<Vec<_>>();
+        assert_eq!(md("$$\n\\alpha \\to \\beta\n\\frac{a}{b}\n$$"), ["$$", "\\alpha \\to \\beta", "\\frac{a}{b}", "$$"]);
+        assert_eq!(md("$$\n\\alpha \\to \\beta\n$$\nafter"), ["α → β", "after"]);
+        assert_eq!(md("$$\n\\alpha still streaming"), ["$$", "\\alpha still streaming"]);
+        assert_eq!(md("```\n$$\\alpha$$\n```"), [" $$\\alpha$$"], "a code block keeps its TeX");
+    }
+
+    /// T6: what a conversation came to, said once as tazuna ends: its runs, the files git and its tools changed (git's
+    /// counts where both have a file), the money split as the header splits it, "cost not known" where no run's is, and how
+    /// long its runs took; nothing before a run finished. (A continued or resumed one: main.rs's
+    /// the_recap_counts_this_sitting_after_c_and_resume, through the real paths.)
+    #[test]
+    fn leaving_says_what_the_conversation_came_to() {
+        let mut s = Session::new("", "medium");
+        assert_eq!(recap(&s, &[]), None);
+        let file = |path: &str, added: u64, removed: u64| crate::session::FileChange { path: path.into(), added, removed, rewritten: false };
+        let run = |secs: f64, cost: Option<f64>, plan: bool, changes: Vec<crate::session::FileChange>| Block::Done(crate::session::Summary { ok: true, secs, turns: 1,
+            cost: 0.0, usage: Default::default(), stopped: false, run_cost: cost, run_usage: Default::default(), estimate: false, uncounted: 0, sub_calls: 0, changes,
+            bill: Some(crate::session::Bill { model: "m".into(), plan, provider: None, price_m: None, providers: vec![] }) });
+        s.blocks.extend([run(60.0, Some(0.01), false, vec![file("notes.txt", 3, 0)]), run(90.0, Some(0.03), true, vec![file("main.rs", 1, 1)]), run(90.0, Some(0.02), false, vec![])]);
+        let git = [Changed { path: "main.rs".into(), added: 2, removed: 1, diff: None }];
+        assert_eq!(recap(&s, &git).as_deref(), Some("手 tazuna · 3 turns · 2 files changed +5 −1 · $0.03 + $0.03 on Claude plan · 4 min"));
+        let mut unknown = Session::new("", "medium");
+        unknown.blocks.push(run(5.0, None, false, vec![]));
+        assert_eq!(recap(&unknown, &[]).as_deref(), Some("手 tazuna · 1 turn · cost not known · 5 s"));
+        let mut one = Session::new("", "medium");
+        apply(&mut one, serde_json::json!({"type": "harness_user", "text": "hi"}), 0.0);
+        apply(&mut one, serde_json::json!({"type": "result", "subtype": "success", "duration_ms": 2_000, "total_cost_usd": 0.0}), 1.0);
+        assert_eq!(recap(&one, &[]).as_deref(), Some("手 tazuna · 1 turn · $0 · 2 s"));
+    }
+
+    /// T7: the terminal's background as it answers OSC 11 (any of its forms), when its answers are in, light or dark from it
+    /// unless --theme says, and the terminal theme drawn at 80 and 60 columns: the terminal's own colour everywhere but the
+    /// message's band and the pill, on a surface a step from it (the theme's own without an answer).
+    #[test]
+    fn the_terminal_background_picks_the_palette_and_shows_through() {
+        assert_eq!(osc11_colour(b"\x1b]11;rgb:1e1e/1e1e/2e2e\x1b\\\x1b[?62;22c"), Some((0x1e, 0x1e, 0x2e)));
+        assert_eq!(osc11_colour(b"typed\x1b]11;rgb:ff/80/0\x07"), Some((255, 128, 0)));
+        assert_eq!((osc11_colour(b"\x1b[?62;22c"), osc11_colour(b"\x1b]11;rgb:zz/0/0\x07")), (None, None));
+        assert!(attributes_answered(b"\x1b]11;rgb:0/0/0\x1b\\\x1b[?62;22c") && !attributes_answered(b"\x1b]11;rgb:0/0/0\x1b\\\x1b[?62;2"));
+        assert!(light_for("auto", Some((0xef, 0xf1, 0xf5))) && !light_for("auto", Some((0x1e, 0x1e, 0x2e))) && !light_for("auto", None));
+        assert!(light_for("light", Some((0, 0, 0))) && !light_for("dark", Some((255, 255, 255))) && light_for("terminal", Some((250, 250, 250))));
+        let ground = Color::Rgb(0x1e, 0x1e, 0x2e);
+        let cat = on_terminal(&DARK, Some((0x1e, 0x1e, 0x2e)));
+        assert_eq!((cat.canvas, cat.bg, cat.surface, cat.accent), (Color::Reset, ground, lerp(ground, DARK.text, 0.06), DARK.accent));
+        // no answer (Windows, screen, mosh, an older tmux): the theme's own canvas, painted
+        let quiet = on_terminal(&LIGHT, None);
+        assert_eq!((quiet.canvas, quiet.bg, quiet.surface, quiet.field), (LIGHT.bg, LIGHT.bg, LIGHT.surface, LIGHT.field));
+        // an answer split over two reads is read whole once it is in; keys typed around it go to the message box
+        let (first, rest) = (&b"fix\x1b]11;rgb:1e1e/1e"[..], &b"1e/2e2e\x1b\\ the\x1b[?62;22c bug\r"[..]);
+        assert!(!attributes_answered(first) && attributes_answered(&[first, rest].concat()));
+        let probe = |got: &[u8]| { let p = split_answers(got); (p.bg, p.typed, p.enter, p.quit) };
+        assert_eq!(probe(&[first, rest].concat()), (Some((0x1e, 0x1e, 0x2e)), "fix the bug".to_string(), true, false), "the Enter after it sends the draft");
+        assert_eq!(probe(b"fix the bug"), (None, "fix the bug".to_string(), false, false), "a terminal that never answers: the keys whole");
+        assert_eq!(probe(b"\x1b]11;rgb:ff/ff/ff\x07\x1b[?1;2c"), (Some((255, 255, 255)), String::new(), false, false));
+        // keys as the box takes them: an arrow key's sequence (CSI and SS3) dropped whole, backspace applied, ctrl-c ends
+        assert_eq!(probe(b"fiz\x7fx\x1b[D\x1bOA the bug"), (None, "fix the bug".to_string(), false, false));
+        assert_eq!(probe(b"oops\x03"), (None, "oops".to_string(), false, true));
+        let mut s = Session::new("", "medium");
+        apply(&mut s, serde_json::json!({"type": "harness_user", "text": "how is this repo laid out?"}), 0.0);
+        apply(&mut s, serde_json::json!({"type": "result", "subtype": "success", "total_cost_usd": 0.0}), 1.0);
+        for (w, h) in [(80u16, 24u16), (60, 20)] {
+            let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+            let v = View { design: Design::Zen, ..live_view() };
+            term.draw(|f| {
+                f.render_widget(ratatui::widgets::Block::new().style(Style::new().bg(cat.canvas)), f.area());
+                zen::draw(f, &s, &v, &cat);
+            }).unwrap();
+            let b = term.backend().buffer();
+            let rows = rows_of(b);
+            let y = rows.iter().position(|r| r.contains("how is this repo")).unwrap() as u16;
+            let pill = rows.iter().rposition(|r| r.contains("● auto")).unwrap() as u16;
+            let dot = rows[pill as usize].chars().position(|c| c == '●').unwrap() as u16;
+            assert!(b[(w / 2, y)].bg == cat.surface && b[(dot, pill)].bg == cat.surface, "{w}: the band and the pill on the surface");
+            assert!(b[(0, 0)].bg == Color::Reset && b[(w / 2, y - 1)].bg == Color::Reset && b[(1, pill)].bg == Color::Reset, "{w}: the canvas left to the terminal");
+        }
+    }
+
+    /// 256 colours: the diff's bands and marks and a pill's ground take cube colours of their own (dark and light), where the
+    /// nearest of the 256 rounded them into the background's grey and they vanished (design review 13).
+    #[test]
+    fn bands_and_pills_keep_their_tint_in_256_colours() {
+        for (th, light, cube) in [(&DARK, false, [52u8, 22, 88, 28, 58, 236]), (&LIGHT, true, [224, 194, 217, 157, 223, 254])] {
+            let colours = [lerp(th.bg, th.err, 0.16), lerp(th.bg, th.ok, 0.16), lerp(th.bg, th.err, 0.38), lerp(th.bg, th.ok, 0.38), lerp(th.bg, th.warn, 0.18), th.surface];
+            let mut buf = ratatui::buffer::Buffer::empty(Rect::new(0, 0, colours.len() as u16 + 1, 1));
+            for (x, c) in colours.iter().enumerate() {
+                buf[(x as u16, 0)].set_bg(*c).set_fg(th.text);
+            }
+            buf[(colours.len() as u16, 0)].set_bg(th.bg);
+            fit_to_256(&mut buf, th, light);
+            let got: Vec<Color> = (0..colours.len() as u16).map(|x| buf[(x, 0)].bg).collect();
+            assert_eq!(got, cube.map(Color::Indexed), "light {light}");
+            let canvas = buf[(colours.len() as u16, 0)].bg;
+            assert!(got.iter().all(|c| *c != canvas) && buf[(0, 0)].fg != Color::Rgb(0, 0, 0), "light {light}: each apart from the canvas {canvas:?}");
+        }
     }
 }

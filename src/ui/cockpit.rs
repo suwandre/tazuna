@@ -7,7 +7,7 @@ use ratatui::{
     widgets::{Block as Panel, BorderType, LineGauge, Sparkline, SparklineBar, Wrap},
 };
 
-pub(super) const OPTS: Opts = Opts { prompt: PromptStyle::Bar, group_tools: false, durations: true };
+pub(super) const OPTS: Opts = Opts { group_tools: false, durations: true };
 const SIDEBAR: u16 = 38;
 const READING_WIDTH: u16 = 88;
 
@@ -43,17 +43,18 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     // a terminal under 110 columns (80x24, macOS Terminal's own size) has no room for the instrument column: the
     // transcript gets the width and the header the cost (until 0.1.180 the column took half of 80 and answers wrapped at 38)
     let narrow = body.width < 110;
-    let mut right = vec![
-        // full never asks: said in the header too, which every width and state shows (the box's tag hides while typing)
-        Span::styled(if v.live && v.mode == "full" { "full   " } else { "" }, st(th.warn)),
+    // full never asks: its pill in the header too, which every width and state shows (the box's hides while typing)
+    let full = if v.live && v.mode == "full" { [mode_pill("full", th, false), vec![Span::raw("   ")]].concat() } else { vec![] };
+    let status_at = full.len();
+    let mut right = [full, vec![
         Span::styled(format!("{glyph} {label}"), st(color)),
         Span::styled("   ", st(th.faint)),
         Span::styled(if !v.live && s.model.is_empty() { "recorded session".into() } else { model_short(&s.model) }, st(th.text)),
         Span::styled(format!("  {} ", s.effort), st(th.dim)),
-    ];
-    // after the status (index 1: the full tag comes first); at 1 it read "≈$0● working" from 0.1.209 to 0.1.212
+    ]].concat();
+    // after the status (behind the full pill where it shows); before it, it read "≈$0● working" from 0.1.209 to 0.1.212
     if narrow {
-        right.splice(2..2, [Span::styled("   ", st(th.faint)), Span::styled(cost_str(s), st(th.ink2))]);
+        right.splice(status_at + 1..status_at + 1, [Span::styled("   ", st(th.faint)), Span::styled(cost_str(s), st(th.ink2))]);
     }
     split_row(f, header, left, Line::from(right), Some(th.surface));
 
@@ -73,7 +74,12 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
             draw_replay_footer(f, composer, v, th);
             return Areas { pulse: header, last_block, transcript: inner, rows: trows, top_line, ..Default::default() };
         }
-        let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(if v.asking.is_some() { th.warn } else { th.border }));
+        let mut b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(if v.asking.is_some() { th.warn } else { th.border }));
+        // the mode under a draft too: under 110 columns there is no session panel to say it, and the placeholder's pill goes
+        // while typing (design review 13)
+        if !v.input.is_empty() || v.asking.is_some() {
+            b = b.title_bottom(Line::from([mode_pill(&v.mode, th, v.mode == "full"), vec![Span::raw(" ")]].concat()).right_aligned());
+        }
         let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
         f.render_widget(Paragraph::new(hint).block(b), composer);
         return Areas { pulse: header, last_block, transcript: inner, rows: trows, top_line, composer: Some(composer.inner(Margin { horizontal: 1, vertical: 1 })), ..Default::default() };

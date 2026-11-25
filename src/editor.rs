@@ -3,6 +3,13 @@
 use std::path::PathBuf;
 
 const HISTORY_MAX: usize = 500;
+/// Undo steps kept; the oldest go first.
+const UNDO_MAX: usize = 200;
+/// A pause this long ends a typing run: the next key starts an undo step of its own.
+const RUN_PAUSE: std::time::Duration = std::time::Duration::from_millis(1000);
+
+/// The box as an undo step finds it: text, cursor, and the stash (an undone ctrl-x takes the message back out of it).
+type Snapshot = (String, usize, Option<String>);
 
 #[derive(Default)]
 pub struct Editor {
@@ -18,6 +25,12 @@ pub struct Editor {
     stash: Option<String>,
     /// Where a mouse selection started (the cursor is its other end).
     pub anchor: Option<usize>,
+    /// Undo and redo: the text, cursor and stash before each step, newest last (design review 13: Cmd+Z did nothing). A
+    /// run of typed keys or of backspaces is one step: `run` is where its last key left the cursor, when, and whether it
+    /// typed.
+    undo: Vec<Snapshot>,
+    redo: Vec<Snapshot>,
+    run: Option<(usize, std::time::Instant, bool)>,
 }
 
 impl Editor {
@@ -48,31 +61,88 @@ impl Editor {
         true
     }
 
-    /// Typing (or a paste) replaces the selection.
+    /// The text as it is now becomes an undo step, before an edit changes it; what was undone can no longer be redone.
+    fn step(&mut self) {
+        if self.undo.len() == UNDO_MAX {
+            self.undo.remove(0);
+        }
+        self.undo.push((self.text.clone(), self.cursor, self.stash.clone()));
+        self.redo.clear();
+        self.run = None;
+    }
+
+    /// A key that goes on the run before it (typing, or backspacing: `typing`) adds no step: right where the last one
+    /// left the cursor, within a pause, and for typing not at a word's start, so an undo takes back a word at a time.
+    fn run_on(&mut self, typing: bool, word_start: bool, now: std::time::Instant) {
+        let on = self.anchor.is_none() && !word_start && self.run.is_some_and(|(at, when, t)| at == self.cursor && t == typing && now.duration_since(when) < RUN_PAUSE);
+        if !on {
+            self.step();
+        }
+    }
+
+    /// A paste (or anything else put in whole) replaces the selection, as one undo step.
     pub fn insert(&mut self, s: &str) {
+        self.step();
+        self.put(s);
+    }
+
+    fn put(&mut self, s: &str) {
         self.cut_selection();
         self.text.insert_str(self.cursor, s);
         self.cursor += s.len();
         self.browsing = None;
     }
 
+    /// A typed character: a run of them is one undo step.
+    pub fn type_char(&mut self, c: char) {
+        self.type_at(c, std::time::Instant::now());
+    }
+
+    fn type_at(&mut self, c: char, now: std::time::Instant) {
+        let word_start = !c.is_whitespace() && self.text[..self.cursor].chars().next_back().is_some_and(char::is_whitespace);
+        self.run_on(true, word_start, now);
+        self.put(c.encode_utf8(&mut [0; 4]));
+        self.run = Some((self.cursor, now, true));
+    }
+
     pub fn backspace(&mut self) {
-        if self.cut_selection() {
-            return;
-        }
-        if let Some(c) = self.text[..self.cursor].chars().next_back() {
+        self.run_on(false, false, std::time::Instant::now());
+        if !self.cut_selection() && let Some(c) = self.text[..self.cursor].chars().next_back() {
             self.cursor -= c.len_utf8();
             self.text.remove(self.cursor);
         }
+        self.run = Some((self.cursor, std::time::Instant::now(), false));
     }
 
     pub fn delete(&mut self) {
-        if self.cut_selection() {
-            return;
-        }
-        if self.cursor < self.text.len() {
+        self.run_on(false, false, std::time::Instant::now());
+        if !self.cut_selection() && self.cursor < self.text.len() {
             self.text.remove(self.cursor);
         }
+        self.run = Some((self.cursor, std::time::Instant::now(), false));
+    }
+
+    /// Cmd+Z, ctrl+z, ctrl+_: the text and cursor before the last step. False when there is none.
+    pub fn undo(&mut self) -> bool {
+        let Some(back) = self.undo.pop() else { return false };
+        let now = self.restore(back);
+        self.redo.push(now);
+        true
+    }
+
+    /// Cmd+Shift+Z, ctrl+shift+z: the step undone last, again. False when there is none.
+    pub fn redo(&mut self) -> bool {
+        let Some(again) = self.redo.pop() else { return false };
+        let now = self.restore(again);
+        self.undo.push(now);
+        true
+    }
+
+    /// The box as `to` has it; returns how it was.
+    fn restore(&mut self, (text, cursor, stash): Snapshot) -> Snapshot {
+        let was = (std::mem::replace(&mut self.text, text), self.cursor, std::mem::replace(&mut self.stash, stash));
+        (self.cursor, self.anchor, self.browsing, self.run) = (cursor, None, None, None);
+        was
     }
 
     pub fn left(&mut self) {
@@ -106,12 +176,14 @@ impl Editor {
     /// Ctrl-U (cmd-backspace on a Mac): delete back to the start of the line; at the start of a line, the line break
     /// before it, so pressing it again goes on into the line above (it stopped there, and took a backspace first).
     pub fn kill_to_start(&mut self) {
+        self.step();
         if self.cut_selection() {
             return;
         }
         let s = self.line_start();
-        if s == self.cursor {
-            self.backspace();
+        if let Some(c) = self.text[..self.cursor].chars().next_back().filter(|_| s == self.cursor) {
+            self.cursor -= c.len_utf8();
+            self.text.remove(self.cursor);
             return;
         }
         self.text.replace_range(s..self.cursor, "");
@@ -120,12 +192,14 @@ impl Editor {
 
     /// Ctrl-K: delete to the end of the line.
     pub fn kill_to_end(&mut self) {
+        self.step();
         let e = self.line_end();
         self.text.replace_range(self.cursor..e, "");
     }
 
     /// Ctrl-W: delete back over whitespace, then to the previous whitespace.
     pub fn kill_word(&mut self) {
+        self.step();
         let before = &self.text[..self.cursor];
         let trimmed = before.trim_end_matches([' ', '\t']);
         let s = trimmed.rfind([' ', '\t', '\n']).map_or(0, |i| i + 1);
@@ -144,13 +218,14 @@ impl Editor {
         }
         let i = match self.browsing {
             None if self.history.is_empty() => return,
-            None => {
-                self.draft = std::mem::take(&mut self.text);
-                self.history.len() - 1
-            }
             Some(0) => return,
+            None => self.history.len() - 1,
             Some(i) => i - 1,
         };
+        self.step();
+        if self.browsing.is_none() {
+            self.draft = std::mem::take(&mut self.text);
+        }
         self.browsing = Some(i);
         self.text = self.history[i].clone();
         self.cursor = self.text.len();
@@ -166,6 +241,7 @@ impl Editor {
             return;
         }
         let Some(i) = self.browsing else { return };
+        self.step();
         if i + 1 < self.history.len() {
             self.browsing = Some(i + 1);
             self.text = self.history[i + 1].clone();
@@ -185,6 +261,7 @@ impl Editor {
 
     /// Tab: the word at the cursor becomes `with`.
     pub fn complete(&mut self, with: &str) {
+        self.step();
         let (start, _) = self.token();
         self.text.replace_range(start..self.cursor, with);
         self.cursor = start + with.len();
@@ -193,18 +270,19 @@ impl Editor {
     /// Ctrl-X: puts the message aside and clears the composer, or brings a stashed message back when the composer is
     /// empty (with both, they swap). A stash also comes back by itself after the next message is sent.
     pub fn toggle_stash(&mut self) -> &'static str {
+        self.step();
         match (self.text.is_empty(), self.stash.take()) {
             (true, Some(s)) => {
-                self.set(s);
+                self.replace_text(s);
                 "unstashed"
             }
             (true, None) => "nothing to stash",
             (false, old) => {
                 let text = std::mem::take(&mut self.text);
-                self.clear();
+                self.replace_text(String::new());
                 self.stash = Some(text);
                 if let Some(o) = old {
-                    self.set(o);
+                    self.replace_text(o);
                     "swapped with the stash"
                 } else {
                     "stashed: it comes back after you send the next message (ctrl-x brings it back now)"
@@ -279,6 +357,7 @@ impl Editor {
 
     /// Vim `dd`: deletes the line the cursor is on (with its line break).
     pub fn delete_line(&mut self) {
+        self.step();
         let (s, e) = (self.line_start(), self.line_end());
         let (s, e) = if e < self.text.len() { (s, e + 1) } else if s > 0 { (s - 1, e) } else { (s, e) };
         self.text.replace_range(s..e, "");
@@ -298,6 +377,7 @@ impl Editor {
                     return true;
                 }
                 ('d' | 'c', 'w') => {
+                    self.step();
                     let s = self.cursor;
                     self.word_right();
                     self.text.replace_range(s..self.cursor, "");
@@ -349,26 +429,33 @@ impl Editor {
         false
     }
 
-    /// Replaces the whole text (back from the external editor), cursor at the end.
+    /// Replaces the whole text (back from the external editor), cursor at the end: one undo step.
     pub fn set(&mut self, text: String) {
+        self.step();
+        self.replace_text(text);
+    }
+
+    /// Esc: the draft cleared, as one undo step.
+    pub fn clear(&mut self) {
+        self.step();
+        self.replace_text(String::new());
+    }
+
+    fn replace_text(&mut self, text: String) {
         self.cursor = text.len();
         self.text = text;
         self.browsing = None;
     }
 
-    pub fn clear(&mut self) {
-        self.text.clear();
-        self.cursor = 0;
-        self.browsing = None;
-    }
-
-    /// Enter: the message to send. It goes into history (and its file) unless it repeats the last one.
+    /// Enter: the message to send. It goes into history (and its file) unless it repeats the last one. Undo starts over:
+    /// a sent message is not taken back into the box.
     pub fn take(&mut self) -> String {
         let text = std::mem::take(&mut self.text);
         self.clear();
         if let Some(stashed) = self.stash.take() {
             self.set(stashed); // a stashed message comes back once this one is sent
         }
+        (self.undo, self.redo, self.run) = (Vec::new(), Vec::new(), None);
         let t = text.trim().to_string();
         if !t.is_empty() && self.history.last() != Some(&t) {
             self.history.push(t.clone());
@@ -548,6 +635,57 @@ mod tests {
     }
 
     use super::*;
+
+    /// Undo (design review 13): a typing run is one step, broken at a word's start, a pause or a cursor move; a paste, a
+    /// kill and a stash are one step each; redo goes until new typing; the cursor comes back too; at most UNDO_MAX steps.
+    #[test]
+    fn undo_takes_back_a_step_and_redo_brings_it_again() {
+        let mut e = Editor::default();
+        let t0 = std::time::Instant::now();
+        for (k, c) in "hello world".chars().enumerate() {
+            e.type_at(c, t0 + std::time::Duration::from_millis(50 * k as u64));
+        }
+        assert!(e.undo() && e.text == "hello " && e.cursor == 6, "a word at a time: {:?}", e.text);
+        assert!(e.undo() && e.text.is_empty() && !e.undo());
+        assert!(e.redo() && e.text == "hello " && e.redo() && e.text == "hello world" && !e.redo());
+        // a pause ends the run
+        e.type_at('!', t0 + std::time::Duration::from_secs(5));
+        e.type_at('?', t0 + std::time::Duration::from_secs(7));
+        assert!(e.undo() && e.text == "hello world!");
+        // new typing ends redo
+        e.type_char('x');
+        assert!(!e.redo() && e.text == "hello world!x");
+        // a paste is one step, the cursor comes back with the text
+        e.home();
+        e.insert("pasted text ");
+        assert!(e.undo() && e.text == "hello world!x" && e.cursor == 0);
+        // backspaces are one run; a cursor move ends it
+        e.end();
+        e.backspace();
+        e.backspace();
+        e.left();
+        e.backspace();
+        assert_eq!(e.text, "hello word");
+        assert!(e.undo() && e.text == "hello world" && e.undo() && e.text == "hello world!x");
+        // a kill and a stash
+        e.kill_word();
+        assert!(e.undo() && e.text == "hello world!x");
+        e.toggle_stash();
+        assert!(e.text.is_empty() && e.undo() && e.text == "hello world!x" && e.stash.is_none(), "an undone stash is out of the stash too");
+        // sending starts over
+        e.take();
+        assert!(!e.undo());
+        // the cap
+        for k in 0..(UNDO_MAX + 50) {
+            e.insert(&format!("{k} "));
+        }
+        let mut n = 0;
+        while e.undo() {
+            n += 1;
+        }
+        assert_eq!(n, UNDO_MAX);
+        assert!(e.text.starts_with("0 1 2 ") && e.text.ends_with("49 "), "the oldest steps went: {}", e.text);
+    }
 
     #[test]
     fn line_kill_goes_on_into_the_line_above() {

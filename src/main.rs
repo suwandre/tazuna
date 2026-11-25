@@ -4,8 +4,10 @@
 //!          (without --model/--effort the router picks: tiny repos Sonnet medium, escalating to Opus high if tests
 //!          fail; otherwise Opus medium)
 //!          [--verify "<cmd>" | --no-verify]   # after claude says done, tazuna runs the tests (auto-detected by default)
-//!          [--theme light|dark]   # the screen's palette (default dark); a terminal that does not announce 24-bit
-//!                                 # colour (COLORTERM) gets the nearest of the 256
+//!          [--theme auto|light|dark|terminal]   # the screen's palette; auto (default): light or dark as the terminal's
+//!                                 # background (asked with OSC 11; dark where it does not say); terminal: the same on the
+//!                                 # terminal's own background, a surface only under panels and bands; a terminal that
+//!                                 # does not announce 24-bit colour (COLORTERM) gets the nearest of the 256
 //!          [--bash-cap N]   # shrink bash output longer than N chars (default 8000; 0 = off)
 //!          [--no-diagnostics]  # do not tell claude about type/compile errors right after its edits
 //!          [--self-review]  # finish rules in the prompt, and one self-review turn before verification
@@ -151,8 +153,8 @@ struct Args {
     design: Design,
     /// The design a `--design 1` or `4` (or a saved one) named until 0.1.193: it opens zen, and the screen says so once.
     design_gone: Option<&'static str>,
-    /// `--theme light`: the light palette (the dark one is the default).
-    light: bool,
+    /// `--theme auto|light|dark|terminal`: auto (the default) takes light or dark from the terminal's background.
+    theme: String,
     /// None: the router decides.
     model: Option<String>,
     effort: Option<String>,
@@ -287,7 +289,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         size: (110, 36),
         design,
         design_gone,
-        light: false,
+        theme: "auto".into(),
         model: None,
         effort: None,
         allow_non_git: false,
@@ -349,10 +351,9 @@ fn parse(argv: Vec<String>) -> Result<Args> {
                 let n: usize = val()?.parse()?;
                 (a.design, a.design_gone) = (Design::from_number(n).context("--design 2 (cockpit) or 3 (zen)")?, Design::gone(n));
             }
-            "--theme" => a.light = match val()?.as_str() {
-                "light" => true,
-                "dark" => false,
-                t => bail!("--theme light|dark, not {t}"),
+            "--theme" => a.theme = match val()?.as_str() {
+                t @ ("auto" | "light" | "dark" | "terminal") => t.into(),
+                t => bail!("--theme auto|light|dark|terminal, not {t}"),
             },
             "--model" => a.model = Some(val()?),
             "--effort" => a.effort = Some(val()?),
@@ -606,7 +607,14 @@ fn main() -> Result<()> {
     if let Some(n) = a.log {
         return runlog::print_recent(&base, n);
     }
-    ui::setup_colors(a.light);
+    // the terminal's background, asked only where a live session opens: a replay has no filter for a late answer, which
+    // drove its keys (design review 13), and --run and --snapshot draw no screen. The palette follows it.
+    let asks = a.path.is_none() && a.run.is_none() && matches!(a.theme.as_str(), "auto" | "terminal");
+    let probe = if asks { ui::terminal_background() } else { ui::Probe::default() };
+    if probe.quit {
+        return Ok(()); // ctrl-c typed while the terminal answered: nothing has started yet
+    }
+    ui::setup_colors(&a.theme, probe.bg);
     match (&a.path, a.snapshot) {
         (Some(p), Some(n)) => snapshot(Replay::load(p, a.raw_timing)?, n, a.size, a.design),
         (Some(p), None) => {
@@ -709,12 +717,19 @@ fn main() -> Result<()> {
             let mut term = ratatui::init();
             // focus reports: a question asked while the terminal is in the background also says so as a notification
             execute!(std::io::stdout(), EnableMouseCapture, EnableFocusChange)?;
-            // terminals with the kitty keyboard protocol report Shift-Enter apart from Enter; Ctrl-J works everywhere
-            let enhanced = supports_keyboard_enhancement().unwrap_or(false);
+            // terminals with the kitty keyboard protocol report Shift-Enter apart from Enter; Ctrl-J works everywhere. A
+            // background question the terminal left open (ui::Probe) may be answered now: its device attributes then reach
+            // this check before its own answer and read as "no", so a quick "no" is asked once more (a silent terminal
+            // takes the whole 2 s and is not asked twice)
+            let asked = Instant::now();
+            let mut enhanced = supports_keyboard_enhancement().unwrap_or(false);
+            if !enhanced && probe.unanswered && asked.elapsed() < Duration::from_millis(1500) {
+                enhanced = supports_keyboard_enhancement().unwrap_or(false);
+            }
             if enhanced {
                 execute!(std::io::stdout(), PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES))?;
             }
-            let r = run_live(&mut term, &mut live, &a, route, earlier);
+            let r = run_live(&mut term, &mut live, &a, route, earlier, probe);
             if enhanced {
                 let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
             }
@@ -728,11 +743,67 @@ fn main() -> Result<()> {
             let cwd = std::env::current_dir().unwrap_or_default();
             let found = |id: &str| previous_session(&base, &cwd, Some(id)).filter(|(p, _)| p == id)
                 .map(|_| previous_session(&base, &cwd, None).is_some_and(|(p, _)| p == id));
+            // what the conversation came to, over the way back to it (design review 13)
+            if let Ok(Some(recap)) = &r {
+                println!("{recap}");
+            }
             if let Some(line) = exit_line(&rec, [sid.as_deref(), logged.as_deref()], found) {
                 println!("{line}");
             }
-            r
+            r.map(|_| ())
         }
+    }
+}
+
+/// A late answer to the background question (ui::terminal_background) as crossterm reads it: Alt+], then "11;" and the
+/// colour, then Alt+\ or BEL (ctrl+g). It was typed into the message box as "]11;rgb:fbfb/fafa/f7f7\" (design review
+/// 13). Only while the question is open and in the first 5 seconds, and only from Alt+] followed by "11;".
+// ponytail: an Alt+] typed in those seconds holds back the two keys after it if they are not "11"; a real key sequence
+// starting Alt+] 1 1 ; is not one anybody types.
+struct LateAnswer {
+    until: Option<Instant>,
+    /// The keys of an answer read so far (0: none started).
+    read: usize,
+}
+
+impl LateAnswer {
+    fn new(open: bool) -> Self {
+        LateAnswer { until: open.then(|| Instant::now() + Duration::from_secs(5)), read: 0 }
+    }
+
+    /// Whether `k` is part of a late answer, and so is not a key.
+    fn swallows(&mut self, k: &ratatui::crossterm::event::KeyEvent) -> bool {
+        use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+        if self.until.is_none_or(|t| Instant::now() > t) {
+            self.read = 0;
+            return false;
+        }
+        let alt = k.modifiers.contains(KeyModifiers::ALT);
+        let (taken, read) = match (self.read, k.code) {
+            (0, KeyCode::Char(']')) if alt => (true, 1),
+            (0, _) => (false, 0),
+            (1 | 2, KeyCode::Char('1')) => (true, self.read + 1),
+            (3, KeyCode::Char(';')) => (true, 4),
+            (1..=3, _) => (false, 0),
+            (_, KeyCode::Char('\\')) if alt => (true, 0),
+            (_, KeyCode::Char('g')) if k.modifiers.contains(KeyModifiers::CONTROL) => (true, 0),
+            _ => (true, self.read + 1),
+        };
+        self.read = if read > 200 { 0 } else { read };
+        taken
+    }
+}
+
+/// `-c` and `--resume`: a continued session shows what came before (claude has it; the screen should too), then the notice
+/// that the exit's recap counts this sitting from.
+fn continue_from(s: &mut Session, live: &mut live::Live, earlier: Option<std::path::PathBuf>) {
+    if let Some(mut r) = earlier.and_then(|p| Replay::load(&p, false).ok()) {
+        for (t, e) in r.take(usize::MAX) {
+            s.apply(e, *t);
+            live.heard_before(e); // a chat's answers from the agent that its next message carries
+        }
+        // a notice also closes the old process's cost: the resumed process reports from $0
+        s.apply(&json!({"type": "harness_notice", "text": "── continued from here ──", "error": false}), 0.0);
     }
 }
 
@@ -2668,6 +2739,39 @@ fn block_at(area: ratatui::layout::Rect, rows: &[Option<usize>], column: u16, ro
 }
 
 /// Copies text to the clipboard and says so ("copied 12 chars"), or why it could not.
+/// What a drag in the composer copied on release, over which selection, and what the clipboard held before.
+struct OwnCopy {
+    copied: String,
+    before: String,
+    sel: (usize, usize),
+}
+
+/// A mouse button let go over the composer after a press there: a drag's text copied (`copy`, which says how it went),
+/// the clipboard read first (`read`) so a paste of that copy over the selection can put the old text there instead
+/// (`paste_own_copy`). The selection stays. A click without a drag copies nothing and leaves the clipboard as it is.
+fn composer_released(ed: &mut editor::Editor, read: impl FnOnce() -> Option<String>, copy: impl FnOnce(&str) -> String) -> (Option<String>, Option<OwnCopy>) {
+    let Some((a, z)) = ed.selection() else {
+        ed.anchor = None;
+        return (None, None);
+    };
+    let copied = ed.text[a..z].to_string();
+    let before = read();
+    let note = copy(&copied);
+    (Some(note), before.map(|before| OwnCopy { copied, before, sel: (a, z) }))
+}
+
+/// A paste over the selection a drag just copied, of that copy itself: select a word, then paste over it (the user,
+/// 2026-11-09), which copy on release had turned into pasting the word onto itself. The clipboard's earlier text goes there
+/// instead and back on the clipboard (`copy`). Any paste forgets the pair. Where the clipboard cannot be read (over SSH,
+/// copied through the terminal; no clipboard tool) there is no pair, and a paste pastes the copy, as before.
+fn paste_own_copy(ed: &mut editor::Editor, own: &mut Option<OwnCopy>, pasted: &str, copy: impl FnOnce(&str)) -> bool {
+    let lines = |t: &str| t.replace("\r\n", "\n").replace('\r', "\n");
+    let Some(o) = own.take().filter(|o| ed.selection() == Some(o.sel) && lines(pasted) == lines(&o.copied)) else { return false };
+    ed.insert(&o.before);
+    copy(&o.before);
+    true
+}
+
 fn copy_note(text: &str) -> String {
     match platform::copy_text(text) {
         Ok(how) => format!("copied {} chars{}", text.chars().count(), how.how()),
@@ -2839,7 +2943,9 @@ fn changed_since(start: Option<&std::collections::BTreeMap<String, String>>, cwd
     if paths.is_empty() {
         return vec![];
     }
-    let numstat = std::process::Command::new("git").args(["diff", "--numstat", "HEAD", "--"]).args(&paths).current_dir(cwd).output()
+    // git status names the files from the repository's root: their counts asked there too, not from a subfolder
+    let root = ui::repo_root(&cwd.to_string_lossy()).map_or(cwd.to_path_buf(), PathBuf::from);
+    let numstat = std::process::Command::new("git").args(["diff", "--numstat", "HEAD", "--"]).args(&paths).current_dir(&root).output()
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
     paths.into_iter().map(|p| {
         let counts = numstat.lines().find_map(|l| {
@@ -2941,7 +3047,8 @@ fn keys_rows() -> Vec<(String, ui::Tone)> {
     let parts: [(&str, &[(&str, &str)]); 3] = [
         ("Writing", &[("enter", "send"), ("\\⏎ or ctrl-j", "a new line"), ("tab", "complete a /command or an @file"), ("@", "a file of this folder"),
             ("!cmd", "run cmd here, then send its output to the model (a turn starts)"), ("ctrl-v", "paste an image"), ("ctrl-g", "write the message in your editor"), ("ctrl-x", "put the message aside, or back"),
-            ("↑ ↓", "your earlier messages"), ("shift-tab", "the next permission mode")]),
+            ("↑ ↓", "your earlier messages"), ("ctrl-z or cmd-z", "undo (ctrl-_ too); with shift, redo"), ("drag in the box", "select and copy"),
+            ("shift-tab", "the next permission mode")]),
         ("While it works", &[("esc", "stop"), ("ctrl-b", "the tasks running in the background")]),
         ("The screen", &[("ctrl-t", "the other design (zen, cockpit)"), ("ctrl-o", "open or fold every step"), ("ctrl-l", "draw the screen again"), ("drag", "select and copy"),
             ("click", "a line in full")]),
@@ -3505,17 +3612,10 @@ fn run_live(
     a: &Args,
     route: (f64, serde_json::Value),
     earlier: Option<std::path::PathBuf>,
-) -> Result<()> {
+    probe: ui::Probe,
+) -> Result<Option<String>> {
     let mut s = Session::new("", &live.effort);
-    // a continued session shows what came before (claude has it; the screen should too)
-    if let Some(mut r) = earlier.and_then(|p| Replay::load(&p, false).ok()) {
-        for (t, e) in r.take(usize::MAX) {
-            s.apply(e, *t);
-            live.heard_before(e); // a chat's answers from the agent that its next message carries
-        }
-        // a notice also closes the old process's cost: the resumed process reports from $0
-        s.apply(&json!({"type": "harness_notice", "text": "── continued from here ──", "error": false}), 0.0);
-    }
+    continue_from(&mut s, live, earlier);
     s.cwd = std::env::current_dir()?.to_string_lossy().into_owned();
     s.apply(&route.1, route.0);
     s.mode = session::mode_name(&live.permission_mode).to_string();
@@ -3591,6 +3691,16 @@ fn run_live(
     // mouse capture scrolls the transcript but keeps the terminal from selecting text; ctrl-s hands the mouse back
     let mut mouse = true;
     let mut ed = editor::Editor::with_history(labels::dir()?.join("history.jsonl"));
+    // keys typed while the terminal answered the background question: read with its answer, so they start the draft
+    if !probe.typed.is_empty() {
+        ed.set(probe.typed.clone());
+    }
+    // a late answer to it, which crossterm reads as keys (Alt+] 1 1 ; r g b … Alt+\): dropped in the first seconds
+    let mut late = LateAnswer::new(probe.unanswered);
+    // what a drag in the box copied on release, for a paste over it (paste_own_copy)
+    let mut own_copy: Option<OwnCopy> = None;
+    // an Enter typed after those keys: handed to the loop as the first key, so the draft is sent
+    let mut ahead = probe.enter.then(|| ratatui::crossterm::event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     // the question in front (its request id) and when it appeared; when the last key came, and whether it answered one;
     // the question "allow once" was chosen on
     let (mut asked_at, mut asked_id): (Option<Instant>, Option<serde_json::Value>) = (None, None);
@@ -3955,7 +4065,8 @@ fn run_live(
 
         if let Some(t) = quit_at {
             if t.elapsed().as_millis() > QUIT_MS {
-                return Ok(());
+                // git's files since the conversation began; the recap adds what its runs' tools wrote outside git
+                return Ok(ui::recap(&s, &changed_since(git_start.as_ref(), &std::env::current_dir().unwrap_or_default())));
             }
             continue;
         }
@@ -3966,10 +4077,11 @@ fn run_live(
                 edge_scrolled = Instant::now();
             }
         }
-        if !event::poll(Duration::from_millis(16))? {
+        let typed_ahead = ahead.take();
+        if typed_ahead.is_none() && !event::poll(Duration::from_millis(16))? {
             continue;
         }
-        let key = match event::read()? {
+        let key = match typed_ahead.map(Event::Key).map_or_else(event::read, Ok)? {
             Event::FocusLost => {
                 focused = false;
                 continue;
@@ -3980,6 +4092,10 @@ fn run_live(
             }
             Event::Paste(text) => {
                 chosen = None;
+                if login.as_ref().is_none_or(|l| l.form.is_none()) && paste_own_copy(&mut ed, &mut own_copy, &text, |t| { let _ = platform::copy_text(t); }) {
+                    continue;
+                }
+                own_copy = None;
                 match login.as_mut().and_then(|l| l.form.as_mut()) {
                     Some(typed) => typed.push_str(text.trim()),
                     None => ed.insert(&paste_text(&text, || paste_image().ok(), platform::clipboard_file)),
@@ -4015,13 +4131,21 @@ fn run_live(
                             }
                         }
                     }
-                    // a selection in the composer stays for typing over it, deleting it or ctrl+c (cmd+c where the
-                    // terminal passes it on). No copy on release, unlike the transcript: select a word, then paste over
-                    // it, and the release had already put that word on the clipboard (the user, 2026-11-09)
+                    // a drag in the composer copies on release, as one in the transcript does: cmd+c never reaches tazuna
+                    // in Ghostty and most Mac terminals, which keep it for their own copy (the user, design review 13; until
+                    // then no copy on release, so a word selected to paste over kept the clipboard, 2026-11-09). The
+                    // selection stays for typing over it, deleting it or ctrl+c; a click copies nothing
                     MouseEventKind::Up(MouseButton::Left) if composer_drag => {
                         composer_drag = false;
-                        if ed.selection().is_none() {
-                            ed.anchor = None; // a click without a drag: just the cursor, drawn again
+                        // (not on Windows, where ctrl+c is the copy key)
+                        if cfg!(windows) {
+                            if ed.selection().is_none() {
+                                ed.anchor = None;
+                            }
+                        } else {
+                            let (note, own) = composer_released(&mut ed, platform::read_text, copy_note);
+                            v.toast = note.map(|n| (n, Instant::now())).or(v.toast.take());
+                            own_copy = own;
                         }
                     }
                     MouseEventKind::Drag(MouseButton::Left) => {
@@ -4134,7 +4258,7 @@ fn run_live(
                 }
                 continue;
             }
-            Event::Key(k) if k.kind == KeyEventKind::Press => k,
+            Event::Key(k) if k.kind == KeyEventKind::Press && !late.swallows(&k) => k,
             _ => continue,
         };
         // the time since the key before this one: a key in a typing burst answers no question (answer_key_counts)
@@ -4488,6 +4612,25 @@ fn run_live(
                 Some(first) => ed.insert(first),
                 None => continue,
             }
+        }
+        // undo and redo in the message box (design review 13): cmd+z where the terminal passes it on (Ghostty and kitty under
+        // the keyboard protocol tazuna asks for), ctrl+z (raw mode makes it a key, not a suspend) and readline's ctrl+_ (sent
+        // as ctrl+7, ctrl+- or ctrl+/ by different terminals); with shift, redo. None of them did anything before.
+        let (sup, shift) = (key.modifiers.contains(KeyModifiers::SUPER), key.modifiers.contains(KeyModifiers::SHIFT));
+        match key.code {
+            KeyCode::Char('z' | 'Z') if (ctrl || sup) && shift => {
+                ed.redo();
+                continue;
+            }
+            KeyCode::Char('z') if ctrl || sup => {
+                ed.undo();
+                continue;
+            }
+            KeyCode::Char('_' | '-' | '7' | '/') if ctrl => {
+                ed.undo();
+                continue;
+            }
+            _ => {}
         }
         // vim mode: esc leaves insert mode; normal mode takes plain keys (enter still sends, ctrl keys work as always)
         if vim && !ctrl && !alt {
@@ -5215,7 +5358,7 @@ fn run_live(
             KeyCode::Esc => ed.clear(),
             KeyCode::PageUp => v.scroll += 15,
             KeyCode::PageDown => v.scroll = v.scroll.saturating_sub(15),
-            KeyCode::Char(c) if !ctrl => ed.insert(c.encode_utf8(&mut [0; 4])),
+            KeyCode::Char(c) if !ctrl => ed.type_char(c),
             _ => {}
         }
     }
@@ -5920,6 +6063,140 @@ mod tests {
         assert!(names("coding plan china").iter().all(|n| n.contains("China")) && !names("coding plan china").is_empty(), "words in any order: {:?}", names("plan china coding"));
         assert_eq!(names("CLAUDE"), ["Claude"]);
         assert!(names("zzzz nothing").is_empty());
+    }
+
+    /// A late answer to the background question, as crossterm reads it from the terminal: dropped whole, the colour and its
+    /// end (ST or BEL) too, however the keys come; the keys before and after it, and an Alt+] that starts no answer, stay
+    /// keys. Nothing is dropped once the question is closed or the first seconds are over (design review 13).
+    #[test]
+    fn a_late_answer_to_the_background_question_is_not_typed() {
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let key = |c: char, m: KeyModifiers| KeyEvent::new(KeyCode::Char(c), m);
+        let keys = |s: &str, end: KeyEvent| -> Vec<KeyEvent> {
+            let mut k = vec![key('x', KeyModifiers::NONE), key(']', KeyModifiers::ALT)];
+            k.extend(s.chars().map(|c| key(c, KeyModifiers::NONE)));
+            k.extend([end, key('y', KeyModifiers::NONE)]);
+            k
+        };
+        for end in [key('\\', KeyModifiers::ALT), key('g', KeyModifiers::CONTROL)] {
+            let mut late = super::LateAnswer::new(true);
+            let typed: String = keys("11;rgb:fbfb/fafa/f7f7", end).iter().filter(|k| !late.swallows(k)).map(|k| if let KeyCode::Char(c) = k.code { c } else { '?' }).collect();
+            assert_eq!(typed, "xy", "{end:?}");
+        }
+        let mut late = super::LateAnswer::new(true);
+        assert!(late.swallows(&key(']', KeyModifiers::ALT)) && !late.swallows(&key('a', KeyModifiers::NONE)) && !late.swallows(&key('b', KeyModifiers::NONE)), "Alt+] that starts no answer");
+        let mut closed = super::LateAnswer::new(false);
+        assert!(!closed.swallows(&key(']', KeyModifiers::ALT)) && !closed.swallows(&key('1', KeyModifiers::NONE)), "the question was answered: every key is a key");
+    }
+
+    /// The exit's recap counts this sitting only, through the real paths: `-c` (continue_from) and /resume (restart_session)
+    /// replay the earlier conversation, whose run and file are not counted; this sitting's run and the file its tool wrote
+    /// are (design review 13: it counted the earlier conversation's too).
+    #[test]
+    fn the_recap_counts_this_sitting_after_c_and_resume() {
+        let dir = std::env::temp_dir().join(format!("tazuna-recap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rec = dir.join("earlier.jsonl");
+        let events = [json!({"type": "system", "subtype": "init", "session_id": "earlier-1", "model": "claude-opus-5-5"}),
+            json!({"type": "harness_user", "text": "the earlier task"}),
+            json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "e1", "name": "Write", "input": {"file_path": "/elsewhere/old.txt", "content": "a\nb\n"}}]}}),
+            json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "e1", "content": "File created successfully at: /elsewhere/old.txt"}]}}),
+            json!({"type": "result", "subtype": "success", "duration_ms": 600_000, "total_cost_usd": 0.5})];
+        let lines: Vec<String> = std::iter::once(json!({"t": 0, "prompt": "", "effort": "medium"}).to_string())
+            .chain(events.iter().enumerate().map(|(i, e)| json!({"t": i as f64 * 10.0, "e": e}).to_string())).collect();
+        std::fs::write(&rec, lines.join("\n")).unwrap();
+        let this_sitting = |s: &mut Session| {
+            s.apply(&json!({"type": "harness_user", "text": "today"}), 1_000.0);
+            s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "n1", "name": "Write", "input": {"file_path": "/elsewhere/new.txt", "content": "x\ny\nz\n"}}]}}), 1_001.0);
+            s.apply(&json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "n1", "content": "File created successfully at: /elsewhere/new.txt"}]}}), 1_002.0);
+            s.apply(&json!({"type": "result", "subtype": "success", "duration_ms": 3_000, "total_cost_usd": 0.6}), 1_003.0);
+        };
+        let mut live = live::Live::new("", "").unwrap();
+        // -c
+        let mut s = Session::new("", "medium");
+        super::continue_from(&mut s, &mut live, Some(rec.clone()));
+        this_sitting(&mut s);
+        let recap = ui::recap(&s, &[]).unwrap();
+        assert!(recap.contains("· 1 turn ·") && recap.contains("1 file changed +3 −0") && recap.ends_with("· 3 s"), "{recap}");
+        // /resume, from a conversation already under way
+        let mut s = Session::new("", "medium");
+        s.apply(&json!({"type": "harness_user", "text": "before the resume"}), 0.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "duration_ms": 9_000, "total_cost_usd": 0.0}), 1.0);
+        let earlier = super::Earlier { id: "earlier-1".into(), ids: vec!["earlier-1".into()], model: "claude-opus-5-5".into(), provider: String::new(), key_env: String::new(),
+            first: "the earlier task".into(), last_at: 0, messages: 1, recordings: vec![rec.clone()], named: false };
+        super::restart_session(&mut live, &mut s, Some(&earlier)).unwrap();
+        assert!(s.blocks.iter().any(|b| matches!(b, session::Block::Prompt(p) if p == "the earlier task")), "the earlier conversation is replayed");
+        this_sitting(&mut s);
+        let recap = ui::recap(&s, &[]).unwrap();
+        assert!(recap.contains("· 1 turn ·") && recap.contains("1 file changed +3 −0") && recap.ends_with("· 3 s"), "{recap}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The recap counts a file once from a repository's subfolder: the tool's path (from the folder) and git's (from the
+    /// root) are one file (design review 13).
+    #[test]
+    fn the_recap_counts_a_file_once_from_a_subfolder() {
+        let repo = std::env::temp_dir().join(format!("tazuna-subfolder-{}", std::process::id()));
+        std::fs::create_dir_all(repo.join("sub")).unwrap();
+        let ok = std::process::Command::new("git").args(["init", "-q"]).current_dir(&repo).status().is_ok_and(|s| s.success());
+        if !ok {
+            return; // no git here
+        }
+        let cwd = std::fs::canonicalize(repo.join("sub")).unwrap().to_string_lossy().into_owned();
+        assert_eq!((ui::repo_path(&cwd, "x.txt"), ui::repo_path(&cwd, &format!("{cwd}/x.txt"))), ("sub/x.txt".to_string(), "sub/x.txt".to_string()));
+        let mut s = Session::new("", "medium");
+        s.cwd = cwd.clone();
+        s.apply(&json!({"type": "harness_user", "text": "write it"}), 0.0);
+        s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "w", "name": "write", "input": {"path": "x.txt", "content": "a\nb\n"}}]}}), 1.0);
+        s.apply(&json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "w", "content": "ok"}]}}), 2.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "duration_ms": 1_000, "total_cost_usd": 0.0}), 3.0);
+        let git = [ui::Changed { path: "sub/x.txt".into(), added: 2, removed: 0, diff: None }];
+        let recap = ui::recap(&s, &git).unwrap();
+        assert!(recap.contains("1 file changed +2 −0"), "{recap}");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    /// A drag in the message box copies on release and stays selected; a click without a drag copies nothing and leaves
+    /// the clipboard alone (cmd+c never reached tazuna in Ghostty, design review 13).
+    #[test]
+    fn a_drag_in_the_message_box_copies_on_release() {
+        // a stand-in clipboard: what it holds
+        let clip = std::cell::RefCell::new("old text".to_string());
+        let read = || Some(clip.borrow().clone());
+        let copy = |t: &str| {
+            *clip.borrow_mut() = t.to_string();
+            format!("copied {} chars", t.chars().count())
+        };
+        let mut ed = editor::Editor::default();
+        ed.insert("fix the parser bug");
+        (ed.anchor, ed.cursor) = (Some(8), 14);
+        let (note, mut own) = super::composer_released(&mut ed, read, copy);
+        assert_eq!((note.as_deref(), clip.borrow().as_str()), (Some("copied 6 chars"), "parser"));
+        assert_eq!(ed.selection(), Some((8, 14)), "still selected for ctrl-c, typing over it or deleting it");
+        // select a word, then paste over it (2026-11-09): the paste of our own copy puts the old clipboard there, and back
+        let pasted = clip.borrow().clone();
+        assert!(super::paste_own_copy(&mut ed, &mut own, &pasted, |t| *clip.borrow_mut() = t.to_string()));
+        assert_eq!((ed.text.as_str(), clip.borrow().as_str(), own.is_none()), ("fix the old text bug", "old text", true));
+        // an unrelated paste over a copied selection: pasted as it is, the clipboard untouched, the pair forgotten
+        (ed.anchor, ed.cursor) = (Some(0), 3);
+        let (_, mut own) = super::composer_released(&mut ed, read, copy);
+        assert!(!super::paste_own_copy(&mut ed, &mut own, "something else", |t| *clip.borrow_mut() = t.to_string()));
+        assert!(own.is_none() && clip.borrow().as_str() == "fix", "{}", clip.borrow());
+        // a click: no copy, the clipboard as it was
+        (ed.anchor, ed.cursor) = (Some(7), 7);
+        let (note, own) = super::composer_released(&mut ed, read, |_: &str| panic!("a click copies nothing"));
+        assert!(note.is_none() && own.is_none() && ed.anchor.is_none() && ed.cursor == 7);
+        assert!(super::keys_rows().iter().any(|(r, _)| r.contains("ctrl-z or cmd-z") && r.contains("redo")), "/keys says it");
+    }
+
+    /// `--theme`: auto (the terminal's background) unless given, terminal for its own background, and --help says so
+    /// (design review 13).
+    #[test]
+    fn the_theme_follows_the_terminal_unless_given() {
+        let theme = |v: &[&str]| super::parse(v.iter().map(|s| s.to_string()).collect()).map(|a| a.theme);
+        assert_eq!([theme(&[]).unwrap(), theme(&["--theme", "terminal"]).unwrap(), theme(&["--theme", "light"]).unwrap()], ["auto", "terminal", "light"]);
+        assert!(theme(&["--theme", "blue"]).is_err());
+        assert!(include_str!("main.rs").lines().take_while(|l| l.starts_with("//!")).any(|l| l.contains("[--theme auto|light|dark|terminal]")), "--help names them");
     }
 
     #[test]

@@ -16,6 +16,24 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.225 (2026-11-25): the terminal's new look; copy and undo in the message box
+
+Design review 13's approved prototype (desktop/mockups/v10.html, T1-T7), then two independent reviews.
+- A working row at the end of the conversation: 手 and a shimmer on "Working", the time, the tokens out and the step, on
+  the spinner's own frames (no extra redraws).
+- Your messages carry an accent bar and a faint band, in zen and cockpit alike.
+- Each finished run says what changed (`main.rs +2 −1  NOTES.md +3  ctrl-o diffs`, a written-over file "rewritten");
+  open diffs have tinted rows, line numbers and the changed words marked, with fixed tints in 256 colours.
+- The permission mode is a pill that is always shown, auto included; full is warn-tinted ("full · never asks").
+- Headings get air and an accent mark; simple maths ($…$, $$…$$, \(…\)) shows as Unicode, while shell text, regexes and
+  code stay as written.
+- Leaving prints a recap of this sitting (turns, files, cost, time) before the resume command.
+- `--theme auto` (the default) reads the terminal's background (OSC 11) and picks light or dark; `--theme terminal` keeps
+  the terminal's own background. Keys typed while it asks are kept; a late answer never reaches the message box.
+- The message box: a drag copies on release (Cmd+C never reaches tazuna in Ghostty), and pasting over the word you just
+  selected still pastes what was on the clipboard before; Ctrl+Z, Cmd+Z or Ctrl+_ undo, with Shift redo.
+- Receipts after "edit from here" count only what remains.
+
 ## 0.1.224 (2026-11-25): a typed message no longer answers a question; text that fits; Caffeine
 
 Design review 13 (the user's own use, driven in a pty against a scripted model, plus independent reviews).
