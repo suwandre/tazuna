@@ -276,10 +276,10 @@ h3 { font-size: 29px; line-height: 1.1; }
     <div class="board" id="board-two"></div>
     <aside class="decision" aria-labelledby="list-two-pick">
       <p class="meta kicker">List 2 / Design recommendation</p>
-      <h2 id="list-two-pick">Pick Switchback.</h2>
-      <p><strong>Switchback</strong> is the strongest departure in this list. The turn in the negative space suggests a rein and holds up at 16 px without needing a prompt or a tiny letter.</p>
-      <p><strong>Stroke Order</strong> is my runner-up if the hand has to stay literal. The four separated strokes keep that heritage and give the existing working animation a natural write-on order.</p>
-      <a href="#switchback">Back to Switchback ↑</a>
+      <h2 id="list-two-pick">Pick Stroke Order.</h2>
+      <p><strong>Stroke Order</strong> keeps the hand that ties the icon to tazuna’s name. Its four separate strokes also give the working animation a clear order to draw them in.</p>
+      <p><strong>Switchback</strong> is my runner-up: the rein-shaped cut holds up at 16 px, but at a glance it can read as a capital K or a back arrow, neither of which points to tazuna.</p>
+      <a href="#stroke-order-card">Back to Stroke Order ↑</a>
     </aside>
   </section>
   <footer class="foot">
@@ -328,15 +328,15 @@ const moreDirections = [
     rationale: 'Break the hand into four offset bands, like a terminal drawn a line at a time.',
     gain: 'Keeps the glyph recognizable while making the display itself part of the mark.',
     cost: 'The gaps are less clear at 16 px; the effect works best in motion or at Dock size.' },
-  { mark: 'switchback-mark', id: 'switchback', name: 'Switchback', label: 'Recommended',
+  { mark: 'switchback-mark', name: 'Switchback', label: 'Runner-up',
     rationale: 'Cut the turn of a rein out of a solid square; the gap is the mark.',
     gain: 'Two bold pieces and one clean cut give it a strong silhouette at 16 px.',
-    cost: 'The connection to the hand is indirect; it needs the name to tell that story.' },
+    cost: 'At a glance, the cut can read as a capital K or a back arrow.' },
   { mark: 'inference-stack', name: 'Inference Stack', label: 'Layers',
     rationale: 'Cut a route into three stacked planes, with each pass visible in cross-section.',
     gain: 'Suggests layers of work rather than a single prompt, with no lettering to resolve.',
     cost: 'Layered tiles are familiar infrastructure imagery; the top cut is the detail that makes this one different.' },
-  { mark: 'stroke-order', name: 'Stroke Order', label: 'Runner-up',
+  { mark: 'stroke-order', id: 'stroke-order-card', name: 'Stroke Order', label: 'Recommended',
     rationale: 'Separate the hand into four gestures, from the stepped crown to the hook.',
     gain: 'Keeps the hand and gives each stroke a clean, independent shape to animate.',
     cost: 'At a glance the detached bars can look like a list next to an arrow.' },
