@@ -1279,10 +1279,12 @@ impl Live {
         } else {
             self.respawn(self.model.clone(), effort.clone());
         }
+        // a model without levels: "none", never "effort:  for the rest of the session" (design review 14)
+        let level = if effort.is_empty() { "none" } else { effort.as_str() };
         let text = if self.provider.is_some() {
-            format!("effort: {effort} for the rest of the session (the conversation goes on)")
+            format!("effort: {level} for the rest of the session (the conversation goes on)")
         } else {
-            format!("effort: {effort} for the rest of the session (the conversation goes on; Claude rebuilds its cache once)")
+            format!("effort: {level} for the rest of the session (the conversation goes on; Claude rebuilds its cache once)")
         };
         Ok(self.record(json!({"type": "harness_effort", "effort": effort, "model": model, "text": text})))
     }

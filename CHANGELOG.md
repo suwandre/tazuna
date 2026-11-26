@@ -16,6 +16,20 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.229 (2026-11-26): the terminal speaks its own words
+
+Design review 14's terminal picks (from desktop/mockups/v12.html; no measurable metric moves).
+- The welcome says what tazuna knows ("lean profile · 3 tracked files · /keys for every key") instead of a borrowed
+  "Try …" hint; at narrow widths it drops whole facts, never a word.
+- The status row's words carry their colour without a dot ("auto   ready", "needs you"); full mode keeps its warn ground.
+- A permission question reads "? Allow this command?" (or "Allow this edit?"), the reason on its own line in words, then
+  "y allow   n decline"; a own-loop call's suffix ("outside the project") is said once; "always = …" notes are no reason.
+- The finished thinking line uses tazuna's "⌁"; background tasks hang on "└".
+- The placeholder is "/ for commands, @ for files" (the desktop's), shortened whole where it does not fit.
+- Picking the model already in use says "already on <model>" and changes nothing (it printed "effort:  for the rest of the
+  session" with no level); the desktop's restored pick of that model says nothing; `--provider` models without levels start
+  with none ("effort: none").
+
 ## 0.1.228 (2026-11-26): a new user starts on a model that runs; Ctrl+C keeps your words
 
 Design review 14's fixes in the core and the terminal (no measurable metric moves).

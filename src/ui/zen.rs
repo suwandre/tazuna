@@ -46,12 +46,12 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     // at the transcript's end (design review 13; "⠹ Working 12 s" stood here since review 11). A retry's wait and a
     // question keep their own words.
     let busy = working(s, v);
-    let said = vec![Span::styled(format!("{glyph} {}", if busy { "working" } else { &label }), st(color)), Span::styled(if busy { esc_hint(v) } else { "" }, st(th.faint))];
+    let said = vec![Span::styled(format!("{glyph} {}", if busy { "working" } else { &label }).trim_start().to_string(), st(color)), Span::styled(if busy { esc_hint(v) } else { "" }, st(th.faint))];
     let typing = v.live && !v.input.is_empty() && v.asking.is_none();
     // a note for a moment ("copied 12 chars", the design ctrl-t switched to); while typing it is the row under the draft
     // (and under a question it stands in for the answers' keys, composer_rows_in)
     let note = if typing || (v.asking.is_some() && v.input.is_empty()) { String::new() } else { v.toast.as_ref().map_or(String::new(), |(t, _)| format!("{t}   ")) };
-    // a question in a narrow column has the row to itself (its "?" says who is waited for): beside "● needs you" the
+    // a question in a narrow column has the row to itself (its "?" says who is waited for): beside "needs you" the
     // answers were cut to "a al" at 40 columns
     let alone = v.asking.is_some() && col.width < 60;
     // the text starts one column left of the column, so the prompt's `›` (after a space, as composer_rows draws it) stands
@@ -61,9 +61,8 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         Span::styled(if v.live { String::new() } else { format!("   {}", play_str(v, "paused")) }, st(th.faint)),
         Span::styled(if v.live { "" } else { "   tab · e · q" }, st(th.faint)),
     ]].concat();
-    // the permission mode as a pill, always, auto too (design review 13: auto showed nothing, beside a question nothing but
-    // full did). Where it would leave a draft under 30 columns (9 at 60 columns), it shrinks: full to its dot and "full",
-    // the others to the dot.
+    // the permission mode as a word in its colour, always, auto too (design review 13: auto showed nothing, beside a question
+    // nothing but full did). Where it would leave a draft under 30 columns (9 at 60 columns), full says just "full".
     let room = |pill: &[Span]| ((col.width + shift) as usize).saturating_sub(note.width() + Line::from(pill.to_vec()).width() + Line::from(rest.clone()).width() + 4);
     let mut pill = if v.live { mode_pill(&v.mode, th, false) } else { vec![] };
     if typing && room(&pill) < 30 {
@@ -77,7 +76,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let rows = if typing || v.asking.is_some() {
         composer_rows_in(v, th, "›", "", text_w, (col.height.saturating_sub(fixed) as usize).clamp(1, 6))
     } else {
-        vec![Line::from(vec![Span::styled(" › ", st(th.accent)), Span::styled("say something…", st(th.faint).add_modifier(Modifier::ITALIC))])]
+        vec![Line::from(vec![Span::styled(" › ", st(th.accent)), Span::styled(placeholder_fit(PLACEHOLDER, (text_w as usize).saturating_sub(3)), st(th.faint).add_modifier(Modifier::ITALIC))])]
     };
     let [top, under, _, body, _, rule, input] = Layout::vertical([
         Constraint::Length(1),

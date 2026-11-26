@@ -1658,9 +1658,10 @@ pub fn activity(s: &Session, v: &View, th: &Theme) -> (&'static str, String, Col
         return ("·", "recorded".into(), th.dim);
     }
     let spin = spinner(v.clock_ms);
-    // a permission question: nothing runs until it is answered, so no spinner
+    // a permission question: nothing runs until it is answered, so no spinner; it and ready are words in their colour, no
+    // dot (design review 14)
     if v.asking.is_some() {
-        return ("●", "needs you".into(), th.warn);
+        return ("", "needs you".into(), th.warn);
     }
     if let Some(secs) = s.retry_in(v.clock_ms) {
         return (spin, format!("retrying in {}", wait_str(secs)), th.err);
@@ -1669,7 +1670,7 @@ pub fn activity(s: &Session, v: &View, th: &Theme) -> (&'static str, String, Col
         // the turn is over, but claude's background work goes on: say so where "done" would be (ctrl-b lists it)
         Activity::Ready | Activity::Done if v.bg_running > 0 => (spin, format!("{} working in background · ctrl-b", v.bg_running), th.accent),
         Activity::Ready if let Some(why) = v.cant_run => ("!", why.into(), th.warn),
-        Activity::Ready => ("●", "ready".into(), th.dim),
+        Activity::Ready => ("", "ready".into(), th.dim),
         // keep-alive pings and no output (the own loop's provider queueing it): said, so it does not look like tazuna hangs
         Activity::Waiting if s.waiting_note.is_some() => (spin, "provider still processing (no output yet)".into(), th.warn),
         // from Enter to the first output it reads "thinking" throughout: "starting", "waiting for model" and then "thinking"
@@ -2166,7 +2167,7 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
     let fresh = v.live && s.blocks.iter().all(|b| matches!(b, Block::Notice { .. } | Block::News(_)))
         && s.blocks.iter().any(|b| matches!(b, Block::Notice { text, .. } if text.starts_with("lane ")));
     if fresh {
-        for l in welcome(th, width) {
+        for l in welcome(s, th, width) {
             lines.push(l);
             owners.push(None);
         }
@@ -2332,7 +2333,7 @@ fn background_lines(s: &Session, v: &View, th: &Theme, width: usize) -> Vec<(Lin
         }
         out.push((Line::from(vec![Span::styled(cut(format!("  {who} · {} · {}", t.description, facts.join(" · "))), st(th.dim))]), Some(TASK_ROW + i)));
         if !t.doing.is_empty() {
-            out.push((Line::from(Span::styled(cut(format!("    ⎿ {}", t.doing)), st(th.faint))), Some(TASK_ROW + i)));
+            out.push((Line::from(Span::styled(cut(format!("    └ {}", t.doing)), st(th.faint))), Some(TASK_ROW + i)));
         }
     }
     if n > 4 {
@@ -2432,10 +2433,10 @@ pub fn mark(th: &Theme) -> Vec<Span<'static>> {
         Span::styled("▌", st(th.accent))]
 }
 
-/// The first screen of a live session: tazuna and its version, the folder as `~/…` with its branch, a first thing to
-/// try. The model says itself once, in the header (it stood here too, over "set on the command line; no repo config":
-/// that is in the first turn's "· started on …" note; design review 11).
-fn welcome(th: &Theme, width: usize) -> Vec<Line<'static>> {
+/// The first screen of a live session: tazuna and its version, the folder as `~/…` with its branch, what the start knows
+/// (start_facts). The model says itself once, in the header (it stood here too, over "set on the command line; no repo
+/// config": that is in the first turn's "· started on …" note; design review 11).
+fn welcome(s: &Session, th: &Theme, width: usize) -> Vec<Line<'static>> {
     let dir = std::env::current_dir().unwrap_or_default();
     let cwd = tilde(&dir, crate::platform::home().as_deref());
     // a line too long for the column ends in "…"; the branch only where it fits whole beside the folder
@@ -2450,8 +2451,30 @@ fn welcome(th: &Theme, width: usize) -> Vec<Line<'static>> {
         Line::from([vec![Span::raw(" ")], mark(th), vec![Span::raw(" "), Span::styled("tazuna", st(th.text).add_modifier(Modifier::BOLD)), Span::styled(format!(" {}", env!("CARGO_PKG_VERSION")), st(th.faint))]].concat()),
         Line::from(place),
         Line::default(),
-        Line::from(vec![Span::raw("      "), Span::styled(ellipsis("Try \"how is this repo laid out?\", or /keys for every key", room), st(th.faint))]),
+        Line::from(vec![Span::raw("      "), Span::styled(start_facts(s, room), st(th.faint))]),
     ]
+}
+
+/// The welcome's own line, from the router's start (the "started on …" note's facts): "lean profile · 3 tracked files ·
+/// /keys for every key", outside a project "chat · /keys for every key". It was a first thing to try, as Claude Code's
+/// (design review 14). Where `room` is short whole facts go, the file count first, then the profile ("… /keys for every…"
+/// at 60 columns); the keys' hint is cut last.
+fn start_facts(s: &Session, room: usize) -> String {
+    let profile = match s.profile.as_str() {
+        "" => None,
+        "chat" => Some("chat".to_string()),
+        p => Some(format!("{p} profile")),
+    };
+    // the reason reads "tiny repo, 3 tracked files" or "4150 tracked files; no repo config"
+    let files = s.lane["reason"].as_str().unwrap_or_default().split([',', ';']).map(str::trim).find(|p| p.ends_with(" tracked files") || p.ends_with(" tracked file"));
+    let mut facts: Vec<String> = profile.into_iter().chain(files.map(String::from)).collect();
+    loop {
+        let line = facts.iter().map(String::as_str).chain(["/keys for every key"]).collect::<Vec<_>>().join(" · ");
+        if line.width() <= room || facts.is_empty() {
+            return ellipsis(&line, room);
+        }
+        facts.pop();
+    }
 }
 
 /// The branch checked out in `dir`'s repository, from its HEAD file (no git process: the welcome is drawn every frame,
@@ -2618,7 +2641,8 @@ fn block_lines(b: &Block, i: usize, s: &Session, v: &View, th: &Theme, o: &Opts,
             out
         }
         Block::Thinking { tokens, live, exact, .. } => {
-            let glyph = if *live { spinner(v.clock_ms) } else { "✻" };
+            // finished: the faint ⌁ of the folded runs' "⌁ ran 4 tools" (it was Claude Code's ✻, design review 14)
+            let glyph = if *live { spinner(v.clock_ms) } else { "⌁" };
             let mut spans = vec![Span::styled(format!("{glyph} "), st(if *live { th.accent } else { th.faint })), Span::styled("thinking", st(th.dim).add_modifier(Modifier::ITALIC))];
             // claude reports thinking in steps of 50-200 tokens about once a second: while live, the count runs up to
             // each new total over the second after it, as Claude Code's does
@@ -3477,34 +3501,44 @@ pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
             spans.push(Span::styled(format!("  -- {} --", v.vim), st(th.accent)));
         }
     } else {
+        // the mode, always (auto too; full in the warning colour, so it is never on unnoticed), and what is going on
+        let mut tail = vec![];
+        if v.live {
+            tail.push(Span::raw("  "));
+            tail.extend(mode_pill(&v.mode, th, false));
+        }
+        if !v.vim.is_empty() {
+            tail.push(Span::styled(format!("  [{}]", v.vim), st(th.accent)));
+        }
+        if v.bg_running > 0 {
+            tail.push(Span::styled(format!("  [{} background · ctrl-b]", v.bg_running), st(th.accent)));
+        }
+        if v.cold > 0 {
+            tail.push(Span::styled(format!("  [cache cold: the next message re-reads {} tokens]", human(v.cold)), st(th.warn)));
+        }
+        // the placeholder gives way first, whole: to the cold cache's count and to "shift-tab mode" (design review 14)
+        let used = 3 + usize::from(v.live) + Line::from(tail.clone()).width() + if v.live { "   shift-tab mode · /keys all".width() } else { 0 };
         if v.live {
             spans.push(Span::styled("▍", st(th.accent)));
         }
-        spans.push(Span::styled(placeholder.to_string(), st(th.faint)));
-        // the mode as a pill, auto too; full in the warning colour, so it is never on unnoticed
-        if v.live {
-            spans.push(Span::raw("  "));
-            spans.extend(mode_pill(&v.mode, th, false));
-        }
-        if !v.vim.is_empty() {
-            spans.push(Span::styled(format!("  [{}]", v.vim), st(th.accent)));
-        }
-        if v.bg_running > 0 {
-            spans.push(Span::styled(format!("  [{} background · ctrl-b]", v.bg_running), st(th.accent)));
-        }
-        if v.cold > 0 {
-            spans.push(Span::styled(format!("  [cache cold: the next message re-reads {} tokens]", human(v.cold)), st(th.warn)));
-        }
+        spans.push(Span::styled(placeholder_fit(placeholder, (width as usize).saturating_sub(used)).to_string(), st(th.faint)));
+        spans.extend(tail);
         if let Some((t, _)) = &v.toast {
             spans.push(Span::styled(format!("   {t}"), st(th.ok)));
         } else {
             let used: usize = spans.iter().map(|s| s.content.width()).sum::<usize>() + 3;
-            // two hints and the way to the rest: seven of them read as a manual in the message box (design review 4)
-            let keys = if v.live { fitted_keys("shift-tab mode · @ files · ctrl-v image · /keys all", (width as usize).saturating_sub(used)) } else { REPLAY_KEYS.to_string() };
+            // two hints and the way to the rest: seven of them read as a manual in the message box (design review 4); no
+            // "@ files", which the placeholder says
+            let keys = if v.live { fitted_keys("shift-tab mode · ctrl-v image · /keys all", (width as usize).saturating_sub(used)) } else { REPLAY_KEYS.to_string() };
             spans.push(Span::styled(format!("   {keys}"), st(th.faint)));
         }
     }
     Line::from(spans)
+}
+
+/// The placeholder in `room` columns, never cut: whole, its first part ("/ for commands"), or nothing.
+pub fn placeholder_fit(placeholder: &str, room: usize) -> &str {
+    [placeholder, placeholder.split(", ").next().unwrap_or_default()].into_iter().find(|p| p.width() <= room).unwrap_or_default()
 }
 
 /// Rows the composer box may grow to while typing (multi-line input); the latest rows stay visible.
@@ -3522,7 +3556,7 @@ pub fn composer_rows(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
 pub fn composer_rows_in(v: &View, th: &Theme, glyph: &str, placeholder: &str, width: u16, max: usize) -> Vec<Line<'static>> {
     let typed = v.live && !v.input.is_empty();
     // an open question over the draft: what is typed meanwhile stays in sight under it (design review 13)
-    let ask = v.asking.as_ref().map(|q| asking_rows(q, th, width, v.ask_risky, v.confirm && !typed, typed)).unwrap_or_default();
+    let ask = v.asking.as_ref().map(|q| asking_rows(q, th, width, v.confirm && !typed, typed)).unwrap_or_default();
     if !ask.is_empty() && !typed {
         // a note for a moment ("answer first: …") in place of the answers' keys: beside them it narrowed the question to a
         // column of a few words (design review 14)
@@ -3579,48 +3613,60 @@ pub fn composer_rows_in(v: &View, th: &Theme, glyph: &str, placeholder: &str, wi
     ask.into_iter().chain(draft).collect()
 }
 
-/// A permission question as the box draws it: what asks (in the warn colour), the call itself whole up to ASK_ROWS rows,
-/// then the answers. One row with the call cut to fit ("sysctl vm.swapusa") was easy to miss and hid what was allowed
-/// (the user, 2026-11-23: "quite hidden, sometimes i dont realize until way later").
-fn asking_rows(q: &str, th: &Theme, width: u16, risky: bool, confirm: bool, typed: bool) -> Vec<Line<'static>> {
-    let (tool, (beside, under), call) = asking_parts(q, width);
+/// A permission question as the box draws it: the question on its own row (in the warn colour), the reason under it, the
+/// call itself whole up to ASK_ROWS rows, then the answers. One row with the call cut to fit ("sysctl vm.swapusa") was easy
+/// to miss and hid what was allowed (the user, 2026-11-23: "quite hidden, sometimes i dont realize until way later").
+fn asking_rows(q: &str, th: &Theme, width: u16, confirm: bool, typed: bool) -> Vec<Line<'static>> {
+    let (tool, note, call) = asking_parts(q, width);
     // the answers are what to act on: the brightest text, their keys in the accent (design review 2026-11-19); no
     // "always" where it is not given (main.rs question_parts)
     let key = |k: &'static str| Span::styled(k, st(th.accent).add_modifier(Modifier::BOLD));
     let word = |w: &'static str| Span::styled(w, st(th.text).add_modifier(Modifier::BOLD));
-    // the note beside the question where it fits, else wrapped under it: cut at the edge, the reason auto asked was lost
-    // ("auto asks: git push --force: rewrites the remote's history · al", design review 13)
-    let mut out = vec![Line::from(vec![Span::styled(" ? ", st(th.warn).add_modifier(Modifier::BOLD)),
-        Span::styled(format!("allow {tool}?"), st(th.warn).add_modifier(Modifier::BOLD)),
-        Span::styled(if beside.is_empty() { String::new() } else { format!("   {beside}") }, st(th.faint))])];
-    out.extend(under.into_iter().map(|l| Line::from(vec![Span::raw("   "), Span::styled(l, st(th.faint))])));
+    // "Allow this command?" over its reason, wrapped whole: "allow bash?" with "once only · auto asks: git push --force: …"
+    // beside it read as tazuna's internals (design review 14). The own loop names its tool with the reason ("edit (outside
+    // the project)", engine.rs), which the row under it says already.
+    let name = tool.split_once(" (").filter(|(_, r)| r.ends_with(')')).map_or(tool.as_str(), |(t, _)| t);
+    let ask = match name {
+        "Bash" | "bash" | "PowerShell" => "Allow this command?".to_string(),
+        "Edit" | "Write" | "MultiEdit" | "NotebookEdit" | "edit" | "write" => "Allow this edit?".to_string(),
+        t => format!("Allow {t}?"),
+    };
+    let mut out = vec![Line::from(vec![Span::styled(" ? ", st(th.warn).add_modifier(Modifier::BOLD)), Span::styled(ask, st(th.warn).add_modifier(Modifier::BOLD))])];
+    out.extend(note.into_iter().map(|l| Line::from(vec![Span::raw("   "), Span::styled(l, st(th.dim))])));
     out.extend(call.into_iter().map(|l| Line::from(vec![Span::raw("   "), Span::styled(l, st(th.text))])));
-    // a destructive command auto asked about: y chooses "allow once", enter confirms it (main.rs question_key)
+    // a destructive command auto asked about: y chooses "allow", enter confirms it (main.rs question_key)
     let mut keys = vec![Span::raw("   ")];
     if confirm {
-        keys.extend([Span::styled("allow once", picked(th)), Span::styled("  enter", st(th.accent).add_modifier(Modifier::BOLD)), word(" confirms   ")]);
+        keys.extend([Span::styled("allow", picked(th)), Span::styled("  enter", st(th.accent).add_modifier(Modifier::BOLD)), word(" confirms   ")]);
     } else {
-        keys.extend([key("y"), word(if risky { " allow once   " } else { " yes   " })]);
+        keys.extend([key("y"), word(" allow   ")]);
     }
     if !q.contains("  (once only") {
         keys.extend([key("a"), word(" always   ")]);
     }
-    keys.extend([key("n"), word(" no")]);
-    // with a draft in the box every key types (main.rs): the answers wait for it to be empty
-    if typed {
-        keys.push(Span::styled("   · answer with an empty box", st(th.faint)));
+    keys.extend([key("n"), word(" decline")]);
+    // with a draft in the box every key types (main.rs): the answers wait for it to be empty, said beside them, or on a row
+    // of its own where it does not fit (it was cut at 80 columns beside "a always")
+    let empty_box = "   · answer with an empty box";
+    if typed && Line::from(keys.clone()).width() + empty_box.width() <= width as usize {
+        keys.push(Span::styled(empty_box, st(th.faint)));
+        out.push(Line::from(keys));
+    } else {
+        out.push(Line::from(keys));
+        if typed {
+            out.push(Line::from(Span::styled("   answer with an empty box", st(th.faint))));
+        }
     }
-    out.push(Line::from(keys));
     out
 }
 
 /// The rows of a call shown in a question at most.
 const ASK_ROWS: usize = 6;
 
-/// A question's tool, its note and its call wrapped to the box ("Bash: ls -la  (always = this command)", main.rs question):
-/// the note one row when it fits beside "? allow TOOL?", else its rows under it; a call past ASK_ROWS rows ends in "…" (its
-/// step in the transcript shows it whole).
-fn asking_parts(q: &str, width: u16) -> (String, (String, Vec<String>), Vec<String>) {
+/// A question's tool, its reason and its call wrapped to the box ("Bash: ls -la  (always = this command)", main.rs question):
+/// the reason by whole words on the rows it takes; a call past ASK_ROWS rows ends in "…" (its step in the transcript shows it
+/// whole).
+fn asking_parts(q: &str, width: u16) -> (String, Vec<String>, Vec<String>) {
     let (head, note) = q.rsplit_once("  (").map_or((q, ""), |(h, n)| (h, n.strip_suffix(')').unwrap_or(n)));
     let (tool, call) = head.split_once(": ").unwrap_or(("this", head));
     let room = (width as usize).saturating_sub(4).max(10);
@@ -3631,12 +3677,26 @@ fn asking_parts(q: &str, width: u16) -> (String, (String, Vec<String>), Vec<Stri
             last.push_str(" …");
         }
     }
-    // " ? allow TOOL?   NOTE" in the box's inside (`width`, less a column of margin)
-    let note = match note {
-        n if 3 + "allow ?".len() + tool.width() + 3 + n.width() < width as usize => (n.to_string(), vec![]),
-        n => (String::new(), wrap_words(n, room)),
-    };
-    (tool.to_string(), note, rows)
+    let reason = reason(note);
+    (tool.to_string(), if reason.is_empty() { vec![] } else { wrap_words(&reason, room) }, rows)
+}
+
+/// A question's note as the reason under it: auto's rule as a sentence ("once only · auto asks: git push --force: rewrites
+/// the remote's history" is "git push --force rewrites the remote's history"), and "once only: " gone (the answers leave
+/// "always" out, which says it). "always = this command" is no reason: none.
+fn reason(note: &str) -> String {
+    if note.starts_with("always = ") {
+        return String::new();
+    }
+    if let Some(why) = note.strip_prefix("once only · auto asks: ") {
+        // risky.rs words its rules "CMD: WHAT": "dd: a disk or system tool", "rm outside the project: /x" stays as it is
+        return match why.split_once(": ") {
+            Some((cmd, rest)) if rest.starts_with("a ") => format!("{cmd} is {rest}"),
+            Some((cmd, rest)) if !cmd.ends_with("outside the project") => format!("{cmd} {rest}"),
+            _ => why.to_string(),
+        };
+    }
+    note.strip_prefix("once only: ").unwrap_or(note).to_string()
 }
 
 /// The typed text as the composer draws it: wrapped rows of (char, its byte index in the input; None for the cursor),
@@ -3760,25 +3820,17 @@ pub fn composer_step(v: &View, width: u16, down: bool) -> Option<usize> {
     Some(*end)
 }
 
-/// The permission mode as a pill, auto included (desktop/mockups/v10.html T4): its dot ok for auto, accent for the modes
-/// that ask, and full in the warn colour on a warn-tinted ground, saying what it means. The `[ask]` and `[full]` tags left
-/// auto unsaid, so it could not be told from a missing label (design review 13). `short`, where room is tight: full keeps
-/// its dot and "full", the others their dot.
+/// The permission mode as a word in its colour, auto included: ok for auto, accent for the modes that ask, and full in the
+/// warn colour on a warn-tinted ground, saying what it means. The `[ask]` and `[full]` tags left auto unsaid (design review
+/// 13); its dot went (design review 14: "● auto   ● ready" read as two lamps). `short`, where room is tight: full says "full".
 pub fn mode_pill(mode: &str, th: &Theme, short: bool) -> Vec<Span<'static>> {
-    let full = mode == "full";
-    let ground = if full { lerp(th.bg, th.warn, 0.18) } else { th.surface };
-    let dot = match mode {
-        "auto" => th.ok,
-        "full" => th.warn,
-        _ => th.accent,
+    let (word, style) = match (mode, short) {
+        ("full", false) => (" full · never asks ".to_string(), st(th.warn).bg(lerp(th.bg, th.warn, 0.18))),
+        ("full", true) => (" full ".to_string(), st(th.warn).bg(lerp(th.bg, th.warn, 0.18))),
+        ("auto", _) => (" auto ".to_string(), st(th.ok)),
+        _ => (format!(" {mode} "), st(th.accent)),
     };
-    let word = match (full, short) {
-        (true, false) => " full · never asks ".to_string(),
-        (true, true) => " full ".to_string(),
-        (false, false) => format!(" {mode} "),
-        (false, true) => " ".to_string(),
-    };
-    vec![Span::styled(" ●", Style::new().fg(dot).bg(ground)), Span::styled(word, Style::new().fg(if full { th.warn } else { th.dim }).bg(ground))]
+    vec![Span::styled(word, style)]
 }
 
 /// One row under the input: a note for a moment ("copied 12 chars"), else the completions ("   tab › /compact  /clear").
@@ -3818,6 +3870,9 @@ fn at_nothing(v: &View) -> Option<&str> {
 
 const CURSOR: char = '▍';
 
+/// The empty message box's line, in both designs and the window's (design review 14: "say something…", "Message tazuna…").
+const PLACEHOLDER: &str = "/ for commands, @ for files";
+
 /// Under a message that starts with `!`.
 const SHELL_HINT: &str = "! runs it here, then sends the output to the model: a turn starts";
 
@@ -3830,12 +3885,11 @@ fn with_cursor(v: &View) -> String {
 
 /// Height of a bordered composer box for this input at this outer width.
 pub fn composer_height(v: &View, outer_width: u16) -> u16 {
-    // a question's rows: what asks, its note under it, the call, the answers
-    let ask = v.asking.as_ref().map_or(0, |q| {
-        let (_, (_, under), call) = asking_parts(q, outer_width.saturating_sub(2));
-        (under.len() + call.len()) as u16 + 2
-    });
-    if !(v.live && !v.input.is_empty()) {
+    // a question's rows: what asks, its reason under it, the call, the answers (and the empty-box note under them), as
+    // asking_rows draws them (its colours aside)
+    let typed = v.live && !v.input.is_empty();
+    let ask = v.asking.as_ref().map_or(0, |q| asking_rows(q, &DARK, outer_width.saturating_sub(2), false, typed).len() as u16);
+    if !typed {
         return if ask > 0 { ask + 2 } else { 3 };
     }
     let room = (outer_width as usize).saturating_sub(2 + 4).max(1);
@@ -3889,7 +3943,7 @@ mod tests {
         View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None }
     }
 
-    /// Under 110 columns the cockpit's header carries the cost, after the status: "● ready   ≈$0", not "≈$0● ready".
+    /// Under 110 columns the cockpit's header carries the cost, after the status: "ready   ≈$0", not "≈$0ready".
     #[test]
     fn the_narrow_header_puts_the_cost_after_the_status() {
         let s = Session::new("", "medium");
@@ -3917,7 +3971,7 @@ mod tests {
                     let screen = rows.join("\n");
                     let strip = rows.last().unwrap();
                     assert!(strip.contains(if paused { "Replay · Paused" } else { "Replay · Playing" }) && strip.contains("q quit"), "{width} {design:?}: {screen}");
-                    assert!(!screen.contains("connecting") && !screen.contains("Message tazuna") && !screen.contains("say something"), "{screen}");
+                    assert!(!screen.contains("connecting") && !screen.contains(PLACEHOLDER), "{screen}");
                     if !initialized { assert!(!screen.contains("thinking"), "{screen}"); }
                     assert!(screen.contains("Offline recording"), "{screen}");
                     if width >= 80 {
@@ -4439,6 +4493,22 @@ mod tests {
         let p = std::path::Path::new;
         assert_eq!([tilde(p("/Users/al/x"), Some(p("/Users/al"))), tilde(p("/Users/alice/x"), Some(p("/Users/al"))), tilde(p("/Users/al"), Some(p("/Users/al/"))), tilde(p("/x"), None)],
             ["~/x", "/Users/alice/x", "~", "/x"]);
+        // its own line: what the router's start found (design review 14; it was Claude Code's "Try \"…\"")
+        let facts = |profile: &str, reason: &str| {
+            let mut s = Session::new("", "medium");
+            apply(&mut s, serde_json::json!({"type": "harness_route", "lane": "small", "model": "claude-sonnet-5-5", "effort": "medium", "reason": reason, "profile": profile}), 0.0);
+            start_facts(&s, 100)
+        };
+        assert_eq!(facts("lean", "tiny repo, 3 tracked files"), "lean profile · 3 tracked files · /keys for every key");
+        assert_eq!(facts("repo", "4150 tracked files; repo config: CLAUDE.md"), "repo profile · 4150 tracked files · /keys for every key");
+        assert_eq!(facts("chat", "not a git repo; no repo config; not in a project: chat (/profile repo for the coding agent)"), "chat · /keys for every key");
+        // narrow: whole facts go, the file count first, then the profile; the keys' hint is cut last
+        let mut s = Session::new("", "medium");
+        apply(&mut s, serde_json::json!({"type": "harness_route", "lane": "small", "model": "claude-sonnet-5-5", "effort": "medium", "reason": "tiny repo, 3 tracked files", "profile": "lean"}), 0.0);
+        assert_eq!([start_facts(&s, 52), start_facts(&s, 50), start_facts(&s, 21), start_facts(&s, 10)],
+            ["lean profile · 3 tracked files · /keys for every key", "lean profile · /keys for every key", "/keys for every key", "/keys for…"]);
+        let rows = rows_of(&frame(&s, &View { design: Design::Zen, ..live_view() }, 60, 20).0);
+        assert!(rows.iter().any(|r| r.trim() == "lean profile · /keys for every key"), "the welcome at 60 columns: {rows:#?}");
     }
 
     #[test]
@@ -4542,7 +4612,7 @@ mod tests {
         let text: Vec<String> = lines.iter().map(|l| l.spans.iter().map(|x| x.content.to_string()).collect()).collect();
         assert!(text[1].contains("waiting on 2 background tasks"), "{text:#?}");
         assert_eq!(text[2], "  explorer · Tick workflows loss window check · 1m 12s · 21.1k tokens · 3 tool calls");
-        assert_eq!(text[3], "    ⎿ Running Show Ledger tick workflow");
+        assert_eq!(text[3], "    └ Running Show Ledger tick workflow");
         assert_eq!(text[4], "  bash · Tick workflows loss window check · 12s");
         // a click on a task's rows opens it: they belong to the task, not to a block
         assert_eq!(&owners[owners.len() - 4..], [None, Some(TASK_ROW), Some(TASK_ROW), Some(TASK_ROW + 1)]);
@@ -4596,12 +4666,30 @@ mod tests {
         assert_eq!(fitted_keys("a · bb · cc", 100), "a · bb · cc");
         assert_eq!(fitted_keys("a · bb · cc", 16), "a · /keys all", "never a hint cut in half");
         let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
-        let line: String = composer_line(&v, Design::Cockpit.theme(), "›", "Message tazuna…", 90).spans.iter().map(|s| s.content.to_string()).collect();
+        let line: String = composer_line(&v, Design::Cockpit.theme(), "›", PLACEHOLDER, 90).spans.iter().map(|s| s.content.to_string()).collect();
         assert!(line.width() <= 90 && line.ends_with("/keys all"), "{line}");
         let mut v = v;
         v.toast = Some(("copied 42 chars".into(), std::time::Instant::now()));
-        let line: String = composer_line(&v, Design::Cockpit.theme(), "›", "Message tazuna…", 90).spans.iter().map(|s| s.content.to_string()).collect();
+        let line: String = composer_line(&v, Design::Cockpit.theme(), "›", PLACEHOLDER, 90).spans.iter().map(|s| s.content.to_string()).collect();
         assert!(line.ends_with("copied 42 chars") && !line.contains("/keys"), "a note takes the hints' place for a moment: {line}");
+        // design review 14: the placeholder gives way whole, to "shift-tab mode" and to the cold cache's count; "@ files" is
+        // the placeholder's, not a key hint too
+        v.toast = None;
+        let line = |v: &View, w: u16| composer_line(v, Design::Cockpit.theme(), "›", PLACEHOLDER, w).spans.iter().map(|s| s.content.to_string()).collect::<String>();
+        let (at80, at58) = (line(&v, 78), line(&v, 58));
+        assert!(at80.contains(PLACEHOLDER) && at80.contains("shift-tab mode") && !at80.contains("@ files"), "{at80}");
+        assert!(at58.contains("/ for commands ") && !at58.contains("@ for") && at58.contains("shift-tab mode") && at58.width() <= 58, "{at58}");
+        v.cold = 12_400;
+        let cold = line(&v, 78);
+        assert!(cold.contains("tokens]") && !cold.contains("/ for") && cold.width() <= 78, "{cold}");
+        // zen: whole or its first part, never cut (full mode at 60, two background tasks at 60)
+        let mut s = Session::new("", "medium");
+        s.activity = Activity::Ready;
+        for v in [View { design: Design::Zen, mode: "full".into(), ..live_view() }, View { design: Design::Zen, bg_running: 2, ..live_view() }] {
+            let rows = rows_of(&frame(&s, &v, 60, 20).0);
+            let row = rows.iter().rev().find(|r| r.contains(" › ")).unwrap();
+            assert!(row.contains(PLACEHOLDER) || (row.contains("› / for commands ") && !row.contains(", @")) || !row.contains("/ for"), "{row}");
+        }
     }
 
     #[test]
@@ -4805,9 +4893,9 @@ mod tests {
         // a permission question: the status says so without a spinner, the call is neither ticked nor spinning
         v.asking = Some("edit: main.rs".into());
         let th = v.design.theme();
-        assert_eq!(activity(&s, &v, th), ("●", "needs you".to_string(), th.warn));
+        assert_eq!(activity(&s, &v, th), ("", "needs you".to_string(), th.warn));
         let screen = render(&s, &v);
-        assert!(screen.contains("? edit") && screen.contains("y yes") && screen.contains("edit ×1   …") && !screen.contains("✓"), "{screen}");
+        assert!(screen.contains("? edit") && screen.contains("Allow this edit?") && screen.contains("y allow") && screen.contains("edit ×1   …") && !screen.contains("✓"), "{screen}");
         // a refused call: one block that counts down, its raw text only when opened
         v.asking = None;
         on(&mut s, serde_json::json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "c1", "content": "ok"}]}}), 2.0);
@@ -4848,7 +4936,7 @@ mod tests {
         v.asking = None;
         on(&mut s, serde_json::json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "c1", "is_error": true, "content": "The user declined this. Ask what they want instead, or try another way."}]}}), 2.0);
         let screen = render(&s, &v);
-        assert!(screen.contains("⌁ declined edit") && !screen.contains("failed") && !screen.contains("ran 1 tool") && screen.contains(" ● ask "), "{screen}");
+        assert!(screen.contains("⌁ declined edit") && !screen.contains("failed") && !screen.contains("ran 1 tool") && screen.contains(" ask "), "{screen}");
         v.expand_all = true;
         let screen = render(&s, &v);
         assert!(screen.contains("declined") && !screen.contains("Ask what they want"), "{screen}");
@@ -4859,8 +4947,8 @@ mod tests {
         assert!(["› first line", "second line", "look at @ma", "tab › main.rs"].iter().all(|t| screen.contains(t)), "{screen}");
         // a row too narrow for both sides loses whole parts, never half a word
         let line = |parts: &[&str]| Line::from(parts.iter().map(|p| Span::raw(p.to_string())).collect::<Vec<_>>());
-        let (l, r) = fit_row(line(&[" 手 ", "tazuna "]), line(&["● ready", "   ", "≈$0", "   ", "Mock Model", "  medium "]), 40);
-        assert_eq!((l.to_string(), r.to_string()), (" 手 ".to_string(), "● ready   ≈$0   Mock Model  medium ".to_string()));
+        let (l, r) = fit_row(line(&[" 手 ", "tazuna "]), line(&["ready", "   ", "≈$0", "   ", "Mock Model", "  medium "]), 40);
+        assert_eq!((l.to_string(), r.to_string()), (" 手 ".to_string(), "ready   ≈$0   Mock Model  medium ".to_string()));
         let (l, _) = fit_row(line(&[" READY ", " T0 ", " CTX 0 ", " CACHE 0% "]), line(&[" 00:01 "]), 28);
         assert_eq!(l.to_string(), " READY  T0  CTX 0 ");
         assert_eq!(whole_hints("↑↓ model · ← providers · tab provider pin · enter choose · esc close", 50), "↑↓ model · ← providers · tab provider pin");
@@ -5082,13 +5170,13 @@ mod tests {
     #[test]
     fn a_question_shows_its_call_whole() {
         let (tool, note, call) = asking_parts("Bash: echo one; vm_stat | head -12; sysctl vm.swapusage  (always = this command)", 40);
-        assert_eq!((tool.as_str(), note), ("Bash", ("always = this command".to_string(), vec![])), "the note beside the question");
+        assert_eq!((tool.as_str(), note), ("Bash", vec![]), "\"always = this command\" is no reason (design review 14)");
         assert_eq!(call.join(" "), "echo one; vm_stat | head -12; sysctl vm.swapusage", "nothing cut at 40 columns: {call:?}");
         let long = format!("bash: {}  (once only: the agent is answering a chat's question)", "word ".repeat(200));
         let (_, note, call) = asking_parts(&long, 40);
-        assert!(call.len() == ASK_ROWS && call.last().unwrap().ends_with('…') && note.0.is_empty() && note.1[0].starts_with("once only"));
-        let rows = asking_rows(&long, Design::Cockpit.theme(), 40, false, false, false);
-        assert_eq!(rows.len(), 1 + note.1.len() + ASK_ROWS + 1, "what asks, its note under it, the call, the answers");
+        assert!(call.len() == ASK_ROWS && call.last().unwrap().ends_with('…') && note[0].starts_with("the agent is answering"), "{note:?}");
+        let rows = asking_rows(&long, Design::Cockpit.theme(), 40, false, false);
+        assert_eq!(rows.len(), 1 + note.len() + ASK_ROWS + 1, "what asks, its note under it, the call, the answers");
         assert!(!rows.last().unwrap().spans.iter().any(|s| s.content.contains("always")), "once only: no always");
         // what is typed while it waits stays in the box under it, and the answers wait for an empty box (design review 13)
         let v = View { asking: Some(long.clone()), input: "explain closures".into(), cursor: 16, ..live_view() };
@@ -5099,12 +5187,36 @@ mod tests {
         let q = "bash: git push --force origin main  (once only · auto asks: git push --force: rewrites the remote's history)";
         for outer in [100u16, 80, 60] {
             let v = View { asking: Some(q.into()), ..live_view() };
-            let rows = asking_rows(q, Design::Cockpit.theme(), outer - 2, true, false, false);
+            let rows = asking_rows(q, Design::Cockpit.theme(), outer - 2, false, false);
             let text: Vec<String> = rows.iter().map(|l| l.spans.iter().map(|s| s.content.to_string()).collect()).collect();
             assert!(text.iter().all(|t| t.width() < (outer - 2) as usize), "{outer}: {text:#?}");
-            assert!(text.join(" ").split_whitespace().collect::<Vec<_>>().join(" ").contains("auto asks: git push --force: rewrites the remote's history"), "{outer}: {text:#?}");
+            assert!(text.join(" ").split_whitespace().collect::<Vec<_>>().join(" ").contains("git push --force rewrites the remote's history"), "{outer}: {text:#?}");
             assert_eq!(composer_height(&v, outer) as usize, rows.len() + 2, "{outer}: the box holds every row");
         }
+        // design review 14: the question alone on its row, the reason as a sentence, "y allow   n decline"
+        let text = |q: &str| asking_rows(q, Design::Cockpit.theme(), 98, false, false).iter().map(|l| l.spans.iter().map(|s| s.content.to_string()).collect::<String>()).collect::<Vec<_>>();
+        assert_eq!(text(q), [" ? Allow this command?", "   git push --force rewrites the remote's history", "   git push --force origin main", "   y allow   n decline"]);
+        assert_eq!(text("Edit: src/main.rs  (always = this tool)"), [" ? Allow this edit?", "   src/main.rs", "   y allow   a always   n decline"]);
+        assert_eq!(text("WebFetch: https://x.dev  (always = this tool)")[0], " ? Allow WebFetch?");
+        // the own loop's tools carry their reason in the name (engine.rs): said once, under the question
+        assert_eq!(text("edit (outside the project): /etc/hosts  (once only: outside the project)"), [" ? Allow this edit?", "   outside the project", "   /etc/hosts", "   y allow   n decline"]);
+        assert_eq!(text("bash (written as text by the model): ls  (once only: the model wrote this call as text)")[..2], [" ? Allow this command?", "   the model wrote this call as text"]);
+        // a draft in the box: "answer with an empty box" beside the answers where it fits, else on its own row, never cut
+        let q2 = "bash: ls -la  (always = this command)";
+        for (outer, alone) in [(100u16, false), (80, false), (60, true)] {
+            let v = View { asking: Some(q2.into()), input: "and then".into(), cursor: 8, ..live_view() };
+            let rows: Vec<String> = composer_rows(&v, Design::Cockpit.theme(), "›", "", outer - 2).iter().map(|l| l.spans.iter().map(|s| s.content.to_string()).collect()).collect();
+            let keys = rows.iter().position(|r| r.contains("y allow")).unwrap();
+            assert!(rows.iter().all(|r| r.width() <= (outer - 2) as usize) && rows[keys + usize::from(alone)].ends_with("answer with an empty box"), "{outer}: {rows:#?}");
+            assert_eq!(composer_height(&v, outer) as usize, rows.len() + 2, "{outer}: the box holds every row");
+            // zen, its status beside the box: whole there too
+            let mut idle = Session::new("", "medium");
+            idle.activity = Activity::Ready;
+            let screen = rows_of(&frame(&idle, &View { design: Design::Zen, ..v }, outer, 24).0).join("\n");
+            assert!(screen.contains("answer with an empty box") && screen.contains("n decline"), "zen {outer}: {screen}");
+        }
+        assert_eq!((reason("once only · auto asks: dd: a disk or system tool"), reason("once only · auto asks: rm outside the project: /x"), reason("once only: outside the project")),
+            ("dd is a disk or system tool".into(), "rm outside the project: /x".into(), "outside the project".into()));
     }
 
     #[test]
@@ -5358,8 +5470,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// T4: the mode is a pill in both designs at 80 and 60 columns, auto included: its dot ok for auto, accent for a mode
-    /// that asks, and full in the warn colour on a warn-tinted ground, saying it never asks. No [ask] or [full] tag is left.
+    /// T4: the mode shows in both designs at 80 and 60 columns, auto included: a word in its colour, ok for auto, accent for
+    /// a mode that asks, and full in the warn colour on a warn-tinted ground, saying it never asks. No [ask] or [full] tag is
+    /// left, and no dot (design review 14).
     #[test]
     fn the_mode_is_a_pill_auto_included() {
         let mut s = Session::new("", "medium");
@@ -5367,35 +5480,34 @@ mod tests {
         let th = Design::Zen.theme();
         for design in [Design::Zen, Design::Cockpit] {
             for (w, h) in [(80u16, 24u16), (60, 20)] {
-                for (mode, word, dot, ground) in [("auto", " auto ", th.ok, th.surface), ("ask", " ask ", th.accent, th.surface), ("plan", " plan ", th.accent, th.surface),
-                    ("full", " full · never asks ", th.warn, lerp(th.bg, th.warn, 0.18))] {
+                for (mode, word, colour, ground) in [("auto", " auto ", th.ok, None), ("ask", " ask ", th.accent, None), ("plan", " plan ", th.accent, None),
+                    ("full", " full · never asks ", th.warn, Some(lerp(th.bg, th.warn, 0.18)))] {
                     let (b, _) = frame(&s, &View { design, mode: mode.into(), ..live_view() }, w, h);
                     let rows = rows_of(&b);
                     let screen = rows.join("\n");
-                    assert!(!screen.contains("[ask]") && !screen.contains("[full]") && !screen.contains("[plan]"), "{design:?} {w}: {screen}");
-                    let y = rows.iter().rposition(|r| r.contains(&format!("●{word}"))).unwrap_or_else(|| panic!("{design:?} {w} {mode}: {screen}"));
-                    let x = rows[y].chars().position(|c| c == '●').map(|i| i as u16).unwrap();
+                    assert!(!screen.contains("[ask]") && !screen.contains("[full]") && !screen.contains("[plan]") && !screen.contains('●'), "{design:?} {w}: {screen}");
+                    let y = rows.iter().rposition(|r| r.contains(word)).unwrap_or_else(|| panic!("{design:?} {w} {mode}: {screen}"));
+                    let x = rows[y][..rows[y].find(word).unwrap()].chars().count() as u16 + 1;
                     let cell = &b[(x, y as u16)];
-                    assert!(cell.fg == dot && cell.bg == ground && b[(x - 1, y as u16)].bg == ground && b[(x + word.chars().count() as u16, y as u16)].bg == ground,
-                        "{design:?} {w} {mode}: the dot's colour on the pill's ground");
+                    assert!(cell.fg == colour && ground.is_none_or(|g| cell.bg == g && b[(x - 1, y as u16)].bg == g), "{design:?} {w} {mode}: the word's colour (full on its ground)");
                 }
             }
         }
-        // a draft typed while a run works: where the pill would leave it under 30 columns, auto shrinks to its dot and full
-        // to its dot and "full"; with room to spare (idle at 60) it stays whole
+        // a draft typed while a run works: where the mode would leave it under 30 columns, full says just "full"; auto is a
+        // word as short
         let mut busy = Session::new("", "medium");
         apply(&mut busy, serde_json::json!({"type": "harness_user", "text": "go"}), 0.0);
         let typed = "a follow up typed while it works";
-        for (session, w, mode, shown, gone) in [(&busy, 60u16, "auto", " ● ", "auto"), (&busy, 60, "full", " ● full ", "never asks"), (&s, 60, "auto", " ● auto ", "-"), (&busy, 100, "full", " ● full · never asks ", "-")] {
+        for (session, w, mode, shown, gone) in [(&busy, 60u16, "auto", " auto ", "●"), (&busy, 60, "full", " full ", "never asks"), (&s, 60, "auto", " auto ", "●"), (&busy, 100, "full", " full · never asks ", "●")] {
             let v = View { design: Design::Zen, input: typed.into(), cursor: typed.len(), mode: mode.into(), ..live_view() };
             let rows = rows_of(&frame(session, &v, w, 20).0);
-            let status = rows.iter().rev().find(|r| r.contains('●')).unwrap();
+            let status = rows.iter().rev().find(|r| r.contains("working") || r.contains("ready")).unwrap();
             assert!(status.contains(shown) && !status.contains(gone) && rows.iter().any(|r| r.contains("› a follow")), "{w} {mode}: {rows:#?}");
         }
-        // cockpit under 110 columns: the pill under the draft, on the box's border (no session panel says the mode there)
+        // cockpit under 110 columns: the mode under the draft, on the box's border (no session panel says it there)
         let v = View { input: typed.into(), cursor: typed.len(), mode: "full".into(), ..live_view() };
         let rows = rows_of(&frame(&s, &v, 80, 24).0);
-        assert!(rows.iter().any(|r| r.starts_with('╰') && r.contains("● full ")), "{rows:#?}");
+        assert!(rows.iter().any(|r| r.starts_with('╰') && r.contains(" full ")), "{rows:#?}");
     }
 
     /// T5: a heading gets air above it and an accent mark, in bold ink; simple TeX reads as text in italics without its
@@ -5532,9 +5644,9 @@ mod tests {
             let b = term.backend().buffer();
             let rows = rows_of(b);
             let y = rows.iter().position(|r| r.contains("how is this repo")).unwrap() as u16;
-            let pill = rows.iter().rposition(|r| r.contains("● auto")).unwrap() as u16;
-            let dot = rows[pill as usize].chars().position(|c| c == '●').unwrap() as u16;
-            assert!(b[(w / 2, y)].bg == cat.surface && b[(dot, pill)].bg == cat.surface, "{w}: the band and the pill on the surface");
+            let pill = rows.iter().rposition(|r| r.contains(" auto ")).unwrap() as u16;
+            let word = rows[pill as usize].find(" auto ").map(|i| rows[pill as usize][..i].chars().count() as u16 + 1).unwrap();
+            assert!(b[(w / 2, y)].bg == cat.surface && b[(word, pill)].fg == cat.ok, "{w}: the band on the surface, the mode a word in its colour");
             assert!(b[(0, 0)].bg == Color::Reset && b[(w / 2, y - 1)].bg == Color::Reset && b[(1, pill)].bg == Color::Reset, "{w}: the canvas left to the terminal");
         }
     }

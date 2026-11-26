@@ -867,6 +867,12 @@ fn lane(a: &Args, interactive: bool) -> Result<(route::Lane, Option<String>)> {
             lane.reason.push_str("; repo not trusted, so lean (its hooks and skills stay off)");
         }
     }
+    // a provider's model without effort levels starts at none, as /model gives it: route::manual's "medium" made a pick of
+    // the same model in /model read "effort:  for the rest of the session" (design review 14)
+    if let (Some((url, _)), Some(m), None) = (&a.provider, &a.model, &a.effort)
+        && app_catalog().is_ok_and(|cs| cs.iter().any(|c| c.model == *m && c.efforts.is_empty() && c.route.as_ref().is_some_and(|r| r.0 == *url))) {
+        lane.effort.clear();
+    }
     let boss = boss.filter(|_| lane.profile == route::Profile::Repo);
     if boss.is_some() {
         lane.reason.push_str("; boss (the main model directs, subagents do the work)");
@@ -1815,7 +1821,8 @@ fn app_server(a: &Args) -> Result<()> {
                                     let cs = app_catalog()?;
                                     match cs.iter().find(|c| c.model == m && c.route.as_ref().map(|r| (Some(r.0.as_str()), Some(r.1.as_str()))) == Some(want)) {
                                         Some(c) => match apply_choice(&mut live, c, effort.clone()) {
-                                            Ok((t, e)) => s.apply(&e, t),
+                                            Ok(Some((t, e))) => s.apply(&e, t),
+                                            Ok(None) => {}
                                             Err(e) => info(&mut s, format!("{e:#}")),
                                         },
                                         None => info(&mut s, format!("no model {m} on that provider in the catalog")),
@@ -3547,8 +3554,9 @@ fn unavailable_because(model: &str) -> String {
 /// messages replayed from the recordings, on the model it needs.
 fn restart_session(live: &mut live::Live, s: &mut Session, earlier: Option<&Earlier>) -> Result<()> {
     if let Some(c) = earlier.and_then(|e| resume_choice(live, e)) {
-        let (t, e) = apply_choice(live, &c, None)?;
-        s.apply(&e, t);
+        if let Some((t, e)) = apply_choice(live, &c, None)? {
+            s.apply(&e, t);
+        }
     }
     // a conversation whose model cannot run here now (its key gone, the model gone) is shown, not continued: before 0.1.189
     // it opened empty, under "this conversation ran on the own loop: /model to the model it used first" (design review 9;
@@ -4497,11 +4505,8 @@ fn run_live(
                 }
             }
             if let Some((c, effort)) = chosen {
-                let msg = apply_choice(live, &c, effort);
-                match msg {
-                    Ok((t, e)) => s.apply(&e, t),
-                    Err(err) => s.apply(&json!({"type": "harness_info", "text": format!("{err:#}")}), live.elapsed_ms()),
-                }
+                let (t, e) = picked_in_terminal(live, &c, effort);
+                s.apply(&e, t);
             }
             continue;
         }
@@ -5771,7 +5776,7 @@ fn signed_out_start(live: &mut live::Live, s: &Session, a: &Args) -> Option<(f64
         return None;
     }
     let (c, effort) = start_choice(&labels::dir().ok()?)?;
-    apply_choice(live, &c, Some(effort)).ok()
+    apply_choice(live, &c, Some(effort)).ok().flatten()
 }
 
 /// Of the rows that can be picked now (a sign-in's never: tazuna does not put a plan login forward on its own): the own-loop
@@ -5823,8 +5828,10 @@ fn app_model_choice<'a>(cs: &'a [models::Choice], cmd: &serde_json::Value) -> Op
 fn app_pick_model(live: &mut live::Live, s: &mut Session, c: &models::Choice, cmd: &serde_json::Value) -> Result<()> {
     let effort = cmd["effort"].as_str().filter(|e| c.efforts.iter().any(|x| x == e)).map(String::from)
         .or_else(|| c.efforts.get(models::start_effort(c, &live.model, &live.effort)).cloned());
-    let (t, e) = apply_choice(live, c, effort)?;
-    s.apply(&e, t);
+    // the window's pick of the model already in use (a saved pick restored onto the start's own choice): nothing to say
+    if let Some((t, e)) = apply_choice(live, c, effort)? {
+        s.apply(&e, t);
+    }
     Ok(())
 }
 
@@ -5850,9 +5857,23 @@ fn restore_saved_model(live: &mut live::Live, s: &mut Session, cs: &[models::Cho
     Some(SavedModelRestore { request, waiting_for })
 }
 
+/// The terminal's /model pick as the transcript says it: the switch, the refusal, or "already on …" for the model in use at
+/// its effort (said, so the pick is not taken for a key that did nothing).
+#[inline(never)]
+fn picked_in_terminal(live: &mut live::Live, c: &models::Choice, effort: Option<String>) -> (f64, serde_json::Value) {
+    match apply_choice(live, c, effort) {
+        Ok(Some(te)) => te,
+        // as the header names it ("Mock Coder 7B"; a local row's label is its id)
+        Ok(None) => (live.elapsed_ms(), json!({"type": "harness_info", "text": format!("already on {}", ui::model_short(&live.model))})),
+        Err(err) => (live.elapsed_ms(), json!({"type": "harness_info", "text": format!("{err:#}")})),
+    }
+}
+
 /// A model picked (the terminal's /model picker, the app's): the switch, or only the effort when it is the model in use on
-/// the same provider; refused, with what to do, when its key is missing or its provider is not trusted.
-fn apply_choice(live: &mut live::Live, c: &models::Choice, effort: Option<String>) -> Result<(f64, serde_json::Value)> {
+/// the same provider; refused, with what to do, when its key is missing or its provider is not trusted. None: the model in
+/// use at the effort in use, nothing changed (the terminal says "already on …", the window's restore says nothing).
+#[inline(never)]
+fn apply_choice(live: &mut live::Live, c: &models::Choice, effort: Option<String>) -> Result<Option<(f64, serde_json::Value)>> {
     live.picked();
     // the model in use, on the same provider: only its effort changes, and the conversation goes on
     let same = models::same_model(c, &live.model) && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1));
@@ -5860,9 +5881,14 @@ fn apply_choice(live: &mut live::Live, c: &models::Choice, effort: Option<String
     // a model without effort levels gets none: the engine sends no effort field (OpenAI refused gpt-4.1's, review 11)
     let effort = if c.route.is_some() && c.efforts.is_empty() { String::new() } else { effort.unwrap_or_else(|| live.effort.clone()) };
     if same && !blocked {
-        return live.set_effort(effort);
+        // the same model at the same effort: nothing changes, and no "effort:  for the rest of the session" with an
+        // empty level for a model that has none (design review 14)
+        if effort == live.effort {
+            return Ok(None);
+        }
+        return live.set_effort(effort).map(Some);
     }
-    match c.state {
+    let switched = match c.state {
         // `/data any`: the user allowed providers off the trusted list for this session
         models::State::Untrusted if live.data_any => live.switch(models::resolve(c, &effort), effort, c.route.clone()),
         models::State::NoKey | models::State::Untrusted | models::State::NotOnKey =>
@@ -5880,7 +5906,8 @@ fn apply_choice(live: &mut live::Live, c: &models::Choice, effort: Option<String
                 (bench/routes.py refresh {} checks it)", e["text"].as_str().unwrap_or_default(), c.model);
             (t, json!({"type": "harness_switch", "model": e["model"], "effort": e["effort"], "text": text}))
         }),
-    }
+    };
+    switched.map(Some)
 }
 
 fn open_picker(live: &live::Live, keys: &models::KeyModels) -> Result<Picker> {
@@ -6591,8 +6618,19 @@ mod tests {
         let mut live = crate::live::Live::new("claude-opus-5-5", "high").unwrap();
         let c = models::Choice { model: "gpt-4.1".into(), label: "gpt-4.1".into(), route: Some(("https://api.openai.com/v1".into(), "OPENAI_API_KEY".into(), "2,0.5,8".into())),
             place: String::new(), efforts: vec![], price: String::new(), note: String::new(), stale: false, state: models::State::Ready, bench: String::new(), aa: String::new(), pins: vec![] };
-        let (_, e) = super::apply_choice(&mut live, &c, None).unwrap();
+        let (_, e) = super::apply_choice(&mut live, &c, None).unwrap().unwrap();
         assert_eq!((live.effort.as_str(), e["text"].as_str().unwrap_or_default().contains(" · :")), ("", false), "{e}");
+        // picked again: nothing changes, no "effort:  for the rest of the session" (design review 14); the terminal says
+        // "already on gpt-4.1", the window's restore of a saved pick says nothing
+        assert!(super::apply_choice(&mut live, &c, None).unwrap().is_none());
+        assert_eq!(super::picked_in_terminal(&mut live, &c, None).1["text"], format!("already on {}", crate::ui::model_short("gpt-4.1")));
+        let mut s = super::Session::new("", &live.effort);
+        super::app_pick_model(&mut live, &mut s, &c, &json!({})).unwrap();
+        assert!(s.blocks.is_empty(), "the window's pick of the model in use is silent: {:?}", s.blocks.len());
+        // a level-less model started at "medium" (an older start): picking it says "none", never an empty level
+        live.effort = "medium".into();
+        let (_, e) = super::apply_choice(&mut live, &c, None).unwrap().unwrap();
+        assert!(e["text"].as_str().unwrap_or_default().starts_with("effort: none for the rest"), "{e}");
     }
 
     #[test]

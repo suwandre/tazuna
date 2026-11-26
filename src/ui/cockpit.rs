@@ -47,7 +47,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let full = if v.live && v.mode == "full" { [mode_pill("full", th, false), vec![Span::raw("   ")]].concat() } else { vec![] };
     let status_at = full.len();
     let mut right = [full, vec![
-        Span::styled(format!("{glyph} {label}"), st(color)),
+        Span::styled(format!("{glyph} {label}").trim_start().to_string(), st(color)),
         Span::styled("   ", st(th.faint)),
         Span::styled(if !v.live && s.model.is_empty() { "recorded session".into() } else { model_short(&s.model) }, st(th.text)),
         Span::styled(format!("  {} ", s.effort), st(th.dim)),
@@ -80,7 +80,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         if !v.input.is_empty() || v.asking.is_some() {
             b = b.title_bottom(Line::from([mode_pill(&v.mode, th, v.mode == "full"), vec![Span::raw(" ")]].concat()).right_aligned());
         }
-        let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
+        let hint = composer_rows(v, th, "›", PLACEHOLDER, composer.width.saturating_sub(2));
         f.render_widget(Paragraph::new(hint).block(b), composer);
         return Areas { pulse: header, last_block, transcript: inner, rows: trows, top_line, composer: Some(composer.inner(Margin { horizontal: 1, vertical: 1 })), ..Default::default() };
     }
@@ -115,7 +115,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let play = if v.paused { "paused".to_string() } else { format!("{:.1}×", v.speed) };
     f.render_widget(
         Paragraph::new(vec![
-            Line::from(vec![Span::styled(format!("{glyph} "), st(color)), Span::styled(label, st(color).add_modifier(Modifier::BOLD))]),
+            Line::from(vec![Span::styled(if glyph.is_empty() { String::new() } else { format!("{glyph} ") }, st(color)), Span::styled(label, st(color).add_modifier(Modifier::BOLD))]),
             // elapsed: the whole session, the user's own time too; working: message to last token, summed
             Line::from(vec![kv("elapsed", &clock_str(v.clock_ms - v.since_ms), th), Span::raw("  "), kv("working", &clock_str(s.busy(v.clock_ms)), th)]),
             // model calls, as the row under an answer counts them ("turn 5" after one message, design review 11)
@@ -339,7 +339,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
 
     if v.live {
         let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(if v.asking.is_some() { th.warn } else { th.border }));
-        let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
+        let hint = composer_rows(v, th, "›", PLACEHOLDER, composer.width.saturating_sub(2));
         f.render_widget(Paragraph::new(hint).block(b), composer);
     } else {
         draw_replay_footer(f, composer, v, th);

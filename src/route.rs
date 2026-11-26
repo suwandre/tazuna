@@ -161,20 +161,30 @@ pub fn profile_for(cwd: &Path) -> (Profile, String) {
 /// Repos with at most this many tracked files count as tiny.
 const TINY_FILES: usize = 50;
 
-pub fn choose(cwd: &Path) -> Lane {
-    let files = Command::new("git")
+/// The repo's tracked files (`git ls-files`); None outside a git repo.
+fn tracked(cwd: &Path) -> Option<usize> {
+    Command::new("git")
         .args(["ls-files"])
         .current_dir(cwd)
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|o| o.stdout.split(|b| *b == b'\n').filter(|l| !l.is_empty()).count());
+        .map(|o| o.stdout.split(|b| *b == b'\n').filter(|l| !l.is_empty()).count())
+}
+
+/// "1 tracked file", "3 tracked files".
+fn tracked_word(n: usize) -> String {
+    format!("{n} tracked file{}", if n == 1 { "" } else { "s" })
+}
+
+pub fn choose(cwd: &Path) -> Lane {
+    let files = tracked(cwd);
     match files {
         Some(n) if n <= TINY_FILES => Lane {
             name: "small",
             model: "claude-sonnet-5-5".into(),
             effort: "medium".into(),
-            reason: format!("tiny repo, {n} tracked file{}", if n == 1 { "" } else { "s" }),
+            reason: format!("tiny repo, {}", tracked_word(n)),
             escalate: Some(("claude-opus-5-5".into(), "high".into())),
             profile: Profile::Lean,
         },
@@ -192,15 +202,24 @@ pub fn choose(cwd: &Path) -> Lane {
     }
 }
 
-/// Explicit `--model`/`--effort` turn model routing off; the profile still follows the repo's config.
+/// Explicit `--model`/`--effort` turn model routing off; the profile still follows the repo's config. The repo's size is
+/// said as the router says it (the welcome's line reads it, design review 14).
 pub fn manual(cwd: &Path, model: &str, effort: &str) -> Lane {
     let (profile, why) = profile_for(cwd);
-    Lane { name: "manual", model: model.into(), effort: effort.into(), reason: format!("set on the command line; {why}"), escalate: None, profile }
+    let files = tracked(cwd).map_or(String::new(), |n| format!("{}; ", tracked_word(n)));
+    Lane { name: "manual", model: model.into(), effort: effort.into(), reason: format!("set on the command line; {files}{why}"), escalate: None, profile }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_model_set_on_the_command_line_still_says_the_repos_size() {
+        let reason = manual(Path::new(env!("CARGO_MANIFEST_DIR")), "gpt-4.1", "").reason;
+        assert!(reason.starts_with("set on the command line; ") && reason.contains(" tracked files; "), "{reason}");
+        assert_eq!((tracked_word(1), tracked_word(3)), ("1 tracked file".to_string(), "3 tracked files".to_string()));
+    }
 
     #[test]
     fn the_home_folders_claude_folder_is_the_users_own_not_the_folders_config() {

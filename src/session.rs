@@ -449,8 +449,8 @@ pub struct Session {
     /// Permission mode in tazuna's words: auto, full, ask, edits, review, plan.
     pub mode: String,
     /// The router's choice at the start (its `harness_route` event), for its line again after a model picked before the
-    /// first message.
-    lane: Value,
+    /// first message (and the welcome's facts, ui::start_facts).
+    pub lane: Value,
     /// Slash commands claude offers in this session (built-ins, the repo's commands and skills), plus tazuna's own.
     pub commands: Vec<String>,
     /// Each finished turn's changed files, in order.
