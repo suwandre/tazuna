@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>tazuna · design review 14 follow-up (v13): the conversation numbers, the start page</title>
+<!-- Design review 14, follow-up (2026-11-26), built from v12.html. Not the app.
+     Decided after v12, drawn as the base with no switch: the placeholder "/ for commands, @ for files"; the pills keep their
+     icons (MessageCircle or Folder, Shield, Zap) with no fill, a hairline on hover, sentence case ("Chat", "Auto"); Stats as
+     tiles; the accent Ai (v12's S5, its dark `selected` at 16% on the sheet: #303638, faint on it 4.56:1, ink 10.0:1); the
+     system UI face (v12's S6); the 16 px working mark with the shimmer; the Brain and Zap icons; the slip's tile and "Receipt".
+
+     Two open questions, on the panel at the bottom right:
+     Q1, the conversation numbers: one box, the composer's full width, 32 px, 12.5 px text; each part a button that opens the
+       work panel at Stats (Conversation). M-A: a strip that is the composer's footer, inside its border. M-B: a box under
+       the composer, 6 px apart, its own hairline. M-C: the same box above it. Parts: context (Gauge, "19.9k of 128k", a bar,
+       the %), the conversation's cost (Coins, "$0.0038 this chat"; "free" on a local model, "not billed" on a plan), the
+       cache (Database, "94% cached"; left out where the provider reports none, as Ollama), the reply's speed while it runs
+       (Activity, "28 t/s", appended at the end so nothing moves when a reply starts or ends). The numbers start at the
+       composer's text edge, under the pills' icons. The route line (news) has two places on a switch: its own line under
+       the composer as today (the default: the numbers need ~545 px running, the box has 686 at 1000 px, so they always fit
+       whole), or the box's left side (the numbers then go right). Where the row is short it drops, in turn: the cache, the
+       cost's words, the route line's model name ("DeepSeek V4.1 Flash on": the pill says it), "of 128k"; last the route
+       line ends in "…" (its whole text on hover). With the route line in the box this happens at 1440 px already.
+       The start page has no numbers: no box (route line on its own line), or the box with the route line alone.
+       Settings › Appearance › Conversation numbers: Under the box, Above the box, In the status bar, Off (a Segmented; it
+       works: pick one and the window behind changes). Under the box draws M-A or M-B, whichever was picked last; above,
+       M-C (or the strip as the composer's header, after M-A). In the status bar: the numbers back there, the box gone, the
+       route line back under the composer. Each number shows once: with the box, the status bar has no context, cache or cost.
+     Q2, the start page: S1-current (the mark, "What are we working on?", the ledger line, composer, cards) or S1-C (the
+       mark; "14 runs today" as the serif headline; "$0.41 paid | 94% from the cache" under it at the ledger's size; on a day
+       with no run the current question and its line).
+
+     A link opens a state: v13.html#screen=run&theme=light&style=box&place=under&w=1000&news=1 (shot=1: the window alone,
+     for screenshots; the clock stands still). Screens: start, startp, done, run, settings. Models: paid, free, plan.
+
+     Numbers: v12's turn on DeepSeek V4.1 Flash ($0.30 in / $0.03 cached / $1.20 out per million, a 128k window), every
+     figure computed from its calls. Finished: 20.3k of 128k, $0.0053, 95% cached. Running at 12 s (four calls done):
+     19.9k of 128k, $0.0038, 94% cached, 28 t/s. The free case is the same turn on Qwen3 Coder 30B in Ollama (32k window,
+     no cache reported); the plan case on Sonnet 5.5 on the Claude plan (200k window). -->
+<style>
+@font-face { font-family: "Geist Mono"; src: url("../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2") format("woff2"); font-weight: 100 900; }
+@font-face { font-family: "Source Serif 4"; src: url("../node_modules/@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-normal.woff2") format("woff2"); font-weight: 200 900; }
+/* DESIGN.md's tokens with the Ai accent (v12 S5; dark selected at 16%) */
+:root {
+  --main:#fbfaf7; --card:#fffefb; --field:#efebe3; --hover:#e7e3db; --sidebar:#f3f0e9;
+  --ink:#23221e; --ink-2:#3f3c35; --muted:#5b574f; --faint:#69655d; --line:#e3ded3; --line-soft:#ece8df; --line-strong:#d8d2c5;
+  --accent:#1d5f86; --accent-ink:#174b6b; --accent-soft:#e7eced; --selected:#e0e7e9; --on-accent:#ffffff; --live:#1d5f86; --live-ink:#174b6b; --live-soft:#e7eced;
+  --ok:#347045; --bad:#aa4236; --warn:#8c5811; --desk:#efebe3; --search:var(--main); --scrim:#1d1b1640;
+  --sheet:0 0 0 1px #2321190a, 0 1px 2px #2321190f, 0 8px 28px #2321190d; --composer:0 1px 2px #2321190d, 0 4px 14px #23211908;
+  --pop:0 2px 6px #2321190f, 0 14px 36px #23211924; --pop-fill:var(--card);
+  --ui:-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; --mono:"Geist Mono", ui-monospace, monospace; --prose:"Source Serif 4", Georgia, serif;
+}
+.dark {
+  --main:#211f1b; --card:#282622; --field:#302e29; --hover:#37342e; --sidebar:#151411;
+  --ink:#ece8df; --ink-2:#d2cdc2; --muted:#afaa9e; --faint:#a29d95; --line:#35322c; --line-soft:#2b2925; --line-strong:#423e37;
+  --accent:#7fb0d0; --accent-ink:#a3c8e0; --accent-soft:#2a2e2d; --selected:#303638; --on-accent:#0e1820; --live:#7fb0d0; --live-ink:#a3c8e0; --live-soft:#2a2e2d;
+  --ok:#7cc08f; --bad:#e08b7f; --warn:#e0b46a; --desk:#121110; --search:color-mix(in srgb, var(--field) 70%, var(--desk)); --scrim:#0000008c;
+  --sheet:0 0 0 1px #ffffff14, 0 1px 2px #00000080, 0 12px 34px #00000066; --composer:none;
+  --pop:0 0 0 1px #ffffff0a, 0 10px 32px #00000080; --pop-fill:#2e2c27;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { font: 13.5px/1.5 var(--ui); color: var(--ink); background: #0d0d0c; overflow: hidden; -webkit-font-smoothing: antialiased; }
+body.light { background: #d9d5cc; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: default; text-align: left; }
+.mono { font-family: var(--mono); font-size: 12.5px; }
+.faint { color: var(--faint); } .muted { color: var(--muted); } .ok { color: var(--ok); } .bad { color: var(--bad); } .num { font-variant-numeric: tabular-nums; }
+.hair { display: inline-block; width: 1px; height: .85em; background: var(--line-strong); margin: 0 7px; flex: none; }
+kbd { font: 11px var(--mono); border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; color: var(--faint); }
+.ico { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.ico.s { width: 14px; height: 14px; } .ico.xs { width: 13px; height: 13px; } .ico.xxs { width: 11px; height: 11px; stroke-width: 2; }
+[data-act] { cursor: pointer; }
+
+/* the stage: the window at its real size, scaled to the page beside the switch panel */
+.stage { position: fixed; inset: 0 352px 0 0; }
+body.pmin .stage, body.shot .stage { right: 0; }
+.frame { position: absolute; left: 50%; top: 50%; transform-origin: center; overflow: hidden; border-radius: 12px; box-shadow: 0 20px 60px #0007; background: var(--desk); }
+body.shot .frame { left: 0; top: 0; transform: none !important; border-radius: 0; box-shadow: none; }
+
+/* ---------- the window: paper on the desk ---------- */
+.win { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--desk); }
+.cols { flex: 1; min-height: 0; display: grid; }
+.side { padding: 0 10px; display: flex; flex-direction: column; min-height: 0; }
+.main { background: var(--main); display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; border-radius: 12px; box-shadow: var(--sheet); overflow: hidden; margin: 8px 8px 0 0; }
+.rail { padding: 15px 16px 16px 10px; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
+/* under 1372 px the panel opens over the conversation, on a sheet of its own (DESIGN.md, Layout) */
+.rail.over { position: absolute; right: 8px; top: 52px; bottom: 36px; width: 300px; z-index: 10; padding: 14px 14px 14px; background: var(--pop-fill); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: var(--pop); }
+.rail.over .box { background: var(--main); }
+
+/* the mark: 手 in four strokes, paper on warm ink (components/Mark.tsx); "write" draws them in turn */
+.mk { display: inline-grid; place-items: center; border-radius: 22%; background: linear-gradient(#2a2824, #1d1c19); color: #ece8df; flex: none; }
+.dark .mk { box-shadow: inset 0 0 0 1px #ffffff29; }
+.mk svg { display: block; }
+.mk .guide { display: none; }
+.mk.write .guide { display: inline; opacity: .2; }
+.mk.write .st > path { transform-box: fill-box; transform-origin: 0 50%; animation: mk-a 2.8s ease-out infinite; }
+.mk.write .st > path:nth-child(2) { animation-name: mk-b; } .mk.write .st > path:nth-child(3) { animation-name: mk-c; }
+.mk.write .st > path:nth-child(4) { transform-origin: 50% 0; animation-name: mk-d; }
+@keyframes mk-a { 0% { transform: scaleX(0); } 12%, 100% { transform: none; } }
+@keyframes mk-b { 0%, 9% { transform: scaleX(0); } 21%, 100% { transform: none; } }
+@keyframes mk-c { 0%, 18% { transform: scaleX(0); } 30%, 100% { transform: none; } }
+@keyframes mk-d { 0%, 27% { transform: scaleY(0); } 39%, 100% { transform: none; } }
+/* the reply's live status: "Working" under a slow shimmer to live-ink (tz-shimmer) */
+.shim { background: linear-gradient(90deg, var(--muted) 40%, var(--live-ink) 50%, var(--muted) 60%) 0 0 / 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shim 1.8s linear infinite; }
+@keyframes shim { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+.spin { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+.pulse { animation: pulse 1.2s ease-in-out infinite; } @keyframes pulse { 50% { opacity: .35; } }
+body.shot .mk.write .st > path, body.shot .pulse, body.shot .spin { animation: none; }
+body.shot .shim { animation-play-state: paused; animation-delay: -.95s; }
+@media (prefers-reduced-motion: reduce) { .mk.write .st > path, .pulse { animation: none; } .mk.write .guide { display: none; } .shim { background: none; color: inherit; } .spin { animation-duration: 3s; } }
+
+/* sidebar */
+.brand { height: 48px; padding: 8px 0 0 8px; display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 14px; letter-spacing: -.01em; flex: none; }
+.search { display: flex; align-items: center; gap: 9px; height: 37px; margin-top: 8px; border: 1px solid var(--line); background: var(--search); border-radius: 7px; padding: 0 9px; color: var(--muted); flex: none; }
+.search kbd { margin-left: auto; }
+.act { display: flex; align-items: center; gap: 9px; height: 36px; padding: 0 9px; border-radius: 7px; color: var(--ink-2); flex: none; }
+.act.first { margin-top: 5px; }
+.list { flex: 1; overflow: hidden; display: flex; flex-direction: column; gap: 2px; }
+.grp { display: flex; justify-content: space-between; padding: 15px 9px 5px; font-size: 11.5px; font-weight: 500; color: var(--faint); }
+.srow { display: block; padding: 5px 9px; border-radius: 7px; color: var(--ink-2); }
+.srow.on { background: var(--selected); box-shadow: inset 0 0 0 1px var(--accent); color: var(--ink); }
+.srow .t { display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; } .srow .t span { overflow: hidden; text-overflow: ellipsis; }
+.srow .s { display: flex; gap: 6px; font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+.srow .s .age { margin-left: auto; font-variant-numeric: tabular-nums; }
+.settings { border-top: 1px solid var(--line); padding: 6px 0 13px; flex: none; } .settings .act { color: var(--ink-2); }
+
+/* the sheet's header */
+.head { flex: none; height: 41px; display: flex; align-items: center; gap: 8px; padding: 0 16px 0 28px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; min-width: 0; }
+.crumb { color: var(--muted); } .ttl { font-weight: 500; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: .3; }
+.fulltl { font-size: 12px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.hb { margin-left: auto; display: flex; gap: 6px; flex: none; }
+.hb span { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); }
+.hb span.on { background: var(--hover); color: var(--ink); }
+.ptab { position: absolute; right: 0; top: 61px; z-index: 3; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-right: 0; border-radius: 7px 0 0 7px; padding: 3px 9px 3px 8px; font-size: 12.5px; color: var(--ink-2); background: var(--desk); }
+.ptab b { font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* the transcript */
+.scrollw { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
+.scroll { flex: 1; overflow-y: auto; min-height: 0; scrollbar-width: none; }
+.scroll::-webkit-scrollbar { display: none; }
+.edge { position: absolute; left: 0; right: 0; height: 28px; pointer-events: none; z-index: 2; }
+.edge.t { top: 0; background: linear-gradient(var(--main), transparent); } .edge.b { bottom: 0; background: linear-gradient(transparent, var(--main)); }
+.doc { max-width: 756px; margin: 0 auto; padding: 28px 28px 30px; }
+.you { display: inline-block; max-width: 85%; background: var(--field); border-radius: 10px; padding: 9px 14px; color: var(--ink); line-height: 22px; }
+.queued { margin-top: 22px; }
+.qline { display: flex; gap: 12px; margin-top: 7px; font-size: 11.5px; color: var(--faint); } .qline b { font-weight: 500; color: var(--muted); }
+.fold { margin: 22px 0 10px -6px; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 2px 6px; border-radius: 6px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.fold[data-act="fold"]:hover { background: var(--hover); }
+.fold .ico.xs { transition: transform 150ms; } .fold.open .ico.xs, .rline.open > .ico.xs { transform: rotate(90deg); }
+.fold .cnt { display: flex; align-items: center; color: var(--faint); } .fold .cnt.bad { color: var(--bad); }
+.steps { margin: -4px 0 12px 5px; border-left: 1px solid var(--line); padding: 2px 0 2px 14px; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--muted); }
+.step { display: flex; align-items: center; gap: 8px; min-height: 22px; white-space: nowrap; }
+.step .tg { font: 11.5px var(--mono); color: var(--ink-2); } .step .tm { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.said { font-size: 12.5px; color: var(--muted); padding: 1px 0 2px; }
+.prose { font: 15.5px/1.62 var(--prose); color: var(--ink); }
+.prose p { margin: 0 0 10px; } .prose ul { margin: 0 0 10px; padding-left: 22px; } .prose li + li { margin-top: 2px; }
+.prose b { font-weight: 650; }
+.prose code { font: 12.5px var(--mono); background: var(--field); padding: 2px 5px; border-radius: 4px; }
+.cc { border: 1px solid var(--line); border-radius: 8px; background: var(--card); margin: 12px 0 9px; }
+.cc .f { display: flex; align-items: center; gap: 8px; height: 41px; padding: 0 12px; border-bottom: 1px solid var(--line-soft); }
+.cc .f .ico { color: var(--faint); } .cc .f .p { font: 12.5px var(--mono); color: var(--ink-2); } .cc .f .st { font-size: 12px; color: var(--faint); }
+.cc .f .n { margin-left: auto; font-size: 12.5px; font-variant-numeric: tabular-nums; display: flex; gap: 6px; }
+.cc .ft { display: flex; align-items: center; gap: 8px; height: 41px; padding: 0 12px; font-size: 12.5px; color: var(--muted); }
+.cc .ft .btn:first-of-type { margin-left: auto; }
+.btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line-strong); border-radius: 7px; height: 26px; padding: 0 9px; font-size: 12.5px; color: var(--ink); background: var(--card); flex: none; }
+.rline { display: inline-flex; align-items: center; font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; padding: 1px 6px; margin-left: -6px; border-radius: 6px; }
+.rline b { font-weight: 500; color: var(--muted); } .rline > .ico.xs { margin-right: 6px; transition: transform 150ms; } .rline .q { margin-left: 4px; }
+.rline.open { background: var(--hover); }
+.rrow { display: flex; align-items: center; justify-content: space-between; }
+.copy { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--faint); }
+
+/* the receipt: a slip of paper, its lower edge torn (.tz-slip) */
+.slipw { width: 600px; max-width: 100%; margin: 6px 0 14px; filter: drop-shadow(0 0 .5px var(--line-strong)) drop-shadow(0 0 .5px var(--line-strong)) drop-shadow(0 1px 1.5px #2321191f); }
+.slip { background: var(--card); padding: 12px 16px 21px; border-radius: 6px 6px 0 0; font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; line-height: 1.5;
+  -webkit-mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / 14px 100%; mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / 14px 100%; }
+.slip .sh { display: flex; align-items: center; gap: 8px; } .slip .sh .tt { font-weight: 500; color: var(--ink); } .slip .sh .rgt { margin-left: auto; font-size: 12px; color: var(--faint); }
+.rt { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.rt th { font-size: 11.5px; font-weight: 500; color: var(--faint); text-align: right; padding: 0 0 5px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.rt th:first-child { text-align: left; padding-left: 0; width: 100%; }
+.rt td { padding: 3px 0 0 12px; white-space: nowrap; text-align: right; } .rt tbody tr:first-child td { padding-top: 6px; }
+.rt td:first-child { text-align: left; padding-left: 0; max-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+.rt .n { display: inline-block; width: 16px; color: var(--faint); } .rt .sh2 { color: var(--faint); font-size: 10.5px; margin-left: 4px; }
+.rt tr.tot td { border-top: 1px solid var(--line); padding-top: 5px; color: var(--ink); font-weight: 500; }
+.rt tr.tot td .med { font-size: 11px; font-weight: 400; color: var(--faint); margin-left: 4px; }
+.dash { border-top: 1px dashed var(--line-strong); margin: 9px 0 7px; }
+.sum { display: flex; justify-content: space-between; padding: 1px 0; } .sum b { font-weight: 600; color: var(--ink); } .sum.q { color: var(--faint); }
+
+/* the composer; its pills keep their icons, no fill, a hairline on hover or focus (decided after v12) */
+.foot { flex: none; padding: 10px 28px 22px; }
+.composer { border: 1px solid var(--line-strong); border-radius: 12px; background: var(--card); padding: 12px 12px 8px 16px; box-shadow: var(--composer); white-space: nowrap; }
+.composer.focus { border-color: var(--accent); }
+.composer .ph { color: var(--faint); line-height: 22px; padding: 1px 0 13px; overflow: hidden; text-overflow: ellipsis; }
+.pills { display: flex; gap: 6px; align-items: center; }
+.pill { display: inline-flex; align-items: center; gap: 6px; height: 25px; border: 1px solid transparent; border-radius: 999px; padding: 0 8px; font-size: 12px; color: var(--ink-2); white-space: nowrap; flex: none; }
+.pill:hover, .pill:focus-visible { border-color: var(--line-strong); }
+.pill:first-child { margin-left: -8px; }
+.pill .ico.s { color: var(--muted); } .pill .dn { width: 13px; height: 13px; color: var(--faint); margin-left: -1px; } .pill .lvl { color: var(--faint); }
+.pill.dis { color: var(--muted); }
+.pill.full { border-color: color-mix(in srgb, var(--warn) 55%, var(--line-strong)); background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); padding: 0 10px; }
+.pill.full .ico.s, .pill.full .dn { color: inherit; } .pill.full:first-child { margin-left: 0; }
+.clip { width: 28px; height: 28px; display: grid; place-items: center; color: var(--faint); }
+.send { margin-left: auto; width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line); background: var(--field); display: grid; place-items: center; color: var(--faint); flex: none; }
+.send.stop { background: var(--ink); border-color: var(--ink); color: var(--main); }
+.under { margin-top: 6px; padding: 0 4px; display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--faint); min-height: 17px; white-space: nowrap; }
+
+/* Q1: the conversation numbers. One row, 32 px; the route line (news) left, the numbers right, each a button */
+.mrow { display: flex; align-items: center; height: 32px; padding: 0 5px 0 9px; font-size: 12.5px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; overflow: hidden; }
+.mnews { flex: none; display: flex; align-items: center; gap: 6px; padding-left: 7px; padding-right: 12px; overflow: hidden; }
+.mnews .tx { overflow: hidden; text-overflow: ellipsis; }
+.mrow.squeeze .mnews { flex: 0 1 auto; min-width: 0; }
+.mnums { display: flex; align-items: center; flex: none; }
+.mnews + .mnums { margin-left: auto; }
+.mseg { display: flex; align-items: center; }
+.mseg + .mseg::before { content: ""; width: 1px; height: 14px; background: var(--line); margin: 0 3px; }
+.mp { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 7px; border-radius: 6px; color: var(--muted); }
+.mp:hover, .mp:focus-visible { background: var(--hover); color: var(--ink-2); }
+.mp .ico.s { color: var(--faint); } .mp .ico.s.live { color: var(--live); }
+.mp .v { color: var(--ink); font-weight: 500; } .mp .w { margin-left: -2px; }
+.mbar { width: 40px; height: 5px; border-radius: 3px; background: var(--line-strong); overflow: hidden; flex: none; }
+.dark .mbar { background: var(--line-strong); }
+.mbar i { display: block; height: 100%; background: var(--live); border-radius: 3px; }
+/* M-A: the composer's footer, inside its border */
+.composer > .mrow.strip { margin: 8px -12px -8px -16px; border-top: 1px solid var(--line); border-radius: 0 0 11px 11px; background: color-mix(in srgb, var(--field) 40%, var(--card)); }
+.composer > .mrow.strip.top { margin: -12px -12px 10px -16px; border-top: 0; border-bottom: 1px solid var(--line); border-radius: 11px 11px 0 0; }
+/* M-B and M-C: a box of its own, 6 px from the composer, the composer's edges */
+.mbox { margin-top: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+.mbox.above { margin: 0 0 6px; }
+
+/* the status bar */
+.sbar { height: 28px; flex: none; display: flex; align-items: center; gap: 16px; padding: 0 14px; font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sbar b { font-weight: 500; color: var(--ink); }
+.sdot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); display: inline-block; margin-right: 7px; }
+.sbar .l { display: flex; align-items: center; } .sbar .sp { flex: 1; }
+.sbar .sn { padding: 1px 5px; margin: 0 -5px; border-radius: 5px; } .sbar .sn:hover { background: var(--hover); }
+
+/* the start page */
+.startw { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; align-items: center; padding: 40px 28px; }
+.startc { margin: auto 0; width: 100%; display: flex; flex-direction: column; align-items: center; padding-bottom: 6vh; }
+.ques { font: 400 27px/1.25 var(--prose); letter-spacing: -.01em; text-align: center; margin-bottom: 6px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.ledger { display: flex; align-items: center; font-size: 13px; color: var(--muted); margin-bottom: 12px; padding: 2px 8px; border-radius: 6px; font-variant-numeric: tabular-nums; }
+.ledger b { font-weight: 500; color: var(--ink); margin-right: 4px; } .ledger .tdy { color: var(--faint); margin-right: 10px; }
+.ledger:hover, .ques.hl:hover { background: var(--hover); }
+.ques.hl { padding: 0 10px; border-radius: 8px; margin-bottom: 2px; }
+.what { font-size: 12.5px; color: var(--muted); margin-bottom: 12px; padding: 2px 0; }
+.cards { margin-top: 12px; width: 100%; max-width: 756px; padding: 0 28px; display: grid; gap: 14px; }
+.cards.two { grid-template-columns: 1fr 1fr; }
+.card { border: 1px solid var(--line); border-radius: 12px; background: var(--card); overflow: hidden; align-self: start; }
+.card .hd { font-size: 11.5px; font-weight: 500; color: var(--muted); padding: 10px 14px 8px; border-bottom: 1px solid var(--line-soft); }
+.card .r { display: flex; align-items: center; gap: 10px; padding: 7px 14px; }
+.card .r + .r { border-top: 1px solid var(--line-soft); }
+.card .r .ico { color: var(--muted); } .card .r .tx { flex: 1; min-width: 0; } .card .r .tx > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .r .tx > span + span { font-size: 11.5px; color: var(--faint); } .card .r .age { font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.keys { margin-top: 20px; display: flex; gap: 16px; font-size: 11.5px; color: var(--faint); } .keys kbd { margin-left: 4px; }
+
+/* the work panel: sections apart by a rule, on the desk */
+.sec { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.sec:last-child { border-bottom: 0; }
+.sec h4 { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 500; color: var(--ink); height: 26px; margin-bottom: 6px; }
+.sec h4 .n { margin-left: auto; font-weight: 400; font-size: 12.5px; font-variant-numeric: tabular-nums; display: flex; gap: 5px; }
+.sec .fr { display: flex; justify-content: space-between; font-size: 12.5px; padding: 3px 0; color: var(--ink); }
+.sec .fr .n { font-variant-numeric: tabular-nums; display: flex; gap: 5px; }
+.sec .btn { margin-top: 8px; }
+.seg { display: inline-flex; background: var(--field); border-radius: 7px; padding: 2px; margin-left: auto; font-weight: 400; }
+.seg span { padding: 3px 11px; border-radius: 5px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.seg span.on { background: var(--card); color: var(--ink); font-weight: 500; box-shadow: 0 0 0 1px var(--line-strong); }
+.livedot { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 400; color: var(--live-ink); }
+.livedot i { width: 6px; height: 6px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 3px var(--live-soft); }
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.box { border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 9px 11px; }
+.box .l { font-size: 11.5px; color: var(--faint); } .box .v { font-size: 20px; font-weight: 600; line-height: 1.25; letter-spacing: -.02em; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
+.box .s { font-size: 11.5px; color: var(--muted); line-height: 1.4; white-space: nowrap; }
+.bar { height: 6px; border-radius: 3px; background: var(--field); overflow: hidden; margin-top: 7px; } .bar i { display: block; height: 100%; background: var(--live); border-radius: 3px; }
+.metric { padding: 9px 11px 7px; margin-bottom: 8px; }
+.metric .top { display: flex; align-items: baseline; gap: 6px; } .metric .top .l { margin-right: auto; }
+.metric .top .v2 { font-size: 15px; font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; } .metric .top .s { font-size: 11.5px; }
+.sparkc { position: relative; height: 34px; margin-top: 4px; } .sparkc svg { position: absolute; inset: 4px; width: calc(100% - 8px); height: 26px; overflow: visible; }
+
+/* Settings (SettingsView.tsx: dialogShell(860), 620 px tall; the nav on the sidebar's fill, the body on main, groups as cards) */
+.scrim { position: absolute; inset: 0; z-index: 20; display: grid; place-items: center; background: var(--scrim); padding: 40px; }
+.dlg { width: 860px; height: 620px; max-width: calc(100% - 80px); max-height: calc(100% - 80px); display: flex; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--main); box-shadow: var(--pop); }
+.dnav { width: 196px; flex: none; display: flex; flex-direction: column; gap: 1px; border-right: 1px solid var(--line-soft); background: var(--sidebar); padding: 10px 8px 12px; }
+.dnav .t { padding: 1px 10px 10px; font-weight: 500; }
+.dnav span { border-radius: 6px; padding: 5px 10px; font-size: 13px; color: var(--ink-2); }
+.dnav span.on { background: var(--selected); font-weight: 500; color: var(--ink); }
+.dmain { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.dhead { display: flex; align-items: center; border-bottom: 1px solid var(--line-soft); padding: 10px 16px 10px 24px; } .dhead > span:first-child { flex: 1; font-weight: 500; }
+.dhead .x { padding: 4px; border-radius: 4px; color: var(--muted); display: grid; }
+.dbody { flex: 1; overflow: auto; padding: 20px 24px 28px; }
+.dcard { border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+.drow { display: flex; align-items: center; gap: 16px; padding: 12px 16px; } .drow + .drow { border-top: 1px solid var(--line-soft); }
+.drow .tx { flex: 1; min-width: 0; } .drow .tt { font-size: 13px; font-weight: 500; color: var(--ink); } .drow .nt { margin-top: 2px; font-size: 12px; line-height: 1.625; color: var(--muted); }
+.sgm { display: inline-flex; flex: none; border-radius: 7px; background: var(--field); padding: 2px; font-size: 12.5px; }
+.sgm span { white-space: nowrap; border-radius: 5px; padding: 3px 11px; color: var(--muted); }
+.sgm span.on { background: var(--card); font-weight: 500; color: var(--ink); box-shadow: 0 0 0 1px var(--line-strong); }
+.sws { display: inline-flex; gap: 9px; flex: none; } .sws i { width: 20px; height: 20px; border-radius: 50%; box-shadow: inset 0 0 0 1px #0003; }
+.sws i.on { box-shadow: inset 0 0 0 1px #0003, 0 0 0 2px var(--card), 0 0 0 4px var(--ink); }
+
+/* the switch panel */
+.proto { position: fixed; right: 14px; bottom: 14px; z-index: 50; width: 326px; max-height: calc(100vh - 28px); overflow: auto; background: #111; color: #eee; border-radius: 12px; padding: 12px; font: 12px/1.45 system-ui, sans-serif; box-shadow: 0 10px 30px #0008; }
+body.shot .proto { display: none; }
+.proto h3 { font-size: 12.5px; font-weight: 600; margin-bottom: 8px; color: #fff; padding-right: 20px; }
+.proto b { display: block; font-size: 10.5px; color: #8a8a8a; text-transform: uppercase; letter-spacing: .06em; margin: 10px 0 4px; font-weight: 600; }
+.proto .opts { display: flex; flex-wrap: wrap; gap: 4px; }
+.proto button { background: #2a2a2a; color: #ddd; border-radius: 6px; padding: 3px 8px; font-size: 12px; cursor: pointer; }
+.proto button.on { background: #3f7fa8; color: #fff; }
+.proto .min { position: absolute; right: 12px; top: 9px; color: #888; cursor: pointer; }
+.proto.small > :not(.min):not(h3) { display: none; }
+.proto .note { color: #aaa; margin-top: 8px; font-size: 11.5px; }
+</style>
+</head>
+<body class="dark">
+<div class="stage"><div class="frame" id="frame"></div></div>
+<div class="proto" id="proto"></div>
+<script>
+// ── state ─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// style: strip (M-A) or box (M-B, M-C); place: the setting (under, above, bar, off); start: S1-current (cur) or S1-C (c)
+const S = { screen: "done", theme: "dark", w: "1440", style: "strip", place: "under", news: true, newsAt: "line", model: "paid", start: "cur", day: "busy",
+  fold: false, slip: false, mode: "auto", panel: false, scope: "all", shot: false };
+
+// ── icons (Lucide paths) ──────────────────────────────────────────────────────────────────────────────────────────────
+const IP = {
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>', plus: '<path d="M5 12h14M12 5v14"/>',
+  folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  folderOpen: '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
+  gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  panel: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>',
+  side: '<path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
+  zap: '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
+  msg: '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>',
+  brain: '<path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M19.938 10.5a4 4 0 0 1 .585.396"/><path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M19.967 17.484A4 4 0 0 1 18 18"/>',
+  down: '<path d="m6 9 6 6 6-6"/>', right: '<path d="m9 18 6-6-6-6"/>', check: '<path d="M20 6 9 17l-5-5"/>', x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  clip: '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+  up: '<path d="m5 12 7-7 7 7M12 19V5"/>', loader: '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>',
+  branch: '<path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+  copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+  // the conversation numbers
+  gauge: '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
+  coins: '<circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4"/><path d="m16.71 13.88.7.71-2.82 2.82"/>',
+  database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/>',
+  activity: '<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/>',
+  arrow: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+};
+const ic = (n, c = "", style = "") => `<svg class="ico ${c}" viewBox="0 0 24 24" style="${style}">${IP[n]}</svg>`;
+const STROKES = ["M5 5h3V4h3v1H8v1H5z", "M5 7h3v1H5z", "M4 9h4v1H4z", "M9 6h1v6H6v-1h3z"].map((d) => `<path d="${d}"/>`).join("");
+const mark = (size, write = false) => `<span class="mk ${write ? "write" : ""}" style="width:${size}px;height:${size}px"><svg viewBox="0 0 16 16" width="${size}" height="${size}" fill="currentColor"><g transform="translate(0.5 0)">${write ? `<g class="guide">${STROKES}</g>` : ""}<g class="st">${STROKES}</g></g></svg></span>`;
+const hair = '<span class="hair"></span>';
+
+// ── numbers: one turn, every figure computed from its calls ──────────────────────────────────────────────────────────
+// the model the conversation runs on: paid (DeepSeek), free (a local model), plan (the Claude plan)
+const MODELS = {
+  paid: { name: "DeepSeek V4.1 Flash", lvl: "high", window: 128000, win: "128k", price: { in: 0.30, cached: 0.03, out: 1.20 }, cache: true, payee: "paid to DeepSeek" },
+  free: { name: "Qwen3 Coder 30B", lvl: null, window: 32768, win: "32k", price: null, cache: false, word: "free", sub: "on this machine" },
+  plan: { name: "Sonnet 5.5", lvl: "high", window: 200000, win: "200k", price: null, cache: true, word: "not billed", sub: "on your Claude plan" },
+};
+const M = () => MODELS[S.model];
+const STEP = { ls: ["Ran", "ls -la", true, 0.1], edit: ["Edited", "main.rs", true, 0.0], cat: ["Ran", "cat nope.txt", false, 0.1], write: ["Wrote", "NOTES.md", true, 0.0] };
+const C = (role, steps, inp, cached, out, ttft, total) => ({ role, steps, in: inp, cached, out, ttft, total });
+const CALLS = [C("Ran", ["ls"], 19100, 15100, 28, 1.1, 2.1), C("Edited", ["edit"], 19300, 19000, 33, 0.9, 2.1), C("Ran", ["cat"], 19600, 19300, 24, 0.8, 1.7),
+  C("Wrote", ["write"], 19900, 19600, 71, 0.9, 3.4), C("answer", [], 20300, 19900, 644, 1.0, 24.1)];
+const callCost = (c) => { const p = M().price; return p ? ((c.in - c.cached) * p.in + c.cached * p.cached + c.out * p.out) / 1e6 : 0; };
+const usd = (x) => x === 0 ? "$0" : x < 0.01 ? "$" + x.toFixed(4) : x < 0.1 ? "$" + x.toFixed(3) : "$" + x.toFixed(2);
+const tok = (n) => n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(Math.round(n));
+const secs = (s) => s < 10 ? s.toFixed(1) + " s" : Math.round(s) + " s";
+const dur = (s) => s < 1 ? "<1 s" : Math.round(s) + " s";
+const share = (x) => `${x >= 1 ? 100 : Math.min(99, Math.round(x * 100))}%`;
+const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; };
+const tpsOf = (c) => c.out / Math.max(0.1, c.total - c.ttft);
+// the cost as a word where there is no price: "free" on a local model, "not billed" on a plan (never $0 for either)
+const costSaid = (sm) => M().price ? usd(sm.cost) : M().word;
+function words(steps) {
+  const n = (v) => steps.filter((s) => v.includes(s[0])).length, out = [];
+  const r = n(["Read"]), e = n(["Edited", "Wrote"]), x = n(["Ran"]);
+  if (r) out.push(`read ${r} file${r === 1 ? "" : "s"}`); if (e) out.push(`edited ${e} file${e === 1 ? "" : "s"}`); if (x) out.push(`ran ${x} command${x === 1 ? "" : "s"}`);
+  return out.join(", ");
+}
+function summary(calls, live = null) {
+  const steps = calls.flatMap((c) => c.steps.map((k) => STEP[k]));
+  const S2 = (f) => calls.reduce((a, c) => a + f(c), 0);
+  const inp = S2((c) => c.in), cached = S2((c) => c.cached), out = S2((c) => c.out), cost = S2(callCost), tools = steps.reduce((a, s) => a + s[3], 0);
+  return { calls, steps, inp, cached, out, cost, tools, time: live ?? S2((c) => c.total) + tools, hit: cached / inp, ttftMed: median(calls.map((c) => c.ttft)),
+    tps: out / S2((c) => c.total - c.ttft), ctx: calls[calls.length - 1].in, fold: words(steps), failed: steps.filter((s) => !s[2]).length, n: calls.length,
+    perTtft: calls.map((c) => c.ttft), perTps: calls.map(tpsOf), perHit: calls.map((c) => c.cached / c.in) };
+}
+// the running moment: four calls done, the answer being written, 12 s in
+const RUN = { at: 12, done: 4 };
+let live = { secs: RUN.at, tps: 28 };
+
+// ── pieces ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+const CONV = [["Change the greeting in main.rs to hello, tazuna and add a notes file", "proj", "4m"], ["Write me a haiku about autumn", "chat", "1h"], ["Add a --name flag to the greeting", "proj", "3h"]];
+const YDAY = CONV.map(([t, p], i) => [t, p, ["6:12pm", "5:30pm", "2:48pm"][i]]);
+const srow = ([t, p, a], on, running) => `<div class="srow ${on ? "on" : ""}"><div class="t">${running ? ic("loader", "xs spin", "color:var(--live)") : ""}<span>${t}</span></div><div class="s"><span>${p}</span><span class="age">${running ? "" : a}</span></div></div>`;
+function sidebar(kind) {
+  const conv = kind !== "start", run = kind === "run";
+  const today = run ? CONV.slice(1) : CONV, newDay = kind === "start" && S.day === "new";
+  return `<aside class="side">
+    <div class="brand">${mark(20)}<span>tazuna</span></div>
+    <div class="search">${ic("search", "s")}Search<kbd>⌘K</kbd></div>
+    <div class="act first">${ic("plus")}New chat</div><div class="act">${ic("folder")}Open folder</div>
+    <div class="list">
+      ${run ? `<div class="grp"><span>Working</span><span>1</span></div>${srow(CONV[0], true, true)}` : ""}
+      ${newDay ? `<div class="grp"><span>Yesterday</span></div>${YDAY.map((c) => srow(c)).join("")}<div class="grp"><span>This week</span></div>${srow(["Refund for a train ticket", "chat", "Mon"])}`
+        : `<div class="grp"><span>Today</span></div>${today.map((c, i) => srow(c, conv && !run && i === 0)).join("")}<div class="grp"><span>Yesterday</span></div>${srow(["Refund for a train ticket", "chat", "9:41pm"])}`}
+      <div class="grp"><span>Projects</span></div><div class="act" style="margin:0;color:var(--ink-2)">${ic("right", "xs", "color:var(--faint)")}proj</div>
+    </div>
+    <div class="settings"><div class="act">${ic("gear")}Settings</div></div>
+  </aside>`;
+}
+function header(kind) {
+  const crumb = kind === "start" ? `<span class="crumb">Chat</span><span class="faint">/</span><span class="ttl">New chat</span>`
+    : kind === "startp" ? `<span class="crumb">proj</span><span class="faint">/</span><span class="ttl">New chat</span>`
+    : `<span class="crumb">proj</span><span class="faint">/</span><span class="ttl">Change the greeting in main.rs to hello, tazuna and add a…</span><span class="fulltl">— notes file</span>`;
+  const btns = kind.startsWith("start") ? `<span>${ic("panel")}</span>` : `<span>${ic("side")}</span><span class="${S.panel ? "on" : ""}" data-act="panel">${ic("panel")}</span>`;
+  return `<div class="head">${crumb}<span class="hb">${btns}</span></div>`;
+}
+// the status bar: the conversation's numbers only where the setting puts them there (each number once)
+function statusBar(sm, running) {
+  let right = "";
+  if (sm && S.place === "bar") {
+    const pct = Math.round(sm.ctx / M().window * 100);
+    right = `<span class="sn" data-act="meter">context <b>${pct}%</b> of ${M().win}</span>${M().cache ? `<span class="sn" data-act="meter">cache <b>${share(sm.hit)}</b></span>` : ""}`
+      + `<span class="sn" data-act="meter">this chat <b>${costSaid(sm)}</b></span>${running ? `<span class="sn" data-act="meter"><b data-live="tps">${live.tps}</b> t/s</span>` : ""}`;
+  }
+  return `<div class="sbar"><span class="l"><span class="sdot"></span>Usage<span style="margin-left:9px;color:var(--faint);display:grid">${ic("refresh", "xxs")}</span></span><span class="sp"></span>${right}<span class="faint">tazuna 0.1.229</span></div>`;
+}
+// the composer's pills: where (start pages), mode, model; icons, no fill
+function pills({ where, busy }) {
+  const full = S.mode === "full", dis = busy ? "dis" : "", out = [];
+  const dn = `<svg class="ico dn" viewBox="0 0 24 24">${IP.down}</svg>`;
+  if (where) out.push(`<span class="pill ${dis}">${ic(where === "chat" ? "msg" : "folderOpen", "s")}${where === "chat" ? "Chat" : "proj"}${dn}</span>`);
+  out.push(full ? `<span class="pill full">${ic("shield", "s", "fill:currentColor")}Full · never asks${dn}</span>` : `<span class="pill ${dis}">${ic("shield", "s")}Auto${dn}</span>`);
+  out.push(`<span class="pill ${dis}">${ic("zap", "s")}${M().name}${M().lvl ? `<span class="lvl">&nbsp;·&nbsp;${M().lvl}</span>` : ""}${dn}</span>`);
+  return out.join("");
+}
+
+// ── Q1: the conversation numbers ─────────────────────────────────────────────────────────────────────────────────────
+// the route line: what is new about the model (a paid one's price a message); its model name is the first thing to go
+function newsOf(kind) {
+  if (S.model !== "paid") return null;
+  return { model: `${M().name} on `, rest: `DeepSeek, paid, about ${kind === "chat" ? "$0.0004" : "$0.005"} a message` };
+}
+function numbers(sm, running) {
+  const m = M(), pct = Math.round(sm.ctx / m.window * 100);
+  const seg = (cls, title, inner) => `<span class="mseg ${cls}"><button class="mp" data-act="meter" title="${title} · opens Stats">${inner}</button></span>`;
+  const out = [
+    seg("p-ctx", `Context: ${tok(sm.ctx)} of this model's ${m.win} window, ${pct}%`,
+      `${ic("gauge", "s")}<span class="v">${tok(sm.ctx)}</span><span class="w ctxof">of ${m.win}</span><span class="mbar"><i style="width:${pct}%"></i></span><span class="w">${pct}%</span>`),
+    seg("p-cost", m.price ? `This conversation's cost, ${usd(sm.cost)} ${running ? "so far" : ""}` : m.word === "free" ? "A local model: nothing paid" : "On your Claude plan: not billed",
+      `${ic("coins", "s")}<span class="v">${costSaid(sm)}</span><span class="w costw">${m.price ? "this chat" : m.sub}</span>`),
+  ];
+  if (m.cache) out.push(seg("p-cache", `${share(sm.hit)} of the input came from the provider's cache`, `${ic("database", "s")}<span class="v">${share(sm.hit)}</span><span class="w">cached</span>`));
+  if (running) out.push(seg("p-tps", "The reply's writing speed now", `${ic("activity", "s live")}<span class="v" data-live="tps">${live.tps}</span><span class="w">t/s</span>`));
+  return out.join("");
+}
+function meterRow(sm, running, news, cls = "") {
+  const nums = sm ? numbers(sm, running) : "";
+  if (!nums && !news) return "";
+  const n = news ? `<span class="mnews" title="${news.model}${news.rest}">${ic("arrow", "s", "color:var(--faint)")}<span class="tx"><span class="nmodel">${news.model}</span>${news.rest}</span></span>` : "";
+  return `<div class="mrow ${cls}">${n}${nums ? `<span class="mnums">${nums}</span>` : ""}</div>`;
+}
+// where the row is short: drop the cache, then the cost's words, the route line's model name, "of 128k"; then the route line ends in "…"
+const DROPS = [".p-cache", ".costw", ".nmodel", ".ctxof"];
+function fitMeters() {
+  document.querySelectorAll(".mrow").forEach((row) => {
+    row.classList.remove("squeeze"); row.querySelectorAll(DROPS.join(",")).forEach((e) => (e.hidden = false));
+    for (const sel of DROPS) { if (row.scrollWidth <= row.clientWidth) break; row.querySelectorAll(sel).forEach((e) => (e.hidden = true)); }
+    if (row.scrollWidth > row.clientWidth) row.classList.add("squeeze");
+  });
+}
+function composer({ where, busy, sm = null, running = false, news = null, style = "" }) {
+  const ph = busy ? "Type your next message: it goes after this reply · ⌘↵ sends it now" : "/ for commands, @ for files";
+  const boxed = S.place === "under" || S.place === "above", strip = S.style === "strip", inBox = boxed && S.newsAt === "box";
+  const row = boxed ? meterRow(sm, running, inBox ? news : null, strip ? `strip ${S.place === "above" ? "top" : ""}` : "") : "";
+  const at = (place, inside) => row && S.place === place && strip === inside ? row : "";
+  const under = !inBox && news ? `<div class="under"><span>→ ${news.model}${news.rest}</span></div>` : "";
+  return `<div class="foot" style="${style}">${at("above", false) ? `<div class="mbox above">${row}</div>` : ""}
+    <div class="composer focus">${at("above", true)}<div class="ph">${ph}</div>
+    <div class="pills">${pills({ where, busy })}<span class="clip">${ic("clip")}</span>
+      <span class="send ${busy ? "stop" : ""}">${busy ? `<svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" rx="1.5" fill="currentColor"/></svg>` : ic("up", "s")}</span></div>${at("under", true)}</div>
+    ${at("under", false) ? `<div class="mbox">${row}</div>` : ""}${under}</div>`;
+}
+
+// ── the start pages (Q2: S1-current or S1-C) ─────────────────────────────────────────────────────────────────────────
+function startPage(proj) {
+  const busy = S.day === "busy", rows = (busy ? CONV : YDAY).filter((c) => !proj || c[1] === "proj");
+  const box = composer({ where: proj ? "proj" : "chat", news: newsOf(proj ? "proj" : "chat"), style: "padding:0;width:100%;max-width:700px" });
+  const ask = `<div class="ques">${proj ? "What are we working on in proj?" : "What are we working on?"}</div>`;
+  const what = `<div class="what">${proj ? "A change in this project, or a question about it." : "A question for a chat, or a change in one of your projects."}</div>`;
+  const tip = 'title="Today on this machine, from the run log · opens the usage page"';
+  let top;
+  if (!busy) top = ask + what;
+  else if (S.start === "c") top = `<div class="ques hl" ${tip}>14 runs today</div><div class="ledger" ${tip}><b>$0.41</b>paid${hair}<b>94%</b>from the cache</div>`;
+  else top = ask + `<div class="ledger" ${tip}><span class="tdy">Today</span><b>14</b>runs${hair}<b>$0.41</b>paid${hair}<b>94%</b>from the cache</div>`;
+  const pick = `<section class="card"><div class="hd">Pick up where you left off</div>${rows.map(([t, p, a]) => `<div class="r"><span class="tx"><span>${t}</span><span>${p}</span></span><span class="age">${a}</span></div>`).join("")}</section>`;
+  const startIn = `<section class="card"><div class="hd">Start in a project</div>
+    <div class="r">${ic("folderOpen", "s")}<span class="tx"><span>proj</span><span>~/proj${hair}2 conversations</span></span></div>
+    <div class="r">${ic("plus", "s")}<span class="tx"><span>Open a folder…</span><span>any project on this machine</span></span></div></section>`;
+  return `<div class="startw"><div class="startc">
+    <div style="margin-bottom:20px">${mark(40)}</div>${top}
+    ${box}
+    <div class="cards ${proj ? "" : "two"}">${pick}${proj ? "" : startIn}</div>
+    <div class="keys">${proj ? "<span>Mode<kbd>⇧Tab</kbd></span>" : ""}<span>Shortcuts<kbd>⌘/</kbd></span></div>
+  </div></div>`;
+}
+
+// ── the conversation ──────────────────────────────────────────────────────────────────────────────────────────────────
+const USER = "change the greeting in main.rs to hello, tazuna and add a notes file";
+function stepRow([verb, target, ok, t]) {
+  return `<div class="step">${ok ? ic("check", "s", "color:var(--ok)") : ic("x", "s", "color:var(--bad)")}<span>${verb}</span><span class="tg">${target}</span><span class="tm">${t.toFixed(1)} s</span>${ic("right", "xs", "color:var(--faint)")}</div>`;
+}
+const thoughtRow = () => `<div class="step">${ic("brain", "s", "color:var(--faint)")}<span>Thought</span><span class="hair" style="margin:0 -2px"></span><span class="tm" style="font-size:12.5px">~20 tokens</span>${ic("right", "xs", "color:var(--faint)")}</div>`;
+function foldLine(sm, running) {
+  const open = running || S.fold;
+  const cnt = `${sm.fold ? `<span class="cnt">${hair}${sm.fold}</span>` : ""}${sm.failed ? `<span class="cnt bad">${hair}${sm.failed} failed</span>` : ""}`;
+  const head = running ? `${mark(16, true)}<span style="margin-left:2px"><span class="shim" style="font-weight:500">Working</span> <span data-live="secs" class="num">${live.secs} s</span></span><span class="cnt">${hair}↓ ${tok(sm.out)} tokens</span>`
+    : `<span>Worked ${dur(sm.time)}</span>`;
+  const steps = open ? `<div class="steps"><div class="said">I'll look at the folder first.</div>${thoughtRow()}${sm.steps.map(stepRow).join("")}</div>` : "";
+  return `<div><span class="fold ${open ? "open" : ""}" data-act="${running ? "" : "fold"}">${ic("right", "xs")}${head}${cnt}</span></div>${steps}`;
+}
+const ANSWER = `<div class="prose"><p>Done. The greeting now says <b>hello, tazuna</b>, on two lines:</p>
+  <ul><li><code>main.rs</code>: the <code>println!</code> changed, and a second line added</li><li><code>NOTES.md</code>: new, a note on the change</li></ul>
+  <p><code>cat nope.txt</code> failed because the file does not exist; nothing depends on it.</p></div>`;
+const PARTIAL = `<div class="prose"><p>Done. The greeting now says <b>hello, tazuna</b>, on two lines:</p><ul><li><code>main.rs</code>: the <code>println!</code> changed, and a second</li></ul></div>`;
+const CHANGE = `<div class="cc">
+  <div class="f">${ic("file", "s")}<span class="p">NOTES.md</span><span class="st">added</span><span class="n ok">+3</span><span class="btn">Diff</span></div>
+  <div class="f">${ic("file", "s")}<span class="p">main.rs</span><span class="n"><span class="ok">+2</span><span class="bad">−1</span></span><span class="btn">Diff</span></div>
+  <div class="ft">2 files changed in this turn<span class="btn">Review</span><span class="btn">Undo</span></div></div>`;
+function receiptLine(sm) {
+  const paid = !!M().price;
+  return `<div class="rrow"><span class="rline ${S.slip ? "open" : ""}" data-act="${paid ? "slip" : ""}">${ic("right", "xs")}<b>${costSaid(sm)}</b>${hair}${tok(sm.inp)} in${M().cache ? `<span class="q">(${share(sm.hit)} cached)</span>` : ""}${hair}${tok(sm.out)} out${hair}${dur(sm.time)}</span>
+    <span class="copy">${ic("copy", "xs")}Copy</span></div>`;
+}
+function slip(sm) {
+  const p = M().price;
+  const rows = sm.calls.map((c, i) => `<tr><td><span class="n">${i + 1}</span>${M().name} <span class="faint">${c.role}</span></td><td>${tok(c.in)}</td><td>${tok(c.cached)}<span class="sh2">${share(c.cached / c.in)}</span></td>
+    <td>${tok(c.out)}</td><td>${secs(c.ttft)}</td><td>${Math.round(tpsOf(c))} t/s</td><td>${secs(c.total)}</td><td>${usd(callCost(c))}</td></tr>`).join("");
+  const tools = `<tr><td colspan="4"><span class="n"></span>Tools <span class="faint">${sm.fold}</span></td><td></td><td></td><td>${secs(sm.tools)}</td><td></td></tr>`;
+  const tot = `<tr class="tot"><td><span class="n"></span>Total</td><td>${tok(sm.inp)}</td><td>${tok(sm.cached)}<span class="sh2">${share(sm.hit)}</span></td><td>${tok(sm.out)}</td>
+    <td>${secs(sm.ttftMed)}<span class="med">med</span></td><td>${Math.round(sm.tps)} t/s</td><td>${dur(sm.time)}</td><td>${usd(sm.cost)}</td></tr>`;
+  const bare = sm.inp * p.in / 1e6 + sm.out * p.out / 1e6;
+  return `<div class="slipw"><div class="slip"><div class="sh">${mark(20)}<span class="tt">Receipt</span><span class="rgt">${sm.n} model calls</span></div>
+    <table class="rt"><thead><tr><th>Call</th><th>In</th><th>Cached</th><th>Out</th><th>TTFT</th><th>Speed</th><th>Time</th><th>Price</th></tr></thead><tbody>${rows}${tools}${tot}</tbody></table>
+    <div class="dash"></div><div class="sum"><span>Paid to DeepSeek</span><b>${usd(sm.cost)}</b></div><div class="dash"></div><div class="sum q"><span>The same without the cache</span><span>${usd(bare)}</span></div></div></div>`;
+}
+
+// ── the work panel: Stats as tiles (decided) ──────────────────────────────────────────────────────────────────────────
+function sparkPath(vals, max, w, h) {
+  const hi = max ?? Math.max(...vals) * 1.1, n = vals.length;
+  return vals.map((v, i) => `${i ? "L" : "M"}${(n < 2 ? w / 2 : i * w / (n - 1)).toFixed(1)},${(h - (v / hi) * h).toFixed(1)}`).join("");
+}
+function stats(sm, running) {
+  const m = M();
+  const spark = (vals, max) => `<div class="sparkc"><svg viewBox="0 0 100 26" preserveAspectRatio="none"><path d="${sparkPath(vals, max, 100, 26)}" fill="none" stroke="var(--live)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>
+    <i style="position:absolute;right:4px;top:${4 + 26 - (vals[vals.length - 1] / (max ?? Math.max(...vals) * 1.1)) * 26}px;width:7px;height:7px;margin:-3.5px -3.5px 0 0;border-radius:50%;background:var(--live);box-shadow:0 0 0 2px var(--desk)"></i></div>`;
+  return `<div class="tiles">
+      <div class="box"><div class="l">In</div><div class="v">${tok(sm.inp)}</div>${m.cache ? `<div class="s">${share(sm.hit)} from cache</div><div class="bar"><i style="width:${(sm.hit * 100).toFixed(1)}%"></i></div>` : `<div class="s">no cache reported</div>`}</div>
+      <div class="box"><div class="l">Out</div><div class="v">${tok(sm.out)}</div><div class="s"><span ${running ? 'data-live="tps"' : ""}>${running ? live.tps : Math.round(sm.tps)}</span> t/s writing</div></div>
+      <div class="box"><div class="l">Cost</div><div class="v">${costSaid(sm)}</div><div class="s">${!m.price ? m.sub : running ? "so far" : m.payee}</div></div>
+      <div class="box"><div class="l">Calls</div><div class="v">${sm.n}</div><div class="s">${running ? `<span data-live="secs">${live.secs} s</span>` : dur(sm.time)} working</div></div></div>
+    <div class="box metric"><div class="top"><span class="l">Time to first token</span><span class="v2">${secs(sm.perTtft[sm.n - 1])}</span><span class="s">median ${secs(sm.ttftMed)}</span></div>${spark(sm.perTtft)}</div>
+    <div class="box metric"><div class="top"><span class="l">Writing speed</span><span class="v2">${Math.round(sm.perTps[sm.n - 1])} t/s</span><span class="s">median ${Math.round(median(sm.perTps))} t/s</span></div>${spark(sm.perTps)}</div>
+    ${m.cache ? `<div class="box metric"><div class="top"><span class="l">Cache hit rate</span><span class="v2">${share(sm.perHit[sm.n - 1])}</span><span class="s">${share(sm.hit)} overall</span></div>${spark(sm.perHit.map((x) => x * 100), 100)}</div>` : ""}
+    <div class="box metric"><div class="top"><span class="l">Context</span><span class="v2">${tok(sm.ctx)}</span><span class="s">of ${m.win}</span></div><div class="bar" style="margin:7px 0 4px"><i style="width:${(sm.ctx / m.window * 100).toFixed(1)}%"></i></div></div>`;
+}
+function workPanel(sm, running, over) {
+  const seg = `<span class="seg"><span class="${S.scope === "turn" ? "on" : ""}" data-act="scope-turn">This turn</span><span class="${S.scope === "all" ? "on" : ""}" data-act="scope-all">Conversation</span></span>`;
+  const dot = running ? `<span class="livedot"><i class="pulse"></i>live</span>` : "";
+  return `<aside class="rail ${over ? "over" : ""}">
+    <div class="sec"><h4>Stats ${dot}${seg}</h4>${stats(sm, running)}</div>
+    <div class="sec"><h4>${ic("branch", "s", "color:var(--muted)")}Changes<span class="n"><span class="ok">+5</span><span class="bad">−1</span></span></h4>
+      <div class="fr"><span>NOTES.md</span><span class="n ok">+3</span></div><div class="fr"><span>main.rs</span><span class="n"><span class="ok">+2</span><span class="bad">−1</span></span></div>
+      <span class="btn">Review</span></div>
+  </aside>`;
+}
+
+// ── Settings › Appearance, with "Conversation numbers" ───────────────────────────────────────────────────────────────
+const PLACES = [["under", "Under the box"], ["above", "Above the box"], ["bar", "In the status bar"], ["off", "Off"]];
+function settingsDialog() {
+  const sg = (opts, on, act = "") => `<span class="sgm">${opts.map(([v, l]) => `<span class="${v === on ? "on" : ""}" ${act ? `data-act="${act}" data-v="${v}"` : ""}>${l}</span>`).join("")}</span>`;
+  const sw = ["#1d5f86|#7fb0d0", "#3d4aa8|#8f9bf0", "#2f7a5e|#6cc3a0", "#9a5f12|#e3b25f", "#a8425f|#ec8fae", "#45433e|#c9c4b9"].map((c, i) => `<i class="${i ? "" : "on"}" style="background:${c.split("|")[S.theme === "dark" ? 1 : 0]}"></i>`).join("");
+  const row = (t, note, ctl, cls = "") => `<div class="drow ${cls}"><div class="tx"><div class="tt">${t}</div><div class="nt">${note}</div></div>${ctl}</div>`;
+  const nav = ["Appearance", "Providers", "Privacy and routing", "Paid API spend", "Tools from MCP servers", "After each turn", "Quick chat", "Panels and plugins", "About"];
+  return `<div class="scrim"><div class="dlg">
+    <nav class="dnav"><div class="t">Settings</div>${nav.map((t, i) => `<span class="${i ? "" : "on"}">${t}</span>`).join("")}</nav>
+    <div class="dmain"><div class="dhead"><span>Appearance</span><span class="x">${ic("x", "s")}</span></div>
+      <div class="dbody"><div class="dcard">
+        ${row("Theme", "System follows your computer's light and dark.", sg([["system", "System"], ["light", "Light"], ["dark", "Dark"]], S.theme))}
+        ${row("Accent", "Buttons, focus and selection.", `<span class="sws">${sw}</span>`)}
+        ${row("Text size", "Everything in the window, larger or smaller.", sg([["0.9", "Small"], ["1", "Default"], ["1.1", "Large"], ["1.25", "Larger"]], "1"))}
+        ${row("Answers", "The type an answer is set in. Code stays in mono.", sg([["serif", "Serif"], ["sans", "Sans"]], "serif"))}
+        ${row("Conversation numbers", "Context, cost, cache and speed. A click on one opens Stats.", sg(PLACES, S.place, "place"))}
+      </div></div></div></div></div>`;
+}
+
+// ── the window ────────────────────────────────────────────────────────────────────────────────────────────────────────
+function conversation(running) {
+  const narrow = S.w === "1000";
+  const sm = running ? summary(CALLS.slice(0, RUN.done), live.secs) : summary(CALLS);
+  const open = S.panel, beside = open && !narrow;
+  // the reading column keeps the left edge it had with the panel shut and gives up width on the right (700 → 614)
+  const docStyle = beside ? "margin:0 0 0 214px;max-width:none;width:670px" : "";
+  const footStyle = beside ? "margin-left:214px;width:670px" : "max-width:756px;width:100%;margin:0 auto";
+  let body = `<div class="you">${USER}</div>${foldLine(sm, running)}`;
+  if (running) body += `${PARTIAL}<div class="queued"><div class="you">also print the notes file when it starts</div><div class="qline"><span>Queued: goes after this reply</span><b>Send now</b></div></div>`;
+  else body += `${ANSWER}${CHANGE}${receiptLine(sm)}${S.slip && M().price ? slip(sm) : ""}`;
+  const news = S.news ? newsOf("proj") : null;
+  const cols = `248px minmax(0, 1fr)${beside ? " 300px" : ""}`;
+  return `<div class="win"><div class="cols" style="grid-template-columns:${cols}">${sidebar(running ? "run" : "conv")}
+    <main class="main" style="${beside ? "margin-right:0" : ""}">${header("conv")}${open ? "" : `<span class="ptab" data-act="panel">${ic("branch", "xs")}Changes <b>2</b></span>`}
+      <div class="scrollw"><div class="scroll" id="scroll"><div class="doc" style="${docStyle}">${body}</div></div><div class="edge t"></div><div class="edge b"></div></div>
+      ${composer({ busy: running, sm, running, news, style: footStyle })}
+    </main>${beside ? workPanel(sm, running, false) : ""}</div>${open && narrow ? workPanel(sm, running, true) : ""}${statusBar(sm, running)}${S.screen === "settings" ? settingsDialog() : ""}</div>`;
+}
+function startWin(proj) {
+  return `<div class="win"><div class="cols" style="grid-template-columns:248px minmax(0, 1fr)">${sidebar("start")}
+    <main class="main">${header(proj ? "startp" : "start")}${startPage(proj)}</main></div>${statusBar(null)}</div>`;
+}
+
+// ── render, the live clock and the switch panel ───────────────────────────────────────────────────────────────────────
+const size = () => S.w === "1000" ? [1000, 800] : [1440, 900];
+function fit() {
+  const f = document.getElementById("frame"), st = f.parentElement, [w, h] = size();
+  f.style.width = w + "px"; f.style.height = h + "px";
+  if (S.shot) { f.style.transform = ""; return; }
+  f.style.transform = `translate(-50%, -50%) scale(${Math.min(1, (st.clientWidth - 32) / w, (st.clientHeight - 32) / h)})`;
+}
+function render() {
+  const pm = document.body.classList.contains("pmin");
+  document.body.className = [S.theme, pm ? "pmin" : "", S.shot ? "shot" : ""].join(" ");
+  const f = document.getElementById("frame");
+  f.innerHTML = S.screen === "start" ? startWin(false) : S.screen === "startp" ? startWin(true) : conversation(S.screen === "run");
+  fit(); fitMeters(); panel();
+  const sc = document.getElementById("scroll"); if (sc) sc.scrollTop = sc.scrollHeight;
+  location.replace("#" + new URLSearchParams(Object.entries(S).filter(([k, v]) => k !== "shot" || v).map(([a, b]) => [a, typeof b === "boolean" ? (b ? "1" : "0") : b])).toString());
+}
+// the running reply's clock: its seconds count, its speed moves; the numbers ease to their new values (450 ms)
+function tween(el, to) {
+  const from = parseFloat(el.textContent) || to, t0 = performance.now();
+  const step = (t) => { const p = Math.min(1, (t - t0) / 450), e = 1 - Math.pow(1 - p, 3); el.textContent = Math.round(from + (to - from) * e); if (p < 1) requestAnimationFrame(step); };
+  requestAnimationFrame(step);
+}
+const JITTER = [0, 1, -1, 0, 1, 0, -1, 1];
+setInterval(() => {
+  if (S.shot || S.screen !== "run") return;
+  live.secs++; live.tps = 28 + JITTER[live.secs % JITTER.length];
+  document.querySelectorAll('[data-live="secs"]').forEach((el) => (el.textContent = `${live.secs} s`));
+  document.querySelectorAll('[data-live="tps"]').forEach((el) => tween(el, live.tps));
+}, 1000);
+function panel() {
+  const b = (k, v, n) => `<button data-k="${k}" data-val="${v}" class="${String(S[k]) === String(v) ? "on" : ""}">${n}</button>`;
+  const row = (title, k, opts) => `<b>${title}</b><div class="opts">${opts.map(([v, n]) => b(k, v, n)).join("")}</div>`;
+  const variant = (id, style, place, n) => `<button data-variant="${style}|${place}" class="${S.style === style && S.place === place ? "on" : ""}">${id} ${n}</button>`;
+  const conv = !S.screen.startsWith("start");
+  document.getElementById("proto").innerHTML = `<span class="min" data-min>–</span><h3>Design review 14 · v13: numbers and start</h3>
+    ${row("Screen", "screen", [["start", "Start: chat"], ["startp", "Start: project"], ["done", "Finished"], ["run", "Running"], ["settings", "Settings"]])}
+    ${row("Theme", "theme", [["dark", "Dark"], ["light", "Light"]])}
+    ${row("Window", "w", [["1440", "1440 × 900"], ["1000", "1000 × 800"]])}
+    <b>Q1 · Conversation numbers</b><div class="opts">${variant("M-A", "strip", "under", "strip, footer")}${variant("M-B", "box", "under", "box under")}${variant("M-C", "box", "above", "box above")}</div>
+    ${row("The setting (place)", "place", PLACES)}
+    ${row("Model", "model", [["paid", "Paid (DeepSeek)"], ["free", "Free (local)"], ["plan", "Plan (Claude)"]])}
+    ${row("Route line, where", "newsAt", [["line", "Its own line, under the box"], ["box", "The box's left side"]])}
+    ${conv ? row("Route line (→ model, price a message)", "news", [[false, "Hidden (nothing new)"], [true, "Shown (a paid model)"]]) + row("Work panel", "panel", [[false, "Shut"], [true, "Open (or click a number)"]]) : ""}
+    <b>Q2 · Start page</b><div class="opts">${b("start", "cur", "S1-current")}${b("start", "c", "S1-C: runs as headline")}</div>
+    ${!conv ? row("The day", "day", [["busy", "14 runs"], ["new", "No run yet"]]) + row("Mode", "mode", [["auto", "Auto"], ["full", "Full · never asks"]]) : ""}
+    <div class="note">Click a number (or the status bar's, placed there) to open Stats; the fold, the receipt line, the Changes tab. In Settings the Conversation numbers keys work.</div>`;
+}
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-min]")) { document.getElementById("proto").classList.toggle("small"); document.body.classList.toggle("pmin"); fit(); return; }
+  const v = e.target.closest("[data-variant]"); if (v) { [S.style, S.place] = v.dataset.variant.split("|"); render(); return; }
+  const t = e.target.closest("[data-k]");
+  if (t) { const x = t.dataset.val; S[t.dataset.k] = x === "true" ? true : x === "false" ? false : x; if (t.dataset.k === "newsAt") S.news = true; if (t.dataset.k === "screen") { S.panel = false; live = { secs: RUN.at, tps: 28 }; } render(); return; }
+  const a = e.target.closest("[data-act]"); if (!a || !a.dataset.act) return;
+  const act = a.dataset.act;
+  if (act === "fold") S.fold = !S.fold; else if (act === "slip") S.slip = !S.slip;
+  else if (act === "panel") S.panel = !S.panel;
+  else if (act === "meter") { S.panel = true; S.scope = "all"; }
+  else if (act === "place") S.place = a.dataset.v;
+  else if (act === "scope-turn") S.scope = "turn"; else if (act === "scope-all") S.scope = "all";
+  render();
+});
+addEventListener("resize", fit);
+document.fonts.ready.then(fitMeters);
+// a link opens a state
+for (const [k, v] of new URLSearchParams(location.hash.slice(1))) if (k in S) S[k] = typeof S[k] === "boolean" ? v === "1" || v === "true" : v;
+render();
+</script>
+</body>
+</html>

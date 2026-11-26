@@ -1,4 +1,4 @@
-import { Fragment, createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { Fragment, createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, GitBranch, LoaderCircle, MessagesSquare, PanelLeft, PanelRight } from "lucide-react";
 import { AgentPanel } from "./components/AgentPanel";
 import { Approval } from "./components/Approval";
@@ -19,7 +19,7 @@ import { prChip, type Pr } from "./lib/pr";
 import { checkUpdate, watchUpdates } from "./lib/update";
 import { routeLine } from "./lib/route";
 import { today as todayOf, type Row } from "./lib/usage";
-import { filesApp, usd, type ChangedFile, type Message, escFor, keysOf, panelChoice, panelState } from "./lib/types";
+import { capital, filesApp, usd, type ChangedFile, type Message, escFor, keysOf, panelChoice, panelState } from "./lib/types";
 import { Sep } from "./components/Sep";
 import type { Turn } from "./components/Receipt";
 import { Rail, UserPanel, WorkCtx, openUsage, type Work } from "./components/Rail";
@@ -28,6 +28,7 @@ import { FOCUSABLE } from "./lib/dialog";
 import { Sidebar, macOverlay } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
 import { CoreFailed, Start, type StartItem } from "./components/Start";
+import { ConvNumbers } from "./components/Stats";
 import { StatusBar } from "./components/StatusBar";
 import { getVersion } from "@tauri-apps/api/app";
 import * as demo from "./lib/demo";
@@ -40,8 +41,12 @@ import { Parts } from "./components/Sep";
  * popovers (`tz-pop`; a closed one's fading copy is `tz-out`), the completion menu, dialogs. */
 const MENUS = ".tz-pop:not([data-panel]):not(.tz-out), [role=menu], [role=listbox], [role=dialog]:not(.tz-out), dialog[open]";
 
+// the route line under the box ("→ DeepSeek V4.1 Flash on DeepSeek, paid, about $0.005 a message") is hidden for now (design
+// review 14: the user is unsure); `localStorage["tazuna.route-line"] = "on"` brings it back. What shares its line stays: the
+// plan running low, Claude signed out, a model not restored
+const ROUTE_LINE = typeof localStorage !== "undefined" && localStorage.getItem("tazuna.route-line") === "on";
 const NO_USAGE: Usage = { contextPct: 0, contextUsed: "0", contextMax: "", plan5h: null, plan5hReset: "", planWeek: null, threadCost: 0, threadTurns: 0, cachedPct: 0, saved: 0, today: 0, todayTurns: 0, todaySeries: [], balance: null };
-import { ACCENT, ACCENTS, THEME, applyLooks, darkNow, look } from "./lib/chrome";
+import { ACCENT, ACCENTS, NUMBERS, THEME, accentNow, applyLooks, darkNow, look, useLook } from "./lib/chrome";
 import { HOTKEY, composed, core, defaultHotkey, inTauri, menuKeys, type Accounts, type ClaudeSetup, type Diff, type ModelChoice, type Models, type SendDraft, type SessionRow, type View } from "./lib/tazuna";
 import { listen } from "@tauri-apps/api/event";
 import { MenuRule, PopMenu, accentButton, menuItem, quietButton } from "./components/Controls";
@@ -545,6 +550,9 @@ export default function App() {
   }, []);
   useEffect(() => { if (inTauri && view) core.setup().catch(() => {}); }, [!!view]);
   const line = inTauri ? routeLine(choice, view, rows, models?.choices ?? []) : null;
+  // where the conversation's numbers stand (Settings › Appearance): the composer's strip under the box (the default) or
+  // above it, the status bar, or nowhere; each number once (design review 14, M-A of mockups/v13.html)
+  const numbersAt = useLook(NUMBERS) ?? "under";
   // the conversation runs on Claude (its CLI: no url) and setup says it is signed out
   const claudeOut = claude?.claude_login === false && !!view && (choice ? !choice.url : /^(claude-)?(opus|sonnet|haiku|fable)/.test(view.model));
   // the first message to a paid model asks once (per model; the cap in Settings holds after that)
@@ -596,6 +604,20 @@ export default function App() {
   };
   const toggleNow = useRef(togglePanel);
   toggleNow.current = togglePanel;
+  // a click on one of the composer's numbers: the panel open at Stats over its scope (Stats.tsx `openStats`), the number
+  // the focus goes back to; nothing while a side chat or a subagent has the column (it opened by itself when they shut)
+  const [statsAsk, setStatsAsk] = useState<{ scope: "turn" | "all"; n: number }>({ scope: "all", n: 0 });
+  useEffect(() => {
+    const open = (e: Event) => {
+      const { scope, from } = (e as CustomEvent<{ scope: "turn" | "all"; from: HTMLElement }>).detail;
+      if (paneOwns.current) return;
+      opener.current = from;
+      setPanelBy((m) => ({ ...m, [active]: true }));
+      setStatsAsk((a) => ({ scope, n: a.n + 1 }));
+    };
+    window.addEventListener("tazuna-stats", open);
+    return () => window.removeEventListener("tazuna-stats", open);
+  }, [active]);
   // a side chat or a subagent's sheet has the column: the panel's key does nothing then (it flipped the hidden panel)
   const paneOwns = useRef(false);
   useEffect(() => {
@@ -620,7 +642,7 @@ export default function App() {
     review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined,
     openPr: inTauri && folder ? () => setShowPr(true) : undefined,
     ask: inTauri ? (text) => say(text) : undefined,
-    view, active,
+    view, active, statsAsk,
   };
   // the tab's count, live: the files the finished turns changed and those the running reply has edited so far (it said
   // "Changes 0" while the fold said "Edited main.rs": a turn's changes come from git when it ends)
@@ -863,9 +885,9 @@ export default function App() {
     if (view) {
       // each mode with what it does (the palette listed bare "auto, ask, edits", review 3); a plain chat's too (its
       // hand-offs ask, see ModePill)
-      a.push(...MODES.map(([m, about]) => ({ id: `m:${m}`, group: "Permission mode", label: `${m.charAt(0).toUpperCase()}${m.slice(1)}`, hint: m === view.mode ? `${about} (now)` : about, keywords: `mode permission ${m}`, run: () => core.setMode(m) })));
+      a.push(...MODES.map(([m, about]) => ({ id: `m:${m}`, group: "Permission mode", label: capital(m), hint: m === view.mode ? `${about} (now)` : about, keywords: `mode permission ${m}`, run: () => core.setMode(m) })));
       const cur = models?.choices.find((c) => c.current);
-      a.push(...(cur?.efforts ?? []).map((e) => ({ id: `e:${e}`, group: "Effort", label: e, hint: e === view.effort ? "current" : undefined, keywords: "effort thinking", run: () => core.setEffort(e) })));
+      a.push(...(cur?.efforts ?? []).map((e) => ({ id: `e:${e}`, group: "Effort", label: capital(e), hint: e === view.effort ? "current" : undefined, keywords: "effort thinking", run: () => core.setEffort(e) })));
       a.push(...(models?.choices ?? []).filter((c) => !c.why_not).map((c) => ({ id: `mo:${c.model}|${c.url}|${c.key_env}|${c.label}`, group: "Model", label: modelLabel(c.model), hint: c.current ? "current" : c.place, keywords: `model ${c.provider}`, run: () => pickModel(c) })));
     }
     a.push({ id: "create-behaviour", group: "Creator mode", label: "Make a command, skill or tool…", hint: "/create what it should do", keywords: "skill command mcp tool creator",
@@ -882,8 +904,8 @@ export default function App() {
       { id: "settings", group: "Window", label: "Settings: provider keys, data policy, router", keys: "⌘,", run: () => setTimeout(() => setOverlay("settings")) },
       { id: "setup", group: "Window", label: "Set up tazuna", hint: "what is set, what is left", keywords: "welcome first run onboarding", run: () => setTimeout(() => setOverlay("setup")) });
     // the accents beside light and dark (design review 13, D2), last in their group: found by "accent" or a colour's name
-    const accentNow = localStorage.getItem(ACCENT) ?? "Indigo";
-    a.push(...ACCENTS.map((n) => ({ id: `accent:${n}`, group: "Window", label: `Accent: ${n}`, hint: n === accentNow ? "now" : undefined, keywords: "accent colour color theme", run: () => look(ACCENT, n) })));
+    const accent = accentNow();
+    a.push(...ACCENTS.map((n) => ({ id: `accent:${n}`, group: "Window", label: `Accent: ${n}`, hint: n === accent ? "now" : undefined, keywords: "accent colour color theme", run: () => look(ACCENT, n) })));
     return inTauri ? a : a.map((action) => ["theme", "keys"].includes(action.id) || action.id.startsWith("accent:") ? action : { ...action, unavailable: "Available in the desktop app" });
   };
   // a new conversation before its first message: the start screen, with the composer in its middle (design review 2,
@@ -951,13 +973,14 @@ export default function App() {
               // a conversation on Claude while it is signed out: every message would fail (design review 12)
               <div className="flex items-center text-[11.5px] text-faint">Claude isn't signed in<Sep />
                 <button onClick={() => { setKeyFocus("Claude"); settingsAt("Providers"); }} className="font-medium text-accent-ink">Settings → Providers</button></div>
-            ) : line && (line.paid || line.plan || line.low) && (
+            ) : line && (line.low || (ROUTE_LINE && (line.paid || line.plan))) && (
               <div className={`flex items-center gap-2 text-[11.5px] ${line.low ? "text-warn" : "text-faint"}`}>
                 <span className="truncate" title="Where your next message goes and what it costs">→ {line.text}</span>
                 {line.offer && <button onClick={() => pickModel(line.offer!)} className="font-medium text-accent-ink">Switch to {line.offer.label}</button>}
               </div>
             )}
-            draft={draft}
+            draft={draft} numbersTop={numbersAt === "above"}
+            numbers={!fresh && view && (numbersAt === "under" || numbersAt === "above") ? <ConvNumbers view={view} choice={choice} busy={busy} turns={turnsOf(messages)} top={numbersAt === "above"} /> : null}
             above={paidAsk != null ? (
               <div className="mx-auto mb-2 flex max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
                 <span className="flex-1">This goes to <span className="text-ink">{choice?.label}</span> on {choice?.provider}, a paid API{line?.est != null ? `: about ${usd(line.est)} a message` : ""}. Paid spend stops at your cap per 24 hours (Settings).</span>
@@ -1027,11 +1050,10 @@ export default function App() {
         {sidebar}
       </dialog> : <div className="flex min-h-0">{sidebar}</div>}
       {/* relative: the review is a pane over the conversation (header and box too), not a dialog over the window. tz-keep: the
-          reading column keeps the left edge centring gives it in the sheet with the panel shut (`col.left`), so an open
-          panel beside it narrows it on the right and nothing jumps (design review 12, B3; styles.css .tz-col); a side chat or
-          a subagent's sheet beside it centres it in what is left, as before */}
-      <main className={`relative mr-2 mt-[calc(8*var(--tz-pt))] flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-main shadow-sheet ${narrow ? "ml-2" : ""} ${side || agentHere ? "" : "tz-keep"}`}
-        style={{ "--tz-l": `${col.left}px` } as CSSProperties}>
+          reading column centred in the sheet, gliding with the work panel's slide, its text on the box's edges where
+          scrollbars always show (design review 14; styles.css .tz-col); a side chat or a subagent's sheet beside it centres
+          it in what is left, as before */}
+      <main className={`relative mr-2 mt-[calc(8*var(--tz-pt))] flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-main shadow-sheet ${narrow ? "ml-2" : ""} ${side || agentHere ? "" : "tz-keep"}`}>
         {/* the window's top row (design review 12, A2): 40 points, centred on the traffic lights' line whatever the text size
             (`--tz-pt`, styles.css); in a narrow window on a Mac the lights sit on it, so it starts after them. A drag region,
             its title too */}
@@ -1182,7 +1204,7 @@ export default function App() {
         onEnable={(w, on) => widgets.enable(w.id, w.print!, on).then(reloadWidgets).catch((e) => console.error(e))}
         onRemove={(id) => widgets.remove(id).then(reloadWidgets).catch(() => {})} onChanged={reloadWidgets} />}
     </div>
-    {inTauri ? <StatusBar usage={usage} version={appVersion} idle={fresh || failed} accounts={accts} here={hereAccts} turns={turnsOf(messages)} busy={busy}
+    {inTauri ? <StatusBar usage={usage} version={appVersion} idle={fresh || failed} numbers={numbersAt === "bar"} accounts={accts} here={hereAccts} turns={turnsOf(messages)} busy={busy}
       onRefresh={haveView ? () => readAccounts() : undefined} refreshing={acct.busy} readAt={readAt} />
       : <footer aria-label="Demo status" className="flex h-7 flex-none items-center bg-desk px-3.5 text-[12px] text-muted">Example data · not live usage</footer>}
     </div>

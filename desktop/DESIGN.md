@@ -10,7 +10,7 @@ colors:
     card: "#fffefb"
     field: "#efebe3"
     hover: "#e7e3db"
-    selected: "#e6e1f2"
+    selected: "#e0e7e9"
     ink: "#23221e"
     ink-2: "#3f3c35"
     muted: "#5b574f"
@@ -18,13 +18,13 @@ colors:
     line: "#e3ded3"
     line-soft: "#ece8df"
     line-strong: "#d8d2c5"
-    accent: "#3d4aa8"
-    accent-ink: "#2f3a8f"
-    accent-soft: "#e7e8f6"
+    accent: "#1d5f86"
+    accent-ink: "#174b6b"
+    accent-soft: "#e7eced"
     on-accent: "#ffffff"
-    live: "#3d4aa8"
-    live-ink: "#2f3a8f"
-    live-soft: "#e7e8f6"
+    live: "#1d5f86"
+    live-ink: "#174b6b"
+    live-soft: "#e7eced"
     ok: "#347045"
     bad: "#aa4236"
     warn: "#8c5811"
@@ -37,7 +37,7 @@ colors:
     card: "#282622"
     field: "#302e29"
     hover: "#37342e"
-    selected: "#2b2c45"
+    selected: "#303638"
     ink: "#ece8df"
     ink-2: "#d2cdc2"
     muted: "#afaa9e"
@@ -45,24 +45,24 @@ colors:
     line: "#35322c"
     line-soft: "#2b2925"
     line-strong: "#423e37"
-    accent: "#8f9bf0"
-    accent-ink: "#aab3f5"
-    accent-soft: "#272a44"
-    on-accent: "#14152a"
-    live: "#8f9bf0"
-    live-ink: "#aab3f5"
-    live-soft: "#272a44"
+    accent: "#7fb0d0"
+    accent-ink: "#a3c8e0"
+    accent-soft: "#2a2e2d"
+    on-accent: "#0e1820"
+    live: "#7fb0d0"
+    live-ink: "#a3c8e0"
+    live-soft: "#2a2e2d"
     ok: "#7cc08f"
     bad: "#e08b7f"
     warn: "#e0b46a"
     scrim: "#0000008c"
     desk: "#121110"
 typography:
-  ui: { family: "Geist", fallback: "system-ui, sans-serif", size: 13.5px, line-height: 1.5 }
+  ui: { family: "-apple-system, BlinkMacSystemFont, \"Segoe UI\"", fallback: "system-ui, sans-serif", size: 13.5px, line-height: 1.5 }
   mono: { family: "Geist Mono", fallback: "ui-monospace, monospace", size: 12.5px }
   prose: { family: "Source Serif 4", fallback: "Georgia, serif", size: 15.5px, line-height: 1.62 }
-  label: { family: "Geist", size: 11.5px, weight: 500 }
-  number: { family: "Geist", size: 22px, weight: 600, tracking: -0.02em }
+  label: { family: ui, size: 11.5px, weight: 500 }
+  number: { family: ui, size: 22px, weight: 600, tracking: -0.02em }
 spacing: { unit: 4px, scale: [2, 4, 6, 8, 10, 12, 14, 16, 20, 24, 28, 32] }
 radius: { sm: 6px, md: 7px, lg: 10px, xl: 14px, pill: 999px }
 elevation:
@@ -81,8 +81,8 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 (`mockups/a.html`). Every UI change follows this file; agents writing UI code read it first.
 
 ## Character
-- Paper and ink: a warm cream canvas, warm near-black text, one accent: indigo (ai-iro; tazuna means "reins") unless the
-  user picks another (design review 13).
+- Paper and ink: a warm cream canvas, warm near-black text, one accent: Ai, true ai-iro (藍色; tazuna means "reins"),
+  unless the user picks another (design review 13; ai-iro, not indigo, since design review 14, S5 of `mockups/v12.html`).
 - Paper on the desk (design review 10, prototype `mockups/v7.html`): the window is the desk (`desk`); the conversation is one
   sheet on it (`main`, 12 px corners, the `sheet` shadow, 8 px from the window's edges), and so is a side chat or a subagent
   beside it. The sidebar, the work panel and the status bar lie on the desk with no border of their own; the work panel's
@@ -101,7 +101,7 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   of the same fill read as part of it (design review 8, desktop 0.1.87). The composer keeps its own soft shadow.
 - Reading first: the assistant's prose is set in a serif; code, paths, tool calls, costs and numbers in mono.
 - Real numbers only: cost, tokens, cache and plan usage come from the session, never placeholders.
-- Numbers said short where room is short (the receipt line, the status bar, the line under the composer, Stats, the start
+- Numbers said short where room is short (the receipt line, the status bar, the composer's numbers, Stats, the start
   page's ledger, a slip's sums): $0 for nothing, "<$0.001" under a tenth of a cent, four decimals under a cent, three under a
   dollar, then cents, zeros past the cents dropped (`usd`, lib/types.ts; "$0.000019" read as noise, design review 14). A
   slip's own cells and tooltips keep the exact figure (`usdExact`). Times under a tenth of a second are "<0.1 s", never
@@ -110,13 +110,14 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 ## Colour use
 - `accent` (the user's choice, below) marks the one thing to act on and what is chosen: the send button, a switch that is
   on, the focus ring, the selected row (ringed in it, so never taken for a hovered one), selected text. `live`, a fixed
-  indigo, marks the live state: the running thread and its dots and spinners, progress fills and meters,
+  ai-iro (Ai's own pair), marks the live state: the running thread and its dots and spinners, progress fills and meters,
   the plan pill (design review 13). Never decoration, never more than one accented control per area.
-- The accent is the user's (Settings › Appearance, design review 13, D2): Indigo, Jade, Amber, Rose or Graphite, each
-  drawn for both themes in styles.css (`[data-accent=…]` on the root, set by lib/chrome.ts and kept like the theme; never
-  the root's inline style, which is a plugin's `theme.set` and wins). `selected` and `accent-soft` follow it, the accent on
-  the sheet at 12% and 9% (10% in dark), where every text level still reads 4.5:1 (on-accent text 5.2:1 at the least,
-  Jade's light). Indigo keeps the tokens above. What means a state keeps `live` whatever the accent (an amber accent read
+- The accent is the user's (Settings › Appearance, design review 13, D2): Ai (the default), Indigo, Jade, Amber, Rose or
+  Graphite, each drawn for both themes in styles.css (`[data-accent=…]` on the root, set by lib/chrome.ts and kept like the
+  theme; never the root's inline style, which is a plugin's `theme.set` and wins). `selected` and `accent-soft` follow it,
+  the accent on the sheet at 12% and 9% (10% in dark; Ai's `selected` 16% in dark, which read grey at 12%), where every
+  text level still reads 4.5:1 (faint on Ai's dark `selected` 4.56:1; on-accent text 5.2:1 at the least, Jade's light).
+  Ai keeps the tokens above; nothing kept, or a name no longer offered, is Ai, and an accent picked by hand stays. What means a state keeps `live` whatever the accent (an amber accent read
   as a warning): also the usage charts, the Working shimmer, an info icon, code keywords. The mark stays paper on ink.
 - `ok` and `bad` only for results (diff counts, passed or failed checks). `warn` only for limits and risk.
 - Tables in answers: rules between rows, a quiet header (11.5 px, faint), numbers in tabular figures; no grid. A short
@@ -132,17 +133,20 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   `code-comment` = faint, italic), so syntax never borrows the result colours.
 - Text levels: `ink` for content, `ink-2` for secondary content, `muted` for supporting text, `faint` for labels and
   metadata. No grey text on coloured backgrounds. Every text level reads at 4.5:1 or more on every background in both
-  themes (WCAG AA; faint was 2.3-2.9:1 until desktop 0.1.34). Check with axe-core before changing a colour.
+  themes (WCAG AA; faint was 2.3-2.9:1 until desktop 0.1.34). Check with axe-core or review/audit.cjs (the sweep's in-page WCAG check) before changing a colour.
 - Light and dark are designed together from the same tokens; neither is derived by inverting the other.
 
 ## Typography
-- UI: Geist 13.5 px. Labels: Geist 11.5 px medium, sentence case (no tracked capitals).
+- UI: the system's own face (`-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui`: San Francisco on a Mac; design
+  review 14, S6 of `mockups/v12.html`) 13.5 px. Labels: 11.5 px medium, sentence case (no tracked capitals): a button, a
+  menu item, a pill and a heading start with a capital ("Auto", "Show all"); a line that runs on after a rule or a dot
+  does not ("answered as a chat · send to agent"), nor the status bar's quiet words for its figures ("this chat $0.051").
 - Assistant prose: Source Serif 4, 15.5 px, line height 1.62, reading width 700 px.
-- User messages: Geist on a `field` block; code inline in Geist Mono.
+- User messages: the UI face on a `field` block; code inline in Geist Mono.
 - Mono for code: commands, file paths, diffs, branch names, tool targets. Numbers in the UI (costs, timings, counts, ages,
-  percentages) are Geist with tabular figures (`tabular-nums`), not mono: mono everywhere read as noise (review,
+  percentages) are the UI face with tabular figures (`tabular-nums`), not mono: mono everywhere read as noise (review,
   2026-11-18).
-- Fonts are bundled with the app (no network fonts).
+- Fonts are bundled with the app (Source Serif 4, Geist Mono; no network fonts); the UI face is the system's.
 
 ## Layout
 - Three columns: sidebar 248 px, main (header, transcript, composer), the work panel 300 px. The work panel never opens
@@ -150,26 +154,44 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   review 12). In a project it stays folded, a small tab on the sheet's right edge that counts the files changed so far,
   live while a reply edits ("Changes 2"; "Changes" alone at none, never "Changes 0"); the tab, ⌘\ and the header's button open it, for the conversation they are
   pressed in (one choice for the whole window put the panel into plain chats), and closing it brings the tab back. A
-  plain chat has no tab. Open, it lies on the desk beside the sheet and the reading column keeps the left edge centring gave
-  it with the panel shut, giving up width on the right (700 → 614 px of text at 1440; the composer and what stands over it
-  follow); where that would leave under 580 px of text (a window under 1372 px with the sidebar, any without it) the panel
-  opens over the conversation instead, on a sheet of its own under its tab (the `pop` elevation; Esc, a click outside, the
-  tab, its button or ⌘\ shut it; focus goes into it and back to what opened it) and nothing under it moves (design review
-  12, B3 and B2 of `mockups/v9.html`: the column re-centred and its left edge jumped 146 px). A reply being followed is
-  still followed while the column narrows. Esc shuts the innermost thing first: a menu or dialog, then the panel over the
+  plain chat has no tab. Open, it lies on the desk beside the sheet and the reading column is centred in what is left,
+  gliding there with the panel's slide (its place and the sheet's width move together, the grid's 180 ms; under reduced
+  motion it snaps), and back when it shuts: kept at its left edge (design review 12, B3 of `mockups/v9.html`) the text sat
+  skewed right, about 340 px of sheet on its left and 40 on its right (design review 14). At 1440 the text keeps its 700 px, 92 px
+  of sheet each side of it. Where the sheet beside the panel would be under 816 px (a window under 1372 px with the
+  sidebar, any without it) the panel opens over the conversation instead, on a sheet of its own under its tab (the `pop`
+  elevation; Esc, a click outside, the tab, its button or ⌘\ shut it; focus goes into it and back to what opened it) and
+  nothing under it moves (design review 12, B2 of `mockups/v9.html`). A reply being followed is still followed while the
+  column moves. Esc shuts the innermost thing first: a menu or dialog, then the panel over the
   conversation, then it is Stop (`escFor`). Where scrollbars always show, the text and the box keep the same edges. The
   rules are one function with its check (`panelState`, `demoPanel`, lib/types.ts; the column's CSS is `.tz-col`). (Design
-  reviews of 2026-11-18, prototype `mockups/v2.html`, 11 and 12.)
+  reviews of 2026-11-18, prototype `mockups/v2.html`, 11, 12 and 14.)
 - The status bar names an account this conversation does not run on, when it needs you, quietly: a dot in its colour and faint
   words ("OpenRouter $0.17 below zero and 2 more"), the advice on hover. A balance its API does not tell is no news: the
   account's name alone.
 - Each number shows once. The model and effort: the composer's one pill. The plan (5 hours and week, what is left), the
-  SubRouter balance, this conversation's context, cache and cost, and the app's version: the status bar along the window's
-  bottom (prototype `mockups/v4.html`, variant B, 2026-11-19), a click on the plan or the cost opening the usage page. The
-  work panel's Stats are the one exception the user asked for (2026-11-25): their sums and each call's numbers, live. An
-  answer's own numbers: under it, on hover. The line under the composer only says what is new: a paid model's cost per
-  message, the plan running low, or that Claude is signed out while the conversation runs on it ("Claude isn't signed
-  in | Settings → Providers").
+  SubRouter balance and the app's version: the status bar along the window's bottom (prototype `mockups/v4.html`, variant
+  B, 2026-11-19), a click on the plan opening the usage page. This conversation's numbers: the composer's own strip along
+  its lower edge, inside its border (design review 14, M-A of `mockups/v13.html`): 32 px, the box's full width, a ground of
+  `field` at 40% on the card, 12.5 px, 14 px Lucide icons; its context against the model's window ("20.3k of 128k", a bar
+  and "16%" where the window is known), its cost (the compact rule: "$0.0053 this chat"; on a plan "$0.521 at API prices ·
+  not billed", the plan named on hover; "not billed (Z.ai Coding Plan)" where the plan has no reference price; "free on
+  this machine" on a local model, "free" on another free one; while a reply runs the Stats' "$0.54 so far", the finished
+  turns' sum where its calls bring no price yet, so the part never goes and comes back), the cache's share ("95% cached", none where the provider reports
+  none) and, while a reply runs, its speed ("28 t/s", last, so nothing moves; the reply's "↓ tokens" stay on its Working
+  row). They start at the box's text edge; a short row drops the cache, then the cost's words, then "of 128k", and never
+  wraps. Each is a button (a Tab stop; with the strip above the box, Shift+Tab from the box reaches it): the cost opens the
+  conversation's slip from it, the speed the work panel at Stats over this turn, the rest Stats over the conversation
+  (nothing while a side chat or a subagent has the column). The Stats' and the status bar's own
+  sums, none of its own; none on the start page. Settings › Appearance › Conversation numbers: under the box (the
+  default), above it (the same strip along its top), in the status bar (context, cache and "this chat" there, as before
+  design review 14), or off; with the strip the status bar has none of them. The work panel's Stats are the one exception
+  the user asked for (2026-11-25): their sums and each call's numbers, live. An answer's own numbers: under it, on hover.
+  The line under the composer only says what needs you: the plan running low (with the model to switch to), that Claude
+  is signed out while the conversation runs on it ("Claude isn't signed in | Settings → Providers"), a model not restored.
+  The route line that said where a message goes and what it costs ("→ DeepSeek V4.1 Flash on DeepSeek, paid, about $0.005
+  a message") is hidden for now (design review 14: the user is unsure; `localStorage["tazuna.route-line"] = "on"` shows
+  it).
 - A new conversation starts on the model last picked by hand for its kind (a chat, a project) when that is not Claude; a
   Claude pick leaves it to the router's choice per task again (design review 12: new chats went back to Opus 5.5).
 - Narrow windows: below 1280 px the work panel starts closed; below 1000 px the sidebar opens over the conversation from
@@ -198,11 +220,13 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - A change of model and a Retry go on in a new session of the core: the window keeps it one conversation (one row, still
   selected, a click on its row shows it rather than a second copy; its draft, queue and panel choice stay).
 - The message box completes: `/` at its start lists the conversation's commands with what each does, `@` anywhere lists
-  the project's files, in one menu over the box (arrows, Enter or Tab to take, Esc to shut); its placeholder says so.
+  the project's files, in one menu over the box (arrows, Enter or Tab to take, Esc to shut); its placeholder says only that
+  ("/ for commands, @ for files"; while a reply runs, how a message waits).
   Attachments are chips over the text, an image with its thumbnail. An answer that names an image file shows it under
   the answer (a click shows it whole); nothing loads from the network.
 - Settings is one part at a time, chosen in a list on its left (Appearance first: theme, accent, text size, the type answers
-  are set in); a provider's key field shows when asked for. Claude is the first of your providers: signed in, or how to sign
+  are set in, the Stats as tiles or rows, where the conversation's numbers stand; its rows have no line under them, the
+  labels and controls say it: design review 14); a provider's key field shows when asked for. Claude is the first of your providers: signed in, or how to sign
   in (`claude auth login` with Copy, and Check again), or its install page; the first-run dialog ticks it only when it is
   signed in.
 - Scrolled up from the end of a conversation, a round button over the message box goes back down.
@@ -230,7 +254,7 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   turn was paid comes from that turn alone (the core's `model`, `plan`, `provider`, `price_m` on its end): never from the
   model the conversation runs on now, which said "not billed" under answers a provider had billed. A turn that does not
   say has its total alone; a number the core does not send is a row or a column left out; rows that do not add up to
-  the total say why in one line. The status bar's "this chat $0.051" opens the conversation's own slip: its turns, a row
+  the total say why in one line. The composer's cost, or the status bar's "this chat $0.051" where the numbers are put there, opens the conversation's own slip: its turns, a row
   for what is not a finished turn yet, a total that is the sum of its rows, the plan's part and each provider's on a line
   each, and the way on to the usage page.
 - The transcript fades under the header and over the message box (`.tz-doc-edges`: two gradients in the sheet's colour
@@ -280,18 +304,22 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   less, no code block, table or list) is a quiet line in the fold, in its place; longer prose stays in the answer (and in
   Copy), so an answer followed by a to-do step is not folded away. A declined step says its plain verb ("Edit main.rs | declined"). A change of
   model that goes on in a new session is a quiet divider ("continued on Mock Coder 7B"); the conversation above it stays.
-- An approval of an edit or a write shows what would change (the step's own diff rendering, in a scroll of its own under
-  the file's name); a command shows as itself.
+- An approval asks in its title ("Allow a shell command?", "Allow this edit?", else "Allow <tool>?"). One of an edit or a
+  write shows what would change (the step's own diff rendering, in a scroll of its own under the file's name); a command
+  shows as itself.
 - A message answered by the router as a chat carries an `answered as a chat · send to agent` tag. One the agent answered in
   a chat's place (the chat said it needs live data or this computer, or you sent it there)
   carries `answered by the agent · why` the same way; a plain chat's answers have Send to agent beside Copy.
 - The work panel: Stats (this turn or the conversation: In, Out, Cost and Calls as tiles, a sparkline for time to first
   token, speed and cache hit rate, the context against the model's window; data marks in `live`; the user, 2026-11-25,
-  `mockups/v11.html`), Changes (the files this conversation changed, the branch, Review), Checks (tazuna's runs after a
+  `mockups/v11.html`; a sparkline of fewer than 3 points is left out, never an empty box with "–", and a zero is quiet text,
+  not a big number. Or, by Settings › Appearance › Stats, rows on the desk with no boxes (design review 14, S4 of
+  `mockups/v12.html`): the label left, the value right in tabular figures, rules between; a row with nothing to say left
+  out, a zero quiet, a 2 px line at a row's right only from 8 calls, no live dot), Changes (the files this conversation changed, the branch, Review), Checks (tazuna's runs after a
   turn), Pull request (state, CI, Checks and reviews), your messages, then the user's own panels.
 
 ## Components we own
-Segmented (a raised key on a `field` track; lilac `selected` is only a list's selected row; a radio group: one Tab stop,
+Segmented (a raised key on a `field` track; the `selected` fill is only a list's selected row; a radio group: one Tab stop,
 the arrows, Home and End choose), `quietButton` (every bordered button that is not the accent one: Cancel, Later, Diff,
 Review, Retry), `accentButton` and `dialogShell` (420, 600, 780 or 860 px wide, never past the window less 5 rem, the
 `pop` shadow; its body is `main`, its groups are `card` with a hairline; the command palette alone keeps its own
@@ -300,18 +328,20 @@ Segmented's keys, the chosen one ringed in ink), CheckRow (several that can be o
 when on, the model picker's row hover, Space toggles; never the browser's checkbox), PopMenu and `menuItem` (a menu at a
 point: a row's right click, a header button's menu; `tz-pop`, arrows, Esc), all in `components/Controls.tsx`; the receipt (`components/Receipt.tsx`: Slip, AnswerSlip, ChatSlip), the start page's ledger
 line, the work panel's tab; Mark (`components/Mark.tsx`); sidebar item (two lines, or one when its place repeats), open row, group heading, project group, thread dot (idle, running), badge; header crumb, cost and
-panel button; message (user, agent, chat), work fold, tool step, change card, metadata line, routed tag; composer with
-pills (where, mode, model with its effort; one style: filled, an icon, a chevron where a menu opens; the mode pill
-tinted by the freedom it gives: full warn, with a 55% warn border, a 12% warn ground, a filled shield and "full · never
-asks" where the row has 520 px, plan `live`, the others grey, design review 13, D4) and send, their menus placed by
+panel button; message (user, agent, chat), work fold, tool step, change card, metadata line, routed tag; the conversation's
+numbers (components/Stats.tsx `ConvNumbers`: the composer's strip, each part a button to Stats); composer with
+pills (where, mode, model with its effort; one style: no fill, an icon, sentence-case words, a chevron where a menu opens,
+a hairline in `line-strong` on hover and focus, the first one's icon where the box's text starts: design review 14, S2;
+the mode pill tinted by the freedom it gives: full warn, with a 55% warn border, a 12% warn ground, a filled shield and
+"Full · never asks" where the row has 520 px, plan `live`, the others plain, design review 13, D4) and send, their menus placed by
 one rule (usePlace: above the whole box where it
 fits, else below it); completion menu and attachment chip (Composer), answer images, jump to latest, tooltip (`.tz-tip`: every `title` shows
 in it, lib/chrome.ts, only after the pointer really moves onto its element: a row that slides under a still pointer gets
 none); answer copy; error card (the provider's message in words, with a capital, its error codes left to the raw reply, said once even when the answer repeats it; Retry runs
 the last failed turn again without a second message, on the last reply only; its raw reply on request); code
-block with its language and copy; work panel section (Stats, Changes, Checks, Pull request), sparkline and stat tile
-(components/Stats.tsx: a sparkline is one 2 px line, its last point marked, a tip "call N · value" on hover or the
-arrows), usage bar, status bar. Reuse these before adding new ones; add new ones here when they are made.
+block with its language and copy; work panel section (Stats, Changes, Checks, Pull request), sparkline, stat tile and
+stat row (components/Stats.tsx: a sparkline is one 2 px line, its last point marked, a tip "call N · value" on hover or the
+arrows; a row's line is 56 × 14 px with no mark), usage bar, status bar. Reuse these before adding new ones; add new ones here when they are made.
 
 ## Motion
 - CSS transitions of 120-200 ms with the easing above; panels slide, toasts fade.
@@ -325,8 +355,8 @@ arrows), usage bar, status bar. Reuse these before adding new ones; add new ones
 - Rows move, they do not jump: a sidebar row that changes group slides there (200 ms, kept by the conversation's id); a
   reply's steps unfold and fold in height (180 ms and 150 ms).
 - What closes fades out where it was (`tz-out`, 110 ms; lib/chrome.ts does it for every menu and dialog), and the work
-  panel's column slides open and shut (the reading column's left edge stays put while it does); over the conversation it
-  opens as a popover does (`tz-pop`).
+  panel's column slides open and shut, the reading column gliding to the centre of what is left with it (design review
+  14); over the conversation it opens as a popover does (`tz-pop`).
 - Selected text is the accent at 30%, not the system's blue.
 - Honour `prefers-reduced-motion`: the working mark stands drawn whole and the shimmers are plain words (a spinner
   elsewhere still turns, slower).

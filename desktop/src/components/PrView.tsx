@@ -71,7 +71,7 @@ export function PrView({ pr, worktree, onClose, onSend, onRefresh, onRemoveWorkt
               <div key={i} className="flex items-center gap-2 border-b border-line-soft py-1.5 last:border-0">
                 <span className={`w-14 text-[11.5px] ${c.state === "failed" ? "text-bad" : c.state === "passed" ? "text-ok" : "text-muted"}`}>{c.state}</span>
                 <span className="flex-1 truncate text-ink-2">{c.name}</span>
-                {c.url && <button onClick={() => core.openLink(c.url!)} className="text-[12px] text-muted hover:text-ink">log</button>}
+                {c.url && <button onClick={() => core.openLink(c.url!)} className="text-[12px] text-muted hover:text-ink">Log</button>}
                 {c.state === "failed" && <button onClick={() => fix(c)} className={quietButton}>Fix</button>}
               </div>
             ))}

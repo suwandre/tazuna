@@ -92,7 +92,7 @@ export function Palette({ actions, onClose, query = "" }: { actions: Action[]; o
 
 const SHORTCUTS: [string, string][] = [
   ["⌘K", "Command palette"], ["⌘N", "New chat"], ["⌘O", "Open a folder"], ["⌘/", "These shortcuts"], ["⌘,", "Settings"],
-  ["Enter", "Send"], ["⇧Enter", "New line"], ["Esc", "Stop the reply"], ["⇧Tab", "Next permission mode"],
+  ["Enter", "Send"], ["⇧Enter", "New line"], ["Esc", "Stop the reply"], ["⇧Tab", "Next permission mode; a question's buttons when one asks"],
   ["y / a / n", "Allow, always, decline a question"], ["⌘\\", "The work panel"], ["⌘⇧L", "Light or dark"], ["⌘⇧U", "Usage"],
 ];
 

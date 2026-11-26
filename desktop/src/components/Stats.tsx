@@ -1,15 +1,19 @@
-import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { stats, usage, type Point } from "../lib/fromView";
-import type { View } from "../lib/tazuna";
+import { Activity, Coins, Database, Gauge } from "lucide-react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { STATS, useLook } from "../lib/chrome";
+import { costSaid, stats, usage, type Point } from "../lib/fromView";
+import type { ModelChoice, View } from "../lib/tazuna";
 import { median, tenths, usd } from "../lib/types";
 import { Segmented } from "./Controls";
 import { WorkCtx } from "./Rail";
-import { dur, perSec, tok } from "./Receipt";
+import { dur, perSec, tok, type Turn } from "./Receipt";
+import { ChatCost } from "./StatusBar";
 
 // The work panel's Stats (the user, 2026-11-25: "a real-time calculation and statistics section for all numerical
 // metrics… maybe smooth"; mockups/v11.html): this turn's or the whole conversation's tokens, cost, calls and speeds, a
 // sparkline for each number that varies by call, live while a reply runs. Real numbers only: what the view does not say is
-// "–" or left out. Data marks are `live`, never the accent.
+// left out ("–" only for a cost it cannot sum); a zero is quiet. Data marks are `live`, never the accent. As tiles (the
+// default) or as rows on the desk (Settings › Appearance › Stats; design review 14, S4 of mockups/v12.html).
 
 const still = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -40,11 +44,12 @@ const Bar = ({ pct }: { pct: number }) => (
   <div className="mt-[7px] h-1.5 overflow-hidden rounded-[3px] bg-field"><i className="block h-full rounded-[3px] bg-live transition-[width] duration-[450ms] ease-out" style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} /></div>
 );
 
-function Tile({ name, value, sub, children }: { name: string; value: ReactNode; sub?: string; children?: ReactNode }) {
+/** A zero is quiet text, not a big number (design review 14), on the big one's line. */
+function Tile({ name, value, sub, zero, children }: { name: string; value: ReactNode; sub?: string; zero?: boolean; children?: ReactNode }) {
   return (
     <div className={`${box} py-[9px]`}>
       <div className={label}>{name}</div>
-      <div className="truncate text-[20px] font-semibold leading-tight tracking-[-0.02em] text-ink">{value}</div>
+      <div className={`truncate ${zero ? "text-[13.5px] leading-[25px] text-faint" : "text-[20px] font-semibold leading-tight tracking-[-0.02em] text-ink"}`}>{value}</div>
       {sub && <div className="text-[11.5px] leading-snug text-muted">{sub}</div>}
       {children}
     </div>
@@ -86,13 +91,13 @@ function Spark({ points, fmt, name, max, live }: { points: Point[]; fmt: (v: num
   );
 }
 
-function Metric({ name, value, sub, children }: { name: string; value: string; sub?: string; children?: ReactNode }) {
+function Metric({ name, value, sub, zero, children }: { name: string; value: string; sub?: string; zero?: boolean; children?: ReactNode }) {
   return (
     <div className={`${box} pb-[7px] pt-[9px]`}>
       {/* the value and its median go under the name where the row is too narrow for all three (over the conversation,
           "Writing speed 226 t/s median 219 t/s"), never cutting the name */}
       <div className="flex flex-wrap items-baseline justify-end gap-x-1.5"><span className={`${label} mr-auto`}>{name}</span>
-        <span className="flex items-baseline gap-1.5"><span className="text-[15px] font-medium tabular-nums text-ink">{value}</span>{sub && <span className="text-[11.5px] text-muted">{sub}</span>}</span></div>
+        <span className="flex items-baseline gap-1.5"><span className={`tabular-nums ${zero ? "text-[13.5px] text-faint" : "text-[15px] font-medium text-ink"}`}>{value}</span>{sub && <span className="text-[11.5px] text-muted">{sub}</span>}</span></div>
       {children}
     </div>
   );
@@ -103,56 +108,144 @@ const secs = tenths;
 const share = (x: number) => `${x >= 100 ? 100 : Math.min(99, Math.round(x))}%`;
 const last = (p: Point[]) => (p.length ? p[p.length - 1][1] : null);
 
+/** One small line in the live colour, no marks: a row's own (rows, from 8 calls). */
+function Line({ points, max }: { points: Point[]; max?: number }) {
+  const hi = max ?? (Math.max(0, ...points.map((p) => p[1])) * 1.1 || 1), n = points.length;
+  return (
+    <svg aria-hidden="true" viewBox="0 0 56 14" preserveAspectRatio="none" className="block h-3.5 w-14 overflow-visible">
+      <path d={points.map(([, v], i) => `${i ? "L" : "M"}${(1 + (54 * i) / (n - 1)).toFixed(1)},${(14 - (14 * Math.min(v, hi)) / hi).toFixed(1)}`).join("")} fill="none" stroke="var(--live)"
+        strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" /></svg>
+  );
+}
+
 type Scope = "turn" | "all";
+/** Opens the work panel at Stats over this scope (a click on one of the composer's numbers; `from`: where the focus goes back
+ * when a panel over the conversation shuts). App opens it unless a side chat or a subagent has the column. */
+export const openStats = (scope: Scope, from: HTMLElement) => window.dispatchEvent(new CustomEvent("tazuna-stats", { detail: { scope, from } }));
+// the last ask taken, so each is taken once (a Stats mounted later does not take it again)
+let taken = 0;
 
 export function StatsSection() {
-  const { view, active } = useContext(WorkCtx);
+  const { view, active, statsAsk } = useContext(WorkCtx);
   const [scope, setScope] = useState<Scope>("turn");
+  const rows = useLook(STATS) === "rows";
+  useEffect(() => { if (statsAsk && statsAsk.n > taken) { taken = statsAsk.n; setScope(statsAsk.scope); } }, [statsAsk?.n]);
   const live = !!view && !["Ready", "Done"].includes(view.activity);
   // a conversation with no model call yet, nor one running: nothing real to show
   if (!view || (!view.calls?.length && !live)) return null;
   return (
     <section aria-label="Stats" className="border-b border-line pb-3.5 last:border-b-0">
-      {/* the heading on the window's top row, as every first section's: the switch takes no more height than the words */}
+      {/* the heading on the window's top row, as every first section's: the switch takes no more height than the words. The
+          rows have no live dot: their numbers moving say it */}
       <div className="flex items-center gap-2 py-1 font-medium text-ink">
-        <span className="flex flex-1 items-center gap-2">Stats{live && <span className="inline-flex items-center gap-1.5 text-[11.5px] font-normal text-live-ink">
+        <span className="flex flex-1 items-center gap-2">Stats{live && !rows && <span className="inline-flex items-center gap-1.5 text-[11.5px] font-normal text-live-ink">
           <i className="size-1.5 rounded-full bg-live shadow-[0_0_0_3px_var(--live-soft)]" />live</span>}</span>
         <span className="-my-1 font-normal"><Segmented label="Stats for" value={scope} options={[["turn", "This turn"], ["all", "Conversation"]]} onChange={setScope} /></span>
       </div>
       {/* another conversation or scope starts afresh: its numbers jump, never slide from the last ones' (the review of
           2026-11-25); the switch stays outside, so it keeps the keyboard's focus */}
-      <Numbers key={`${active ?? ""}:${scope}`} view={view} scope={scope} live={live} />
+      <Numbers key={`${active ?? ""}:${scope}`} view={view} scope={scope} live={live} rows={rows} />
     </section>
   );
 }
 
-function Numbers({ view, scope, live }: { view: View; scope: Scope; live: boolean }) {
+function Numbers({ view, scope, live, rows }: { view: View; scope: Scope; live: boolean; rows: boolean }) {
   const s = stats(view, scope), u = usage(view);
   // every number tweens while a reply runs
   const t = { input: useTween(s.input, live), hit: useTween(s.hit ?? 0, live), out: useTween(s.out, live), tps: useTween(s.tps ?? 0, live),
     cost: useTween(s.cost ?? 0, live), calls: useTween(s.calls, live), secs: useTween(s.secs, live), ctx: useTween(view.context, live),
     ttft: useTween(last(s.ttft) ?? 0, live), speed: useTween(last(s.speed) ?? 0, live), hits: useTween(last(s.hits) ?? 0, live) };
   const ttftMed = median(s.ttft.map((p) => p[1])), speedMed = median(s.speed.map((p) => p[1]));
+  // "about" where a call's price is at list prices, as the receipt says it
+  const about = s.about && <span className="text-[13px] font-normal tracking-normal text-muted">about </span>;
+  if (rows) {
+    // a slip in spirit: label left, value right, rules between; a row with nothing to say is left out, a zero is quiet, a
+    // line only from 8 calls (fewer read as noise)
+    const lines = s.calls >= 8;
+    const all: [string, string | undefined, ReactNode, number | null | undefined, ReactNode?][] = [
+      ["In", undefined, tok(Math.round(t.input)), s.input],
+      ["From the cache", undefined, share(t.hit), s.hit, lines && s.hits.length > 1 && <Line points={s.hits} max={100} />],
+      ["Out", undefined, tok(Math.round(t.out)), s.out],
+      ["Writing speed", undefined, perSec(t.tps), s.tps, lines && s.speed.length > 1 && <Line points={s.speed} />],
+      ["Time to first token", "median", ttftMed == null ? "" : secs(ttftMed), ttftMed, lines && s.ttft.length > 1 && <Line points={s.ttft} />],
+      ["Cost", s.how, <>{about}{usd(t.cost)}</>, s.cost],
+      ["Calls", undefined, String(Math.round(t.calls)), s.calls],
+      ["Working", undefined, dur(t.secs), s.secs || null],
+      ["Context", undefined, `${tok(Math.round(t.ctx))}${u.contextMax ? ` of ${u.contextMax}` : ""}`, view.context],
+    ];
+    return (
+      <div className="pt-0.5 text-[12.5px]">
+        {all.filter((r) => r[3] != null).map(([name, q, value, raw, line]) => (
+          <div key={name} className="grid min-h-[29px] grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2.5 border-t border-line text-ink-2 first:border-t-0">
+            <span className="min-w-0">{name}{q && <> <span className="ml-0.5 text-faint">{q}</span></>}</span>
+            <span>{line || null}</span>
+            <span className={`whitespace-nowrap text-right tabular-nums ${raw === 0 ? "text-faint" : "text-ink"}`}>{value}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="pt-1">
       <div className="mb-2 grid grid-cols-2 gap-2">
-        <Tile name="In" value={tok(Math.round(t.input))} sub={s.hit == null ? undefined : `${share(t.hit)} from cache`}>{s.hit != null && <Bar pct={s.hit} />}</Tile>
-        <Tile name="Out" value={tok(Math.round(t.out))} sub={s.tps == null ? undefined : `${perSec(t.tps)} writing`} />
-        {/* "about" where a call's price is at list prices, as the receipt says it */}
-        <Tile name="Cost" value={s.cost == null ? "–" : <>{s.about && <span className="text-[13px] font-normal tracking-normal text-muted">about </span>}{usd(t.cost)}</>} sub={s.how} />
-        <Tile name="Calls" value={String(Math.round(t.calls))} sub={s.secs ? `${dur(t.secs)} working` : undefined} />
+        <Tile name="In" value={tok(Math.round(t.input))} zero={!s.input} sub={s.hit == null ? undefined : `${share(t.hit)} from cache`}>{s.hit != null && <Bar pct={s.hit} />}</Tile>
+        <Tile name="Out" value={tok(Math.round(t.out))} zero={!s.out} sub={s.tps == null ? undefined : `${perSec(t.tps)} writing`} />
+        <Tile name="Cost" value={s.cost == null ? "–" : <>{about}{usd(t.cost)}</>} zero={s.cost === 0} sub={s.how} />
+        <Tile name="Calls" value={String(Math.round(t.calls))} zero={!s.calls} sub={s.secs ? `${dur(t.secs)} working` : undefined} />
       </div>
       <div className="flex flex-col gap-2">
-        <Metric name="Time to first token" value={s.ttft.length ? secs(t.ttft) : "–"} sub={ttftMed == null ? undefined : `median ${secs(ttftMed)}`}>
-          <Spark name="Time to first token" points={s.ttft} fmt={secs} live={live} /></Metric>
-        <Metric name="Writing speed" value={s.speed.length ? perSec(t.speed) : "–"} sub={speedMed == null ? undefined : `median ${perSec(speedMed)}`}>
-          <Spark name="Writing speed" points={s.speed} fmt={perSec} live={live} /></Metric>
-        <Metric name="Cache hit rate" value={s.hits.length ? share(t.hits) : "–"} sub={s.hit == null ? undefined : `${share(s.hit)} overall`}>
-          <Spark name="Cache hit rate" points={s.hits} fmt={share} max={100} live={live} /></Metric>
+        {/* a line of fewer than 3 points says nothing: its tile is left out, never an empty box with "–" (design review 14) */}
+        {s.ttft.length >= 3 && <Metric name="Time to first token" value={secs(t.ttft)} sub={ttftMed == null ? undefined : `median ${secs(ttftMed)}`}>
+          <Spark name="Time to first token" points={s.ttft} fmt={secs} live={live} /></Metric>}
+        {s.speed.length >= 3 && <Metric name="Writing speed" value={perSec(t.speed)} sub={speedMed == null ? undefined : `median ${perSec(speedMed)}`}>
+          <Spark name="Writing speed" points={s.speed} fmt={perSec} live={live} /></Metric>}
+        {s.hits.length >= 3 && <Metric name="Cache hit rate" value={share(t.hits)} sub={s.hit == null ? undefined : `${share(s.hit)} overall`}>
+          <Spark name="Cache hit rate" points={s.hits} fmt={share} max={100} live={live} /></Metric>}
         {/* the last call's input against the model's window; a window the core does not know (a local model) has no bar */}
-        <Metric name="Context" value={tok(Math.round(t.ctx))} sub={u.contextMax ? `of ${u.contextMax}` : undefined}>
+        <Metric name="Context" value={tok(Math.round(t.ctx))} zero={!view.context} sub={u.contextMax ? `of ${u.contextMax}` : undefined}>
           {u.contextMax && <Bar pct={u.contextPct} />}</Metric>
       </div>
     </div>
   );
 }
+
+/** The conversation's numbers in the composer's own strip, along its lower edge or its top (design review 14, M-A of
+ * mockups/v13.html; Settings › Appearance › Conversation numbers): its context against the model's window, its cost
+ * (`costSaid`), the cache's share, and the reply's speed while it runs, appended last so nothing moves when it comes. The
+ * cost opens the conversation's receipt (as the status bar's "this chat" does), the speed Stats over this turn, the rest
+ * Stats over the conversation. The Stats' and the status bar's own numbers: no sums of its own. A short row drops the
+ * cache, then the cost's words, then "of 128k" (`data-drop`, styles.css); never wraps. */
+export function ConvNumbers({ view, choice, busy, turns, top }: { view: View; choice?: ModelChoice; busy: boolean; turns: Turn[]; top?: boolean }) {
+  const row = useRef<HTMLDivElement>(null);
+  const s = stats(view, "all"), u = usage(view), tps = busy ? stats(view, "turn").tps : null, paid = costSaid(s, choice, busy);
+  // [its name, the tooltip, what it shows]; the cache's part goes first where the row is short (tz-n1)
+  const parts: [string, string, ReactNode][] = [];
+  if (view.context > 0) parts.push(["context", `Context: ${tok(view.context)}${u.contextMax ? ` of the model's ${u.contextMax} window, ${u.contextPct}%` : ""}`, <>
+    <Gauge size={14} strokeWidth={1.5} className="text-faint" /><span className="font-medium text-ink">{tok(view.context)}</span>
+    {u.contextMax && <><span className="tz-n3 -ml-0.5">of {u.contextMax}</span><span className="h-[5px] w-10 flex-none overflow-hidden rounded-[3px] bg-line-strong">
+      <i className="block h-full rounded-[3px] bg-live" style={{ width: `${u.contextPct}%` }} /></span><span>{u.contextPct}%</span></>}</>]);
+  if (paid) parts.push(["cost", paid[2], <><Coins size={14} strokeWidth={1.5} className="text-faint" /><span className="font-medium text-ink">{paid[0]}</span>
+    {paid[1] && <span className="tz-n2 -ml-0.5">{paid[1]}</span>}</>]);
+  if (u.cachedPct > 0) parts.push(["cache", "Input read from the provider's cache in this conversation", <>
+    <Database size={14} strokeWidth={1.5} className="text-faint" /><span className="font-medium text-ink">{u.cachedPct}%</span><span className="-ml-0.5">cached</span></>]);
+  if (tps) parts.push(["speed", "The reply's writing speed", <><Activity size={14} strokeWidth={1.5} className="text-live" /><span className="font-medium text-ink">{Math.round(tps)}</span><span className="-ml-0.5">t/s</span></>]);
+  useLayoutEffect(() => { fit(row.current); });
+  useEffect(() => { const el = row.current; if (!el) return; const r = new ResizeObserver(() => fit(el)); r.observe(el); return () => r.disconnect(); }, [!parts.length]);
+  if (!parts.length) return null;
+  // tabIndex: WebKit's Tab skips buttons; data-panel: a press here is not "outside" a work panel open over the conversation
+  const part = "flex h-6 items-center gap-1.5 rounded-md px-[7px] hover:bg-hover hover:text-ink-2";
+  return (
+    <div ref={row} aria-label="This conversation's numbers" role="group"
+      className={`tz-nums -ml-4 -mr-3 flex h-8 items-center whitespace-nowrap bg-[color-mix(in_srgb,var(--field)_40%,var(--card))] pl-[9px] pr-[5px] text-[12.5px] tabular-nums text-muted ${top ? "-mt-3 mb-2.5 rounded-t-[11px] border-b border-line" : "-mb-2 mt-2 rounded-b-[11px] border-t border-line"}`}>
+      {parts.map(([k, title, inner], i) => (
+        <span key={k} className={`flex flex-none items-center ${k === "cache" ? "tz-n1" : ""}`}>
+          {i > 0 && <i aria-hidden="true" className="mx-[3px] h-3.5 w-px bg-line" />}
+          {k === "cost" && turns.length ? <ChatCost cost={view.cost} turns={turns} busy={busy} className={part} title={`${title} · its receipt`} left>{inner}</ChatCost>
+            : <button tabIndex={0} data-panel onClick={(e) => openStats(k === "speed" ? "turn" : "all", e.currentTarget)} title={`${title} · Stats`} className={part}>{inner}</button>}
+        </span>
+      ))}
+    </div>
+  );
+}
+/** Drops parts until the row fits: the cache, the cost's words, "of 128k" (scrollWidth counts what spills out). */
+const fit = (el: HTMLElement | null) => { if (!el) return; el.dataset.drop = "0"; for (let d = 1; d <= 3 && el.scrollWidth > el.clientWidth; d++) el.dataset.drop = String(d); };

@@ -82,7 +82,7 @@ export function Setup({ onSettings, onClose }: { onSettings: () => void; onClose
           <button onClick={onClose} aria-label="Close" title="Close (Esc)" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
         </div>
         <div className="overflow-auto px-5 py-2">
-          <div className="py-2 text-[12.5px] text-muted">Nothing here is needed now: each line can wait, and {keysOf("⌘K")} "Set up tazuna" brings this back.</div>
+          <div className="py-2 text-[12.5px] text-muted">Everything here can wait. {keysOf("⌘K")} › Set up tazuna brings this back.</div>
           {/* ticked only when it is signed in: found but signed out, every message to Claude failed (design review 12) */}
           {row(claude?.claude_login === true, "Claude on your subscription", <ClaudeNote s={claude} />,
             <span className="flex flex-none gap-2"><ClaudeButtons s={claude} check={check} checking={checking} /></span>)}

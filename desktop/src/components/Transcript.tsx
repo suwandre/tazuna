@@ -72,7 +72,7 @@ function ChangeCard({ change, busy, onDiff, onUndo, onReview }: { change: Change
       ))}
       <div className="flex items-center gap-2 px-3 py-[7px] text-[12px] text-muted">
         <span className="flex-1">{change.files.length} file{change.files.length === 1 ? "" : "s"} changed in this turn
-          {change.files.length > 6 && !all && <button onClick={() => setAll(true)} className="ml-2 text-accent-ink">show all</button>}</span>
+          {change.files.length > 6 && !all && <button onClick={() => setAll(true)} className="ml-2 text-accent-ink">Show all</button>}</span>
         {!change.undone && onReview && <button onClick={() => onReview(change.turn)} title="Go through this turn's changes piece by piece"
           className={quietButton}>Review</button>}
         {change.undone ? <span className="text-faint">Undone</span>

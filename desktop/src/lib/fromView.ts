@@ -1,5 +1,7 @@
 // The core's view (Session::view) turned into what the window draws.
-import type { View } from "./tazuna";
+import { isFree } from "./route";
+import type { ModelChoice, View } from "./tazuna";
+import { planName } from "./usage";
 import { median, paidTo, pct, usd, writing, type Call, type Message, type ToolStep, type Usage } from "./types";
 
 /** Words before a later step that are an aside, not an answer: one short paragraph, no code block, table or list. */
@@ -86,8 +88,9 @@ export function stats(v: View, scope: "turn" | "all") {
   const noMoney = said && turns.every(noRef) && runCost == null;
   // this turn: what runs now, or its own when it has ended; the conversation: the core's total, or while a reply runs the
   // finished turns' and that reply's by the same rule
+  const done = turns.reduce((a, b) => a + (run(b) ?? 0), 0);
   const cost = noMoney ? null : scope === "turn" ? (open ? runCost : run(turns[0])) ?? null
-    : running.length ? (runCost == null ? null : turns.reduce((a, b) => a + (run(b) ?? 0), 0) + runCost) : v.cost;
+    : running.length ? (runCost == null ? null : done + runCost) : v.cost;
   const about = turns.some((b) => b.estimate) || running.some((c) => c.estimate);
   // a payee nobody named (a model on this machine, a gateway it cannot name): no word, as the receipt has none
   const payees = [...new Set(turns.map((b) => paidTo({ plan: b.plan, provider: b.provider ?? undefined, providers: b.providers })))];
@@ -96,7 +99,9 @@ export function stats(v: View, scope: "turn" | "all") {
     : `${planned > 0 ? `${usd(planned)} ` : ""}not\u00a0billed + ${usd(paid)} paid`;
   // the finished turns' own time (the receipt line's), and the running one's calls so far
   const secs = turns.reduce((a, b) => a + b.secs, 0) + (scope === "all" || open ? after : []).reduce((a, c) => a + (c.total_ms ?? 0) / 1000, 0);
-  return { busy, open, calls: calls.length, input, cached, hit: input ? (100 * cached) / input : null, out: sum((c) => c.out), tps: writing(calls), cost, about, how, secs,
+  // on a plan alone (every finished turn says so), and the plans' providers (none: the claude CLI's, "Claude plan")
+  const planOnly = said && plan.length === turns.length, plans = [...new Set(plan.map((b) => b.provider ?? null))];
+  return { busy, open, calls: calls.length, input, cached, hit: input ? (100 * cached) / input : null, out: sum((c) => c.out), tps: writing(calls), cost, about, how, secs, noMoney, planOnly, plans, done,
     ttft: series((c) => (c.first_ms == null ? null : c.first_ms / 1000)), speed: series((c) => c.tps || null),
     hits: series((c) => (c.fresh + c.cached ? (100 * c.cached) / (c.fresh + c.cached) : null)) };
 }
@@ -459,4 +464,40 @@ export function resetIn(at?: number | null, now = Date.now() / 1000): string {
   if (!at || at <= now) return "";
   const m = Math.round((at - now) / 60), h = Math.floor(m / 60);
   return h ? `in ${h} h ${m % 60} min` : `in ${m} min`;
+}
+
+/** What the composer's numbers say the conversation cost: [the value, its words, the tooltip], or nothing to say. A plan's
+ * turns at API prices and not billed (the plan named on hover), or "not billed" where it has no reference price; a free
+ * model's nothing; while a reply runs the Stats' "so far", the finished turns' sum where its calls bring no price, so the
+ * part never goes and comes back (the review of design review 14: a paid reply after plan turns read "not billed"). */
+export function costSaid(s: ReturnType<typeof stats>, choice: ModelChoice | undefined, busy: boolean): [string, string, string] | null {
+  const plan = s.plans.map(planName).join(", ") || planName(null), money = (n: number) => `${s.about ? "about " : ""}${usd(n)}`;
+  if (s.noMoney) return ["not billed", `(${plan})`, `On your ${plan}: it has no reference price, not billed`];
+  if (choice && isFree(choice) && !s.cost) return ["free", /^https?:\/\/(localhost|127\.|\[::1\])/.test(choice.url ?? "") ? "on this machine" : "", "Nothing paid"];
+  if (busy) { const n = s.cost ?? s.done; return [n ? money(n) : "–", "so far", "This conversation's cost so far"]; }
+  if (s.cost && s.planOnly) return [money(s.cost), "at API prices · not billed", `On your ${plan}: what it would cost at API prices, not billed`];
+  return s.cost ? [money(s.cost), "this chat", `This conversation's cost${s.how ? `, ${s.how}` : ""}`] : null;
+}
+
+/** A check of the composer's numbers' cost: `npx tsx -e 'import("./src/lib/fromView.ts").then(m => m.demoStrip())'`. */
+export function demoStrip() {
+  const done = (cost: number, o: object = {}) => ({ kind: "done", cost, run_cost: cost, secs: 5, ok: true, model: "claude-sonnet-5-5", plan: true, ...o });
+  const call = (block: number, o: object = {}) => ({ block, fresh: 100, cached: 900, out: 50, first_ms: 800, tps: 40, total_ms: 2000, role: null, ...o });
+  const view = (blocks: object[], calls: object[], activity = "Done", cost = 0) => ({ activity, blocks, calls, cost, context: 1000, usage: { input: 0, cache_write: 0, cache_read: 0, output: 0 } }) as unknown as View;
+  const said = (v: View, busy: boolean, choice?: ModelChoice) => costSaid(stats(v, "all"), choice, busy)?.slice(0, 2).join(" ") ?? "none";
+  const plan3 = [done(0.2), done(0.2), done(0.13)], p = { kind: "prompt", text: "go" };
+  const cases: [string, string, string][] = [
+    ["three Claude plan turns", said(view(plan3, [call(0), call(1), call(2)], "Done", 0.53), false), "$0.53 at API prices · not billed"],
+    // the 2026-11-25 bug class: a paid reply after plan turns is "so far", never "not billed"
+    ["then a paid reply running", said(view([...plan3, p], [call(0), call(1), call(2), call(4, { model: "deepseek-v4.1-flash", cost: 0.01 })], "Tool", 0.53), true), "$0.54 so far"],
+    // calls with no model (Claude's Sonnet): no running sum, the finished turns' stays
+    ["a reply running with no price yet", said(view([...plan3, p], [call(0), call(1), call(2), call(4)], "Tool", 0.53), true), "$0.53 so far"],
+    ["the first reply running with no price", said(view([p], [call(1)], "Tool"), true), "– so far"],
+    ["a plan with no reference price", said(view([done(0, { provider: "Z.ai Coding Plan", model: "glm-5.3" })], [call(0)]), false), "not billed (Z.ai Coding Plan)"],
+    ["a local model", said(view([done(0, { plan: false, provider: "Ollama" })], [call(0)]), false, { model: "q", provider: "Ollama", price: "free", why_not: null, url: "http://localhost:11434/v1" }), "free on this machine"],
+    ["paid", said(view([done(0.02, { plan: false, provider: "DeepSeek" })], [call(0)], "Done", 0.02), false), "$0.02 this chat"],
+  ];
+  const bad = cases.filter(([, got, want]) => got !== want).map(([what, got, want]) => `${what}: ${got} (wanted ${want})`);
+  if (bad.length) throw new Error(bad.join("\n"));
+  console.log("strip ok");
 }

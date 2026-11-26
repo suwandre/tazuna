@@ -1,7 +1,6 @@
 import { ShieldQuestion } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { View } from "../lib/tazuna";
-import { keysOf } from "../lib/types";
 import { Sep } from "./Sep";
 import { Given, writes } from "./Step";
 
@@ -78,7 +77,7 @@ export function Approval({ asking, onAnswer, keys = true, input }: { asking: Non
       <div className="rounded-lg border border-[color-mix(in_srgb,var(--warn)_55%,var(--line-strong))] bg-card px-3.5 py-3 shadow-[var(--shadow-composer)]">
         <div className="mb-1.5 flex items-center gap-2 text-[12.5px] font-medium text-ink">
           <ShieldQuestion size={15} strokeWidth={1.5} className="text-warn" />
-          tazuna asks to use {tool}
+          {/^bash$/i.test(tool) ? "Allow a shell command?" : writes(asking.tool) ? "Allow this edit?" : `Allow ${tool}?`}
           {asking.queued > 0 && <span className="flex items-center text-faint"><Sep />{asking.queued} more waiting</span>}
           {asking.reviewing && <span role="status" className="flex items-center text-muted"><Sep />the reviewer is checking it; you can answer first</span>}
         </div>
@@ -98,8 +97,6 @@ export function Approval({ asking, onAnswer, keys = true, input }: { asking: Non
           )}
           <button disabled={!ready} onClick={() => answer(false, false)} className={`${btn} border border-line ${risky ? "text-ink" : "text-muted"}`}>Decline <kbd className="ml-1 font-mono text-faint">n</kbd></button>
           {(asking.once || risky) && !why && <span className="ml-1 text-[11.5px] text-faint">{asking.note}</span>}
-          {/* keys typed in the box never answer: the way from it (the card's buttons come before it) */}
-          {keys && <span className="ml-auto pl-3 text-[11.5px] text-faint">click, or {keysOf("⇧Tab")} to the buttons</span>}
         </div>
       </div>
     </div>

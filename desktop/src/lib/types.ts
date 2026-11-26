@@ -283,6 +283,8 @@ export function demoNumbers() {
 const onMac = typeof navigator !== "undefined" && navigator.userAgent.includes("Mac");
 /** A shortcut as this machine's keyboard says it: written the Mac's way in the code ("⌘⇧U"), "Ctrl+Shift+U" on Windows
  * and Linux, where the window showed ⌘ on keyboards that have none (design review 11). */
+/** A word as a label starts: "Auto", "High" (a mode, an effort: their values stay lower case). */
+export const capital = (w: string) => w.charAt(0).toUpperCase() + w.slice(1);
 export const keysOf = (k: string, mac = onMac) => (mac ? k : k.replace(/⌘/g, "Ctrl+").replace(/⇧/g, "Shift+").replace(/↵/g, "Enter"));
 /** The file manager as this system names it: "Finder", "Explorer", the file manager elsewhere ("Open in Finder"). */
 export const filesApp = typeof navigator === "undefined" ? "Finder" : onMac ? "Finder" : navigator.userAgent.includes("Windows") ? "Explorer" : "the file manager";
@@ -299,16 +301,16 @@ export function demoKeys() {
  * 3. else it is never open: a project in a window of 1280 px or more has the folded tab on the sheet's edge ("Changes 2"),
  *    a plain chat and a narrower window have nothing. It never opens or closes by itself.
  * Closing it by hand is no choice: it goes back to its tab (`panelChoice`).
- * Open, it lies on the desk beside the sheet, and the reading column keeps the left edge centring gave it with the panel
- * shut (`left`: from the sheet's edge to the column's 756 px box, its 28 px sides included) and gives up width on the right
- * (700 → 614 px of text at 1440). Where that leaves under 580 px of text (a window under 1372 px with the sidebar, any
- * without it), the panel floats over the conversation instead, under its tab, and nothing moves (`over`). Design review
- * 12, B3 and B2 of mockups/v9.html: the column re-centred and its left edge jumped 146 px at 1440. */
+ * Open, it lies on the desk beside the sheet, and the reading column is centred in what is left (`left`: from the sheet's
+ * edge to the column's 756 px box, its 28 px sides included), gliding there with the panel's slide (styles.css .tz-col;
+ * design review 14: kept at its left edge, design review 12's B3, the text sat skewed right). Where the sheet beside it
+ * would be under 816 px (a window under 1372 px with the sidebar, any without it), the panel floats over the conversation
+ * instead, under its tab, and nothing moves (`over`; design review 12, B2 of mockups/v9.html). */
 export function panelState(a: { project: boolean; width: number; choice?: boolean; pane?: boolean }): { open: boolean; tab: boolean; over: boolean; left: number } {
   const sheet = a.width - (a.width < 1000 ? 16 : 256);   // the sheet with the panel shut: 8 px from the window's edges, the sidebar's 248 px
-  const left = Math.max(0, (sheet - 756) / 2);
-  const over = sheet - 300 - left - 56 < 580;              // the panel takes 300 px from the sheet's right
-  const tab = a.project && a.width >= 1280;
+  const over = sheet - 300 < 816;                          // the panel takes 300 px from the sheet's right
+  const tab = a.project && a.width >= 1280, open = !!a.choice && !a.pane;
+  const left = Math.max(0, ((open && !over ? sheet - 300 : sheet) - 756) / 2);
   if (a.pane) return { open: false, tab: false, over, left };
   if (a.choice) return { open: true, tab: tab && over, over, left };
   return { open: false, tab, over, left };
@@ -326,7 +328,7 @@ export function demoPanel() {
   by.a = panelChoice(false);
   const cases: [string, string, string][] = [
     ["a plain chat", st({ project: false, width: 1680 }), "shut"],
-    ["a plain chat, opened by hand: beside, the column 334 px in", st({ project: false, width: 1680, choice: true }), "open@334"],
+    ["a plain chat, opened by hand: beside, the column centred 184 px in", st({ project: false, width: 1680, choice: true }), "open@184"],
     ["a plain chat opened by hand, closed again", st({ project: false, width: 1680, choice: panelChoice(true) }), "shut"],
     ["a project, whatever it changed: folded to its tab", st(P), "shut+tab"],
     ["a project opened by its tab, 1280 px: over the conversation, under its tab", st({ ...P, choice: by.a }), "open+tab+over"],
@@ -334,8 +336,10 @@ export function demoPanel() {
     ["then a plain chat", st({ project: false, width: 1280, choice: by.c }), "shut"],
     ["the opened one closed again: its tab is back", st({ ...P, choice: panelChoice(true) }), "shut+tab"],
     ["a side chat or a subagent has the column", st({ ...P, choice: true, pane: true }), "shut"],
-    ["1440 px: beside, the column stays 214 px in (614 px of text)", st({ project: true, width: 1440, choice: true }), "open@214"],
-    ["1372 px: 580 px of text, still beside", st({ project: true, width: 1372, choice: true }), "open@180"],
+    ["1440 px: beside, the column centred 64 px in (700 px of text, 92 px each side of it)", st({ project: true, width: 1440, choice: true }), "open@64"],
+    ["1440 px, shut: centred 214 px in", `${panelState({ project: true, width: 1440 }).left}`, "214"],
+    ["1600 px: beside, centred 144 px in", st({ project: true, width: 1600, choice: true }), "open@144"],
+    ["1372 px: an 816 px sheet, still beside, centred 30 px in", st({ project: true, width: 1372, choice: true }), "open@30"],
     ["1371 px: over", st({ project: true, width: 1371, choice: true }), "open+tab+over"],
     ["1100 px", st({ project: true, width: 1100 }), "shut"],
     ["900 px, opened by hand: over (no sidebar)", st({ project: true, width: 900, choice: true }), "open+over"],

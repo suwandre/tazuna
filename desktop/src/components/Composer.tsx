@@ -1,7 +1,7 @@
 import { ArrowUp, Check, ChevronDown, FileText, FolderOpen, Gauge, GitBranch, MessageCircle, Paperclip, Plus, Shield, Square, X, Zap } from "lucide-react";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { composed, type ModelChoice, type Models, type SendDraft } from "../lib/tazuna";
-import { IMAGE_FILE, keysOf, modelLabel, type Session } from "../lib/types";
+import { IMAGE_FILE, capital, keysOf, modelLabel, type Session } from "../lib/types";
 import { Slot } from "../lib/slots";
 import { EffortMenu, Menu, ModelPicker, usePlace } from "./ModelPicker";
 import { Sep } from "./Sep";
@@ -62,6 +62,8 @@ type Props = {
   above?: React.ReactNode;
   /** shown under the box (where a message goes and what it costs) */
   below?: React.ReactNode;
+  /** the conversation's numbers (Stats.tsx ConvNumbers), the box's own strip along its lower edge, or its top (`numbersTop`) */
+  numbers?: React.ReactNode; numbersTop?: boolean;
   /** what `/` and `@` complete to in this conversation (the core's "complete": its commands with what each does, the
    * project's files); null until it answers. onComplete asks for it. */
   complete?: Completions | null; onComplete?: () => void;
@@ -109,20 +111,21 @@ export function completions(text: string, caret: number, c: Completions | null |
 }
 
 // the permission modes in tazuna's words, in the order shift-tab steps through them (as in the terminal); full last, a
-// choice made on purpose
+// choice made on purpose. Six words at most each (design review 14)
 export const MODES: [string, string][] = [
-  ["auto", "runs commands and edits without asking, but asks before rm outside the project, force push, reset --hard, sudo, disk tools"],
-  ["ask", "asks before each command and edit"],
-  ["edits", "edits freely, asks before commands"],
-  ["review", "edits freely; a reviewer model answers command requests, run in a sandbox"],
-  ["plan", "reads only: no edits, asks before commands"],
-  ["full", "never asks, not even before destructive commands"],
+  ["auto", "asks before risky commands"],
+  ["ask", "asks before every step"],
+  ["edits", "edits freely, asks for commands"],
+  ["review", "a second model approves commands"],
+  ["plan", "reads only, no edits"],
+  ["full", "never asks"],
 ];
 
-// one line always (a narrow window wrapped "Opus 5.5" onto two), and readable while a reply runs (faded, they read as broken)
-const pill = "inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink disabled:cursor-default disabled:text-muted";
+// one line always (a narrow window wrapped "Opus 5.5" onto two), and readable while a reply runs (faded, they read as broken).
+// No fill: a hairline on hover and focus (`tz-pill`, styles.css; design review 14, S2 of mockups/v12.html)
+const pill = "tz-pill inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border border-transparent px-2 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-transparent enabled:hover:text-ink disabled:cursor-default disabled:text-muted";
 
-export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSendNow, onStop, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onPasteClipboardImage, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, onBestOf, commands = {}, readOnly = false, asking = false }: Props) {
+export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSendNow, onStop, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onPasteClipboardImage, onDrop, draft, above, below, numbers, numbersTop, draftKey, complete, onComplete, onImage, onBestOf, commands = {}, readOnly = false, asking = false }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   // attachments are chips over the text, with a thumbnail for an image (until desktop 0.1.87 their paths were typed into
   // the message, and a screenshot was a line of path)
@@ -232,6 +235,7 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSe
         {/* the box's twin, for measuring its height (`resize`): out of the layout, never seen or read */}
         <textarea ref={mirror} aria-hidden="true" tabIndex={-1} readOnly rows={1}
           className="pointer-events-none invisible absolute left-0 top-0 h-0 resize-none overflow-hidden pb-3 pt-0.5" />
+        {numbersTop && numbers}
         {menu && <div className="relative -ml-4 -mr-3"><CompleteMenu items={menu.items} sel={sel} onPick={take} /></div>}
         {files.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-1.5">
@@ -261,11 +265,14 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSe
               if (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey)) { e.preventDefault(); take(menu.items[sel] ?? menu.items[0]); return; }
               if (e.key === "Escape") { e.preventDefault(); setShut(true); return; }
             }
+            // Shift+Tab: to a question's buttons, to the numbers over the box (their strip above it), else the next mode
+            const above = e.key === "Tab" && e.shiftKey && numbersTop ? [...e.currentTarget.closest("[data-composer]")!.querySelectorAll<HTMLElement>(".tz-nums button")].pop() : undefined;
             if (e.key === "Tab" && e.shiftKey && asking) { e.preventDefault(); [...document.querySelectorAll<HTMLButtonElement>("[data-asking] button:not(:disabled)")].pop()?.focus(); }
+            else if (above) { e.preventDefault(); above.focus(); }
             else if (e.key === "Tab" && e.shiftKey && onMode) { e.preventDefault(); nextMode(); } if (e.key === "Escape" && busy) onStop?.(); if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(busy && (e.metaKey || e.ctrlKey)); } }}
-          placeholder={readOnly ? "Try writing here. Nothing will be sent." : busy ? `Type your next message: it goes after this reply · ${keysOf("⌘↵")} sends it now` : "Ask anything, or describe a change…  / for commands, @ for files"} className="max-h-[40vh] w-full resize-none overflow-y-auto bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
+          placeholder={readOnly ? "Try writing here. Nothing will be sent." : busy ? `Type your next message: it goes after this reply · ${keysOf("⌘↵")} sends it now` : "/ for commands, @ for files"} className="max-h-[40vh] w-full resize-none overflow-y-auto bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
         {/* a container: the mode pill says more where the row has room (design review 13, D4) */}
-        <div className="@container flex items-center gap-1.5">
+        <div className="tz-pills @container flex items-center gap-1.5">
           <Slot name="composer.pills" props={{ composer: bag }} />
           <span className="flex-1" />
           {busy && !ready
@@ -274,6 +281,7 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSe
             : <button onClick={() => send()} aria-label="Send" title={readOnly ? "Read-only demo — no agent connected" : busy ? `Send after this reply (Enter; ${keysOf("⌘↵")} sends now)` : "Send (Enter)"} disabled={!ready}
                 className={`grid size-[30px] flex-none place-items-center rounded-full ${ready ? "bg-accent text-on-accent" : "border border-line bg-field text-faint"}`}><ArrowUp size={16} strokeWidth={1.75} /></button>}
         </div>
+        {!numbersTop && numbers}
       </div>
       {readOnly && <p id="demo-draft-help" className="mx-auto mt-1.5 max-w-[700px] px-1 text-[11.5px] text-muted">Draft only · copy it before leaving this page.</p>}
       {below && <div className="mx-auto mt-1.5 max-w-[700px] px-1">{below}</div>}
@@ -379,18 +387,18 @@ export function ModePill({ composer: c }: { composer: ComposerBag }) {
   return (
     <span className="relative">
       {/* full never asks: warn-tinted, its shield filled and its words saying so where the row has room, so it is never on
-          unnoticed; plan, which only reads, in the live indigo (design review 13, D4 of mockups/v10.html; styles.css) */}
+          unnoticed; plan, which only reads, in the live ai-iro (design review 13, D4 of mockups/v10.html; styles.css) */}
       <button disabled={!c.onMode} onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open} title={c.readOnly ? "Permission mode — available in the desktop app" : "Permission mode (shift-tab)"}
         className={`${pill} ${full ? "tz-mode-full" : c.session.mode === "plan" ? "tz-mode-plan" : ""}`}>
         <Shield size={14} strokeWidth={1.5} fill={full ? "currentColor" : "none"} />
-        <span>{c.session.mode}{full && <span className="hidden @min-[520px]:inline"> · never asks</span>}</span><ChevronDown size={13} strokeWidth={1.5} className={full ? undefined : "text-faint"} />
+        <span>{capital(c.session.mode)}{full && <span className="hidden @min-[520px]:inline"> · never asks</span>}</span><ChevronDown size={13} strokeWidth={1.5} className={full ? undefined : "text-faint"} />
       </button>
       {open && (
         <Menu onClose={() => setOpen(false)} width={320}>
           {MODES.map(([m, about]) => (
             <button key={m} role="menuitemradio" aria-checked={m === c.session.mode} onClick={() => { setOpen(false); c.onMode?.(m); }} className="flex w-full items-start gap-2 px-3 py-[6px] text-left hover:bg-hover">
               <span className="mt-0.5 w-3.5 flex-none text-accent">{m === c.session.mode && <Check size={14} strokeWidth={1.75} />}</span>
-              <span><span className="block text-ink">{m}</span><span className="block text-[11.5px] text-faint">{about}</span></span>
+              <span><span className="block text-ink">{capital(m)}</span><span className="block text-[11.5px] text-faint">{about}</span></span>
             </button>
           ))}
         </Menu>

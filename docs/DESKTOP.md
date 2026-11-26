@@ -738,6 +738,15 @@ Claude, plus an anti-AI-slop round; the visual proposals wait in mockups/v12.htm
   held messages show as queued; "Changes" without a 0; a short cut-off title shows whole; Undo greys its diffs; the
   working mark at 16 px; Usage and Settings copy true to a new user's state; palette ranks names above hints.
 
+0.1.130 (with tazuna 0.1.229), design review 14's picks (mockups/v12.html, v13.html) and a copy pass:
+- The accent Ai, true ai-iro, is the default and what means a state (`--live`) is drawn in; Indigo stays a choice, and an
+  accent picked by hand is kept. The UI is set in the system's own face (Geist Mono and Source Serif 4 stay).
+- The conversation's numbers are the composer's own strip under the box (context, cost, cache, speed while a reply runs);
+  Settings › Appearance moves them above the box, back to the status bar, or off, and the status bar shows them only
+  then. The strip's cost opens the conversation's receipt; "→ … a message" under the box is hidden for now.
+- The reading column re-centres beside the work panel, gliding with it; Stats as rows on the desk, a setting; plain pills,
+  sentence case, shorter mode descriptions and Settings copy; "Allow a shell command?" asks the approval.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
@@ -840,7 +849,7 @@ mobile companion and team settings. Code signing stays off by choice.
 
 ### Direction (proposal: A, with B's density in the code view and C's mono touches)
 - A, warm paper: cream canvas (~#f6f4ef), warm ink (~#23221e), warm near-black for dark (~#171613), one accent:
-  indigo (ai-iro; tazuna means reins). Hairline borders instead of shadows, medium density, a serif for chat prose.
+  ai-iro (藍色; tazuna means reins; an indigo until design review 14). Hairline borders instead of shadows, medium density, a serif for chat prose.
   Family: Cursor's and Anthropic's styles on Refero.
 - B, midnight instrument: Linear and Raycast; dense and polished, but the most cloned look in developer tools.
 - C, quiet terminal: mono-led, monochrome with one status colour, carries the TUI over; tiring for long chats.
@@ -869,8 +878,8 @@ mobile companion and team settings. Code signing stays off by choice.
 - Bencho and React Bits micro as references only: context meter, thinking indicator, hold-to-confirm, status mark,
   rebuilt in our own tokens. Transitions.dev for timing of panels, tabs and toasts.
 - One icon set: Phosphor (light/regular) or Lucide at 1.5 stroke, 16 px. Vitrum only for the app icon.
-- Fonts, bundled: Geist or IBM Plex Sans for the UI; Geist Mono or JetBrains Mono for code and tool calls; Source
-  Serif 4 for chat prose.
+- Fonts: the system's own face for the UI (Geist until design review 14); bundled, Geist Mono for code and tool calls and
+  Source Serif 4 for chat prose.
 - Motion: CSS transitions of 120-200 ms ease-out; Motion only for layout changes; no WebGL, particles or animated
   backgrounds (battery and frames in WebKit); streaming tokens are not animated.
 

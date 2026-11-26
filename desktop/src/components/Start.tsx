@@ -96,7 +96,7 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
             ))}
             <button onClick={onFolder} className={row}>
               <Plus size={14} strokeWidth={1.5} className="flex-none text-muted" />
-              <span className="min-w-0 flex-1"><span className="block text-ink">Open a folder…</span><span className="block text-[11.5px] text-faint">any project on this machine</span></span>
+              <span className="min-w-0 flex-1 text-ink">Open a folder…</span>
             </button>
           </section>}
         </div>

@@ -31,6 +31,8 @@ export type Work = {
   ask?: (text: string) => void;
   /** the conversation as the core sends it, and the window's id for it: the Stats read its calls (the user, 2026-11-25) */
   view?: View | null; active?: string;
+  /** the composer's numbers asked for Stats over this scope (`n` counts the asks: each is taken once) */
+  statsAsk?: { scope: "turn" | "all"; n: number };
 };
 export const WorkCtx = createContext<Work>({ files: [], checks: [] });
 

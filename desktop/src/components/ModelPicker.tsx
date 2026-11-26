@@ -1,7 +1,7 @@
 import { Check, Columns3, Search } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import type { ModelChoice, Models } from "../lib/tazuna";
-import { matchesWords, modelLabel } from "../lib/types";
+import { capital, matchesWords, modelLabel } from "../lib/types";
 import { Segmented } from "./Controls";
 import { Sep } from "./Sep";
 
@@ -158,7 +158,7 @@ export function ModelPicker({ models, current, onPick, onClose, onKey, onRefresh
       {efforts.length > 1 && onEffort && (
         <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2 text-[12px]">
           <span className="text-faint">Effort</span>
-          <Segmented label="Effort" wrap value={effort ?? ""} options={efforts.map((e) => [e, e] as const)} onChange={onEffort} />
+          <Segmented label="Effort" wrap value={effort ?? ""} options={efforts.map((e) => [e, capital(e)] as const)} onChange={onEffort} />
         </div>
       )}
       {models?.rebuild && <div className="border-b border-line-soft px-3 py-1.5 text-[12px] text-warn">Switching between Claude models: {models.rebuild}</div>}
@@ -259,7 +259,7 @@ export function EffortMenu({ efforts, current, onPick, onClose }: { efforts: str
     <Menu onClose={onClose} width={160}>
       {efforts.map((e) => (
         <button key={e} role="menuitemradio" aria-checked={e === current} onClick={() => onPick(e)} className="flex w-full items-center gap-2 px-3 py-[5px] text-left hover:bg-hover">
-          <span className="w-3.5 text-accent">{e === current && <Check size={14} strokeWidth={1.75} />}</span>{e}
+          <span className="w-3.5 text-accent">{e === current && <Check size={14} strokeWidth={1.75} />}</span>{capital(e)}
         </button>
       ))}
     </Menu>

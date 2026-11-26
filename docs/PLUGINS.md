@@ -126,7 +126,7 @@ The panel's page starts with tazuna's design tokens as CSS variables, updated wi
 `--muted`, `--faint`, `--line`, `--card`, `--field`, `--accent`, `--accent-soft`, `--live`, `--live-ink`, `--live-soft`,
 `--ok`, `--bad`, `--warn`, and `--font-ui`, `--font-mono`. The body already uses `--font-ui` at 12.5 px in `--ink` on a
 transparent background. Keep to them (docs/DESKTOP.md and desktop/DESIGN.md: one accent, the user's choice, for what to act
-on; `--live`, a fixed indigo, for what runs and how full a meter is; `ok` and `bad` only for results, no gradients or glow).
+on; `--live`, a fixed ai-iro, for what runs and how full a meter is; `ok` and `bad` only for results, no gradients or glow).
 
 ### Its height
 

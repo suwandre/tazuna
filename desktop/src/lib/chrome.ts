@@ -1,4 +1,5 @@
 // The window's own manners, set up once (main.tsx): tooltips in its style, and a way out for what closes.
+import { useSyncExternalStore } from "react";
 
 /** A control's `title` shown in the window's tooltip (`.tz-tip`), not the system's: that one came after a second, in the
  * system's font and colours, and there were 118 of them (design review 8). The title is taken off while the pointer is on
@@ -91,18 +92,25 @@ export function installExits() {
 }
 
 /** How the window looks, chosen in Settings and kept on this machine: light or dark (or the system's), the accent, the text
- * size (the webview's own zoom, as a browser's), and the type answers are set in. */
-export const THEME = "tazuna.theme", ACCENT = "tazuna.accent", ZOOM = "tazuna.zoom", PROSE = "tazuna.prose";
-/** The accents (design review 13, D2 of mockups/v10.html): Indigo, styles.css's own tokens, or one drawn for both themes
- * in styles.css (`[data-accent=…]`). */
-export const ACCENTS = ["Indigo", "Jade", "Amber", "Rose", "Graphite"];
+ * size (the webview's own zoom, as a browser's), the type answers are set in, the work panel's Stats as tiles or rows, and
+ * where the conversation's numbers stand (under the box, the default; above it; in the status bar; off). */
+export const THEME = "tazuna.theme", ACCENT = "tazuna.accent", ZOOM = "tazuna.zoom", PROSE = "tazuna.prose", STATS = "tazuna.stats", NUMBERS = "tazuna.numbers";
+/** The accents (design review 13, D2 of mockups/v10.html): Ai, styles.css's own tokens (the default since design review 14:
+ * nothing kept, or none of these, is Ai; one picked by hand stays), or one drawn for both themes in styles.css
+ * (`[data-accent=…]`). */
+export const ACCENTS = ["Ai", "Indigo", "Jade", "Amber", "Rose", "Graphite"];
+export const accentNow = () => { const a = localStorage.getItem(ACCENT) ?? ""; return ACCENTS.includes(a) ? a : "Ai"; };
 export const TEXT_SIZES: [string, string][] = [["0.9", "Small"], ["1", "Default"], ["1.1", "Large"], ["1.25", "Larger"]];
 
-/** One of them changed: kept, and applied now. */
+/** One of them changed: kept, and applied now (`tz-looks` for what reads one as it renders: `useLook`). */
 export function look(key: string, value: string) {
   localStorage.setItem(key, value);
   applyLooks();
+  window.dispatchEvent(new Event("tz-looks"));
 }
+const onLooks = (f: () => void) => { window.addEventListener("tz-looks", f); return () => window.removeEventListener("tz-looks", f); };
+/** A choice read as it renders, and again when one changes (the Stats' layout, where the numbers stand). */
+export const useLook = (key: string) => useSyncExternalStore(onLooks, () => localStorage.getItem(key));
 
 /** Dark now, from the choice and the system. */
 export const darkNow = () => { const t = localStorage.getItem(THEME); return t === "dark" || (t !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches); };
@@ -120,8 +128,8 @@ export function applyLooks() {
   document.documentElement.classList.toggle("dark", darkNow());
   // the accent as an attribute styles.css draws (design review 13): the root's inline style is a plugin's (theme.set), and
   // the accent set there wiped a plugin's own on every flip of the theme
-  const accent = localStorage.getItem(ACCENT) ?? "";
-  if (accent !== "Indigo" && ACCENTS.includes(accent)) document.documentElement.dataset.accent = accent.toLowerCase();
+  const accent = accentNow();
+  if (accent !== "Ai") document.documentElement.dataset.accent = accent.toLowerCase();
   else delete document.documentElement.dataset.accent;
   document.documentElement.classList.toggle("prose-sans", localStorage.getItem(PROSE) === "sans");
   const zoom = Number(localStorage.getItem(ZOOM)) || 1;

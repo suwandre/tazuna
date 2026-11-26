@@ -7,7 +7,7 @@ import { safeMode } from "../lib/plugins";
 import { HOTKEY, core, defaultHotkey, type GalleryItem, type Hook, type Mcp, type Provider, type Settings, type SignIn } from "../lib/tazuna";
 import { matchesWords } from "../lib/types";
 import { dryRun, summary, widgets, type UserWidget } from "../lib/widgets";
-import { ACCENT, ACCENTS, PROSE, TEXT_SIZES, THEME, ZOOM, look } from "../lib/chrome";
+import { ACCENT, ACCENTS, NUMBERS, PROSE, STATS, TEXT_SIZES, THEME, ZOOM, accentNow, look } from "../lib/chrome";
 import { Parts } from "./Sep";
 import { accentButton, Segmented, Swatches, dialogShell, quietButton } from "./Controls";
 import { ClaudeButtons, ClaudeNote, useClaude } from "./Setup";
@@ -38,7 +38,8 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
   const [tab, setTabNow] = useState(() => localStorage.getItem(TAB) || "Appearance");
   const setTab = (t: string) => { localStorage.setItem(TAB, t); setTabNow(t); };
   // how the window looks (lib/chrome.ts keeps and applies it)
-  const [looks, setLooks] = useState(() => ({ theme: localStorage.getItem(THEME) ?? "system", accent: localStorage.getItem(ACCENT) ?? "Indigo", zoom: localStorage.getItem(ZOOM) ?? "1", prose: localStorage.getItem(PROSE) ?? "serif" }));
+  const [looks, setLooks] = useState(() => ({ theme: localStorage.getItem(THEME) ?? "system", accent: accentNow(), zoom: localStorage.getItem(ZOOM) ?? "1", prose: localStorage.getItem(PROSE) ?? "serif",
+    stats: localStorage.getItem(STATS) === "rows" ? "rows" : "tiles", numbers: localStorage.getItem(NUMBERS) ?? "under" }));
   const setLook = (key: string, name: keyof typeof looks, v: string) => { look(key, v); setLooks((l) => ({ ...l, [name]: v })); };
   // a provider's key field shows when asked for (seven open fields down the page read as a form to fill in)
   const [keyFor, setKeyFor] = useState<string | null>(focus ?? null);
@@ -218,23 +219,33 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
         <div className="flex-1 overflow-auto bg-main px-6 pb-7 pt-5">
           <TabCtx.Provider value={tab}>
           <Section title="Appearance">
-            <Row title="Theme" note="System follows your computer's light and dark.">
+            {/* the labels and the controls say it: no line under each (design review 14) */}
+            <Row title="Theme">
               <Segmented label="Theme" value={looks.theme} options={[["system", "System"], ["light", "Light"], ["dark", "Dark"]]} onChange={(v) => setLook(THEME, "theme", v)} />
             </Row>
-            {/* design review 13 (D2): five accents, each drawn for both themes; a swatch shows the theme's own (styles.css) */}
-            <Row title="Accent" note="Buttons, focus and selection.">
+            {/* design review 13 (D2): the accents, each drawn for both themes; a swatch shows the theme's own (styles.css) */}
+            <Row title="Accent">
               <Swatches label="Accent" value={looks.accent} options={ACCENTS} onChange={(v) => setLook(ACCENT, "accent", v)} />
             </Row>
-            <Row title="Text size" note="Everything in the window, larger or smaller.">
+            <Row title="Text size">
               <Segmented label="Text size" value={looks.zoom} options={TEXT_SIZES} onChange={(v) => setLook(ZOOM, "zoom", v)} />
             </Row>
-            <Row title="Answers" note="The type an answer is set in. Code stays in mono.">
+            <Row title="Answers">
               <Segmented label="Answers" value={looks.prose} options={[["serif", "Serif"], ["sans", "Sans"]]} onChange={(v) => setLook(PROSE, "prose", v)} />
+            </Row>
+            {/* the work panel's Stats: tiles, or rows on the desk (design review 14, S4 of mockups/v12.html) */}
+            <Row title="Stats">
+              <Segmented label="Stats" value={looks.stats} options={[["tiles", "Tiles"], ["rows", "Rows"]]} onChange={(v) => setLook(STATS, "stats", v)} />
+            </Row>
+            {/* the conversation's numbers: the composer's strip, or the status bar, or nowhere (design review 14, mockups/v13.html) */}
+            <Row title="Conversation numbers">
+              <Segmented label="Conversation numbers" value={looks.numbers} options={[["under", "Under the box"], ["above", "Above the box"], ["bar", "In the status bar"], ["off", "Off"]]}
+                onChange={(v) => setLook(NUMBERS, "numbers", v)} />
             </Row>
           </Section>
           {!st && tab !== "Appearance" && <div className="text-[12.5px] text-faint">Loading…</div>}
           {st && <>
-            <Section title="Providers" label="Yours" note="Claude runs on your subscription through the claude CLI, with its own login. Other providers need an API key (tazuna saves it on this machine, readable by you only, and never shows it again) or, for ChatGPT, GitHub Copilot, SuperGrok, Gemini CLI and Antigravity, a sign-in.">
+            <Section title="Providers" label="Yours" note="Claude runs on your subscription; other providers take a key or a sign-in.">
               <Row title="Claude" note={<ClaudeNote s={claude} />}><ClaudeButtons s={claude} check={checkClaude} checking={checkingClaude} /></Row>
               {yours.length ? yours.map(provider) : <div className="px-4 py-2.5 text-[12.5px] text-faint">No keys yet: add one under More providers.</div>}
             </Section>
@@ -277,7 +288,7 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
               </Row>
             </Section>
 
-            <Section title="Tools from MCP servers" note={<>Servers for every model, from tazuna's list (the terminal's <code>/mcp</code>). A server runs its command on this machine: add only ones you trust.</>}>
+            <Section title="Tools from MCP servers" note={<>Servers for every model, from tazuna's list. A server runs its command on this machine: add only ones you trust.</>}>
               {mcp ? <>
                 <Row title="Use them in this conversation" note={`Remembered for new conversations.${mcp.claude ? " On Claude, your claude.ai connectors come too." : ""} Their tools take room in every request.`}>
                   <Switch label="Use MCP servers in this conversation" on={mcp.on} onChange={(on) => core.mcpOn(on)} />
@@ -309,7 +320,7 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
               <Section title="After each turn" note={chat ? <>A command of yours for a project, such as a formatter, run after each turn that changed files.
                 It runs at no token cost: the model never sees it, and only a failure shows.</>
                 : <>A command of yours for <span className="font-mono">{hook.cwd}</span>, such as a formatter. It runs there at no token cost: the model
-                never sees it, and only a failure shows. Kept in your settings, never the repository's (the terminal's <code>/hook</code>).</>}>
+                never sees it, and only a failure shows. Kept in your settings, never the repository's.</>}>
                 {/* a chat runs in the home folder: no command for it (it offered one "for /private/tmp/…/home", design review 14) */}
                 {chat ? <div className="px-4 py-3 text-[12.5px] text-muted">For projects only: open a project, then set its command here.</div> : <>
                 <div className="flex items-center gap-2 px-4 py-3">
@@ -449,8 +460,9 @@ function Section({ title, note, label, children }: { title: string; note?: React
 /** One setting: its name and what it does on the left, its control on the right. */
 function Row({ title, note, children }: { title: React.ReactNode; note?: React.ReactNode; children?: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-4 px-4 py-3">
-      <div className="min-w-0 flex-1">
+    // the control goes under its label where the row is too narrow for both (Larger text): it ran past the card
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+      <div className="min-w-[150px] flex-1">
         <div className="text-[13px] font-medium text-ink">{title}</div>
         {note && <div className="mt-0.5 text-[12px] leading-relaxed text-muted">{note}</div>}
       </div>

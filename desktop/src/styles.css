@@ -1,21 +1,18 @@
 @import "tailwindcss";
 @import "@fontsource-variable/source-serif-4/opsz.css";
 
-/* fonts are bundled (DESIGN.md: no network fonts) */
-@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
-@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Medium.woff2") format("woff2"); font-weight: 500; font-display: swap; }
-@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-SemiBold.woff2") format("woff2"); font-weight: 600; font-display: swap; }
+/* fonts are bundled (DESIGN.md: no network fonts); the UI is set in the system's own face (design review 14, S6) */
 @font-face { font-family: "Geist Mono"; src: url("../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
 
 /* DESIGN.md tokens: light by default, dark under .dark (follows the system unless the user picks) */
 :root {
-  --canvas: #f6f4ef; --main: #fbfaf7; --sidebar: #f3f0e9; --card: #fffefb; --field: #efebe3; --hover: #e7e3db; --selected: #e6e1f2;
+  --canvas: #f6f4ef; --main: #fbfaf7; --sidebar: #f3f0e9; --card: #fffefb; --field: #efebe3; --hover: #e7e3db; --selected: #e0e7e9;
   --ink: #23221e; --ink-2: #3f3c35; --muted: #5b574f; --faint: #69655d;
   --line: #e3ded3; --line-soft: #ece8df; --line-strong: #d8d2c5;
-  --accent: #3d4aa8; --accent-ink: #2f3a8f; --accent-soft: #e7e8f6; --on-accent: #ffffff;
-  /* the live state's own indigo (design review 13): what runs and how full a meter is keep it whatever accent is chosen, so
-     an amber or rose accent never reads as a warning or an error */
-  --live: #3d4aa8; --live-ink: #2f3a8f; --live-soft: #e7e8f6;
+  --accent: #1d5f86; --accent-ink: #174b6b; --accent-soft: #e7eced; --on-accent: #ffffff;
+  /* the live state's own ai-iro (design review 13; ai-iro since 14): what runs and how full a meter is keep it whatever
+     accent is chosen, so an amber or rose accent never reads as a warning or an error */
+  --live: #1d5f86; --live-ink: #174b6b; --live-soft: #e7eced;
   /* Semantic colours are text too: keep 4.5:1 on field, hover and selected, not only paper. */
   --ok: #347045; --bad: #aa4236; --warn: #8c5811;
 --code-string: #7a5a1c; --code-number: #8a4a6b; --code-keyword: var(--live-ink); --code-comment: var(--faint);
@@ -32,11 +29,11 @@
   /* the lifted sheet (design review 11, mockups/v8.html): the sheet against the desk was 1.08:1 and "paper on the desk" read
      only in light; main, card, field, hover and the lines each a step up (sheet to desk 1.15:1). faint a step up with
      them, so it still reads 4.5:1 on a hovered row (4.6:1; it was 4.17:1 on the new hover). */
-  --canvas: #171613; --main: #211f1b; --sidebar: #151411; --card: #282622; --field: #302e29; --hover: #37342e; --selected: #2b2c45;
+  --canvas: #171613; --main: #211f1b; --sidebar: #151411; --card: #282622; --field: #302e29; --hover: #37342e; --selected: #303638;
   --ink: #ece8df; --ink-2: #d2cdc2; --muted: #afaa9e; --faint: #a29d95;
   --line: #35322c; --line-soft: #2b2925; --line-strong: #423e37;
-  --accent: #8f9bf0; --accent-ink: #aab3f5; --accent-soft: #272a44; --on-accent: #14152a;
-  --live: #8f9bf0; --live-ink: #aab3f5; --live-soft: #272a44;
+  --accent: #7fb0d0; --accent-ink: #a3c8e0; --accent-soft: #2a2e2d; --on-accent: #0e1820;
+  --live: #7fb0d0; --live-ink: #a3c8e0; --live-soft: #2a2e2d;
   --ok: #7cc08f; --bad: #e08b7f; --warn: #e0b46a;
 --code-string: #d6b878; --code-number: #d9a0c0; --code-keyword: var(--live-ink); --code-comment: var(--faint);
   --shadow-composer: none;
@@ -46,11 +43,15 @@
   color-scheme: dark;
 }
 /* the user's accent (design review 13, D2 of mockups/v10.html), each drawn for both themes: on the root (lib/chrome.ts sets
-   data-accent; none for Indigo, the tokens above) and on Settings' swatches, which so show the theme's own. selected and
-   accent-soft are the accent on the sheet (12%, and 9%, or 10% in dark), where every text level still reads 4.5:1. Rules,
-   not the root's inline style: that is a plugin's (theme.set), and it still wins over them */
-[data-accent=indigo] { --accent: #3d4aa8; --accent-ink: #2f3a8f; }
-.dark[data-accent=indigo], .dark [data-accent=indigo] { --accent: #8f9bf0; --accent-ink: #aab3f5; }
+   data-accent; none for Ai, the tokens above: design review 14, S5 of mockups/v12.html) and on Settings' swatches, which so
+   show the theme's own. selected and accent-soft are the accent on the sheet (12%, and 9%, or 10% in dark; Ai's selected
+   16% in dark, grey at 12%), where every text level still reads 4.5:1. Rules, not the root's inline style: that is a
+   plugin's (theme.set), and it still wins over them */
+.dark[data-accent] { --on-accent: #16151a; }
+[data-accent=ai] { --accent: #1d5f86; --accent-ink: #174b6b; }
+.dark[data-accent=ai], .dark [data-accent=ai] { --accent: #7fb0d0; --accent-ink: #a3c8e0; }
+[data-accent=indigo] { --accent: #3d4aa8; --accent-ink: #2f3a8f; --selected: #e6e1f2; --accent-soft: #e7e8f6; }
+.dark[data-accent=indigo], .dark [data-accent=indigo] { --accent: #8f9bf0; --accent-ink: #aab3f5; --selected: #2b2c45; --accent-soft: #272a44; --on-accent: #14152a; }
 [data-accent=jade] { --accent: #2f7a5e; --accent-ink: #256a51; --selected: #e3ebe5; --accent-soft: #e9eee9; }
 .dark[data-accent=jade], .dark [data-accent=jade] { --accent: #6cc3a0; --accent-ink: #8fd3b7; --selected: #2a332b; --accent-soft: #292f28; }
 [data-accent=amber] { --accent: #9a5f12; --accent-ink: #82500f; --selected: #efe7dc; --accent-soft: #f2ece2; }
@@ -59,7 +60,6 @@
 .dark[data-accent=rose], .dark [data-accent=rose] { --accent: #ec8fae; --accent-ink: #f2adc4; --selected: #392c2d; --accent-soft: #352a2a; }
 [data-accent=graphite] { --accent: #45433e; --accent-ink: #33312d; --selected: #e5e4e1; --accent-soft: #ebeae6; }
 .dark[data-accent=graphite], .dark [data-accent=graphite] { --accent: #c9c4b9; --accent-ink: #ddd8ce; --selected: #35332e; --accent-soft: #32302b; }
-.dark[data-accent] { --on-accent: #16151a; }
 /* a selected row is ringed in the accent, so it never reads as a hovered one: under Graphite, and Amber or Rose in dark, its
    fill is a hover's lightness, and faint text keeps it from going darker (light) or lighter (dark) (design review 13) */
 .bg-selected { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); }
@@ -72,7 +72,7 @@
   --color-accent: var(--accent); --color-accent-ink: var(--accent-ink); --color-accent-soft: var(--accent-soft); --color-on-accent: var(--on-accent);
   --color-live: var(--live); --color-live-ink: var(--live-ink); --color-live-soft: var(--live-soft);
   --color-ok: var(--ok); --color-bad: var(--bad); --color-warn: var(--warn); --color-scrim: var(--scrim); --color-desk: var(--desk);
-  --font-ui: "Geist", system-ui, sans-serif;
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, monospace;
   --font-prose: "Source Serif 4 Variable", Georgia, serif;
   --radius-sm: 6px; --radius-md: 7px; --radius-lg: 10px; --radius-xl: 14px;
@@ -127,7 +127,7 @@ button.bg-accent:not(:disabled):hover { background-color: var(--accent-ink); }
 @keyframes tz-sweep { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 .tz-live { background: linear-gradient(90deg, var(--muted) 35%, var(--ink) 50%, var(--muted) 65%) 0 0 / 200% 100%;
   -webkit-background-clip: text; background-clip: text; color: transparent; animation: tz-sweep 1.6s linear infinite; }
-/* the reply's own live status, "Working" (design review 13, D1 of mockups/v10.html): slower, and to the live indigo's ink
+/* the reply's own live status, "Working" (design review 13, D1 of mockups/v10.html): slower, and to the live ai-iro's ink
    (a state: never the chosen accent), so it reads as the reply and not as one of its steps */
 @keyframes tz-shimmer { from { background-position: 100% 0; } to { background-position: 0% 0; } }
 .tz-shimmer { background: linear-gradient(90deg, var(--muted) 40%, var(--live-ink) 50%, var(--muted) 60%) 0 0 / 250% 100%;
@@ -158,15 +158,15 @@ button.bg-accent:not(:disabled):hover { background-color: var(--accent-ink); }
 .tz-doc-edges::after { bottom: 0; height: 34px; background: linear-gradient(to top, var(--main), transparent); }
 /* scrolled up, the way back down stands over the lower fade: the fade is deeper there, so the button is on no word */
 .tz-doc-edges.away::after { height: 84px; background: linear-gradient(to top, var(--main), color-mix(in srgb, var(--main) 80%, transparent) 42px, transparent); }
-/* the reading column keeps its left edge (design review 12, B3 of mockups/v9.html): in the sheet (`.tz-keep`, App) the
-   column's 756 px box (700 of text, 28 each side) starts where centring puts it with the work panel shut (`--tz-l`, lib/types.ts
-   `panelState`), and an open panel beside the sheet takes width from its right; with the sheet whole it is centring itself.
-   The padding's percentage is of the parent's width, so the column follows the sheet while the panel slides. On the
-   transcript's and the start page's scrollers (the start page keeps its own 28 px sides, `--tz-pad`), on the way back down
-   and on what stands over the message box. Where scrollbars always show (`--tz-sbw`, lib/chrome.ts) a scroller's own takes
-   its width out of the right padding, and the rest give up the same, so the text is as wide as the box. */
-.tz-keep .tz-col { padding-left: max(var(--tz-pad, 0px), var(--tz-l)); padding-right: max(var(--tz-pad, 0px), var(--tz-sbw, 0px), calc(100% - var(--tz-l) - 756px)); }
-.tz-keep .tz-col.tz-scroller { padding-right: max(var(--tz-pad, 0px), calc(100% - var(--tz-l) - 756px - var(--tz-sbw, 0px))); }
+/* the reading column is centred in the sheet (`.tz-keep`, App), the work panel beside it or not (design review 14: kept at
+   its left edge, design review 12's B3, the text sat skewed right of a narrowed sheet). The padding's percentage is of the
+   parent's width, so the column glides with the sheet while the panel slides (the grid's own transition, App; none under
+   reduced motion), no jump. On the transcript's and the start page's scrollers (the start page keeps its own 28 px sides,
+   `--tz-pad`), on the way back down and on what stands over the message box. Where scrollbars always show (`--tz-sbw`,
+   lib/chrome.ts) a scroller's own takes its width out of the right padding, and the rest give up the same, so the text is
+   as wide as the box and has its edges. */
+.tz-keep .tz-col { padding-left: max(var(--tz-pad, 0px), calc(50% - 378px)); padding-right: max(var(--tz-pad, 0px), var(--tz-sbw, 0px), calc(50% - 378px)); }
+.tz-keep .tz-col.tz-scroller { padding-right: max(var(--tz-pad, 0px), calc(50% - 378px - var(--tz-sbw, 0px))); }
 /* one point of the screen in CSS px: the window's top row is laid out in points, so it stays on the traffic lights' line
    whatever the text size (the webview's zoom, `--tz-z`, lib/chrome.ts: the lights do not zoom; review of design review 12) */
 :root { --tz-pt: calc(1px / var(--tz-z, 1)); }
@@ -180,7 +180,7 @@ button.bg-accent:not(:disabled):hover { background-color: var(--accent-ink); }
 .tz-slip { background: var(--card); padding: 12px 16px 21px; border-radius: 6px 6px 0 0; line-height: 1.5;
   -webkit-mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / 14px 100%; mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / 14px 100%; }
 .tz-slip-wrap.float .tz-slip { background: var(--pop); }
-/* selected text in the paper's own indigo, not the system's blue */
+/* selected text in the accent, not the system's blue */
 ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 /* what closes goes out as it came in: lib/chrome.ts leaves a copy of a closed menu or dialog for this long */
 @keyframes tz-out { to { opacity: 0; } }
@@ -275,11 +275,19 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
   50% { opacity: 1; }
 }
 /* the mode pill says how much freedom it gives (design review 13, D4 of mockups/v10.html): full, which never asks, in the
-   warn colour on a 12% warn ground; plan, which only reads, in the live indigo (a state: in an amber accent it read as
+   warn colour on a 12% warn ground; plan, which only reads, in the live ai-iro (a state: in an amber accent it read as
    full); the other modes keep the pills' grey. Unlayered,
    so a hover keeps the tint (the border still turns, as every bordered button's does) */
 .tz-mode-full { border-color: color-mix(in srgb, var(--warn) 55%, var(--line-strong)); background-color: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); }
 .tz-mode-plan { border-color: color-mix(in srgb, var(--live) 45%, var(--line-strong)); color: var(--live-ink); }
+/* the composer's pills (design review 14, S2 of mockups/v12.html): no fill, their icons kept; a hairline on hover and focus
+   in the line's own colour (not the accent-tinted border of other bordered buttons), and the first one's icon where the
+   box's text starts. Full and plan keep their tints */
+button.tz-pill:not(.tz-mode-full, .tz-mode-plan):not(:disabled):hover, button.tz-pill:not(.tz-mode-full, .tz-mode-plan):focus-visible { border-color: var(--line-strong); }
+.tz-pills > span:first-child > button.tz-pill:not(.tz-mode-full, .tz-mode-plan) { margin-left: -9px; }
+/* the conversation's numbers in the composer (Stats.tsx ConvNumbers): a short row drops the cache, then the cost's words,
+   then "of 128k" (`data-drop`, set as it fits), and never wraps */
+.tz-nums[data-drop="1"] .tz-n1, .tz-nums[data-drop="2"] :is(.tz-n1, .tz-n2), .tz-nums[data-drop="3"] :is(.tz-n1, .tz-n2, .tz-n3) { display: none; }
 /* a webview without color-mix (Safari 16.1 and older): the field under the warn text (5.0:1 light, 7.0:1 dark) and full borders */
 @supports not (color: color-mix(in srgb, red 50%, blue)) { .tz-mode-full { background-color: var(--field); border-color: var(--warn); } .tz-mode-plan { border-color: var(--live); } }
 /* a spinner still turns (slower): standing still it said "stuck". The reply's own status is the mark, which stands still

@@ -45,6 +45,9 @@ const log = [];
   const side = (p) => p.locator("aside[aria-label=Conversations]");
   const open = async (p, title) => { await side(p).locator(`a[title^="${title}"]`).first().click({ timeout: 4000 }); await p.waitForTimeout(800); };
   const esc = async (p) => { await p.keyboard.press("Escape"); await p.waitForTimeout(250); };
+  // the conversation's numbers in the status bar (Settings › Appearance; they are the composer's strip by default): its
+  // "this chat" opens the conversation's receipt
+  const toBar = (p) => p.evaluate(() => { localStorage.setItem("tazuna.numbers", "bar"); window.dispatchEvent(new Event("tz-looks")); });
   // design review 12 (A2 and B3 of mockups/v9.html): the window's one top row, and the work panel open beside the reading
   // column (it keeps its left edge) or, where that leaves under 580 px of text, over the conversation; at the window's sizes
   // (960 is its least; 760 for the browser), on a Mac's agent, and on Linux's where there are no traffic lights
@@ -100,7 +103,7 @@ const log = [];
         must(label === "Time to first token: call 10, 0.8 s" && s.tip === "call 10 · 0.8 s", `keys: ${label} | ${s.tip}`); });
       await p.keyboard.press("Tab");
       // every accent: the lines stay live, never the accent
-      for (const accent of ["jade", "amber", "rose", "graphite"]) await step(p, `${T}-accent-${accent}`, async () => {
+      for (const accent of ["indigo", "jade", "amber", "rose", "graphite"]) await step(p, `${T}-accent-${accent}`, async () => {
         await p.evaluate((a) => { document.documentElement.dataset.accent = a; }, accent); await p.waitForTimeout(100);
         const s = await stats(p); must(s.strokes.every((c) => c === s.live), `${accent}: ${JSON.stringify([s.strokes, s.live])}`); });
       await p.evaluate(() => { delete document.documentElement.dataset.accent; });
@@ -148,7 +151,7 @@ const log = [];
       await step(p, `${T}-receipt-refless`, async () => { await open(p, "Rename the config loader"); await p.getByTitle(/^The receipt/).first().click(); await p.waitForTimeout(500);
         const r = await slip(p), line = await p.getByTitle(/^The receipt/).first().innerText();
         must(/On your Z\.ai Coding Plan\s+not billed/.test(r.text) && !r.text.includes("API prices") && !/\$0(?!\.)/.test(r.text) && line.startsWith("not billed"), `no reference: ${line} | ${r.text}`); });
-      await step(p, `${T}-chat-receipt-no-ref`, async () => { await p.getByTitle(/^This conversation's receipt/).click(); await p.waitForTimeout(400);
+      await step(p, `${T}-chat-receipt-no-ref`, async () => { await toBar(p); await p.getByTitle(/^This conversation's receipt/).click(); await p.waitForTimeout(400);
         const t = await p.getByRole("dialog", { name: "This conversation's receipt" }).innerText();
         must(/On your Z\.ai Coding Plan\s+not billed/.test(t) && /Rename the config loader[^\n]*\s+2\s+9 s\s+not billed/.test(t) && !/\$0(?!\.)/.test(t), `the conversation's slip, no reference: ${t}`); });
       await esc(p);
@@ -190,6 +193,296 @@ const log = [];
         must(text.includes("Z.ai Coding Plan") && /Z\.ai Coding Plan\s+not billed/.test(text) && !text.includes("No plan runs") && !/\$0(?!\.)/.test(text), `only plans with no price: ${text}`); });
       await c5.close(); }
     if (process.env.ONLY === "stats") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n")); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
+  }
+  // design review 14's picks from mockups/v12.html (ONLY=v12: these alone, with v13's below; ONLY=v13: v13's alone): the composer's pills with no fill (a hairline on
+  // hover), sentence-case modes and the short placeholder, in a 520 px box too; the Stats as rows (Settings › Appearance ›
+  // Stats, kept) and the tiles' empty states; Ai, the default accent, in both themes with the in-page contrast audit
+  // (review/audit.cjs), and the window under every accent; the reading column centred beside the work panel, gliding there
+  // and back (snapping under reduced motion); the copy pass's strings; the window at 1000 and 1440 px
+  if (!process.env.ONLY || process.env.ONLY === "v12" || process.env.ONLY === "v13") {
+    const ok = (c, what) => { if (!c) throw new Error(what); };
+    const VIBE = "Make the request logger", AUDIT = require("./audit.cjs");
+    // the last view the window got, sent again changed (as LAST, further down)
+    const AGAIN = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { if (p?.msg?.type === "view") window.__lastView = p; return emit(e, p); };
+      window.__again = (f) => { const { tid, msg } = window.__lastView; T.view(tid, f({ ...msg, from: 0 })); }; })();`;
+    const rowsOf = (p) => p.evaluate(() => { const s = document.querySelector("section[aria-label=Stats]"); if (!s) return null;
+      const rs = [...s.querySelectorAll(".grid.min-h-\\[29px\\]")];
+      return { rows: rs.map((r) => r.innerText.replace(/\s+/g, " ").trim()), lines: s.querySelectorAll(".grid svg path").length, tiles: s.querySelectorAll(".rounded-\\[10px\\]").length,
+        dot: /live/.test(s.querySelector("div").innerText), wide: s.scrollWidth - s.clientWidth, quiet: rs.filter((r) => r.lastElementChild.className.includes("text-faint")).map((r) => r.firstElementChild.textContent) }; });
+    const gaps = (p) => p.evaluate(() => { const m = document.querySelector("main").getBoundingClientRect(), t = document.querySelector("[data-msg]").getBoundingClientRect(), c = document.querySelector("[data-composer]").getBoundingClientRect();
+      return { left: Math.round(t.left + 28 - m.left), right: Math.round(m.right - (t.right - 28)), text: Math.round(t.width - 56), boxLeft: Math.round(c.left - m.left), boxRight: Math.round(m.right - c.right) }; });
+    if (process.env.ONLY !== "v13") for (const theme of ["dark", "light"]) {
+      const T = `v12-${theme[0]}`, [ctx, p] = await ctxOf({ theme, w: 1440, h: 900, extra: AGAIN });
+      await step(p, `${T}-pills`, async () => {
+        await open(p, "Why is the CI build");
+        const box = p.locator("[data-composer]"), mode = box.locator("button[aria-haspopup=menu]").first();
+        const look = () => mode.evaluate((b) => { const cs = getComputedStyle(b); return { bg: cs.backgroundColor, border: cs.borderTopColor, text: b.innerText.trim(), icon: !!b.querySelector("svg") }; });
+        const lineStrong = await p.evaluate(() => { const d = document.createElement("i"); d.style.color = "var(--line-strong)"; document.body.append(d); const c = getComputedStyle(d).color; d.remove(); return c; });
+        const rest = await look(); await mode.hover(); await p.waitForTimeout(200); const hover = await look();
+        log.push(`${T} mode pill: rest ${JSON.stringify(rest)}, hover ${JSON.stringify(hover)}`);
+        ok(/rgba\(0, 0, 0, 0\)|transparent/.test(rest.bg) && /rgba\(0, 0, 0, 0\)|transparent/.test(rest.border) && rest.icon && /^[A-Z]/.test(rest.text), `the pill at rest: ${JSON.stringify(rest)}`);
+        ok(hover.border === lineStrong && /rgba\(0, 0, 0, 0\)|transparent/.test(hover.bg), `the pill on hover: ${JSON.stringify(hover)} (${lineStrong} wanted)`);
+        const ph = await p.getByRole("textbox", { name: "Message" }).getAttribute("placeholder");
+        ok(ph === "/ for commands, @ for files", `the placeholder: ${ph}`);
+        await box.screenshot({ path: `${OUT}/${T}-pills-hover-box.png` });
+        await mode.focus(); await p.keyboard.press("Tab"); await p.keyboard.press("Shift+Tab"); await p.waitForTimeout(150);
+        await box.screenshot({ path: `${OUT}/${T}-pills-focus-box.png` });
+        // the menu: sentence case, six words at most a line
+        await mode.click(); await p.waitForTimeout(200);
+        const items = await p.getByRole("menuitemradio").allInnerTexts();
+        log.push(`${T} mode menu: ${JSON.stringify(items)}`);
+        ok(items.length === 6 && items.every((t) => /^[A-Z]/.test(t) && t.split("\n").pop().split(/\s+/).length <= 6), `the mode menu: ${JSON.stringify(items)}`);
+        await p.screenshot({ path: `${OUT}/${T}-mode-menu.png` });
+        await esc(p);
+      });
+      // a 520 px box, full mode and the longest model label: one row, nothing past the box
+      await step(p, `${T}-pills-520`, async () => {
+        await p.evaluate(() => window.__again((v) => ({ ...v, mode: "full" }))); await p.waitForTimeout(200);
+        await p.evaluate(() => { document.querySelector("[data-composer]").style.width = "520px"; }); await p.waitForTimeout(200);
+        const fit = await p.evaluate(() => { const b = document.querySelector("[data-composer]").getBoundingClientRect(), row = document.querySelector(".tz-pills"), kids = [...row.querySelectorAll("button")].map((e) => e.getBoundingClientRect());
+          return { tops: [...new Set(kids.map((k) => Math.round(k.top + k.height / 2)))].length, past: kids.filter((k) => k.right > b.right + 0.5).length, over: row.scrollWidth - row.clientWidth, text: row.innerText.replace(/\s+/g, " ") }; });
+        log.push(`${T} 520 px box: ${JSON.stringify(fit)}`);
+        await p.locator("[data-composer]").screenshot({ path: `${OUT}/${T}-pills-520-box.png` });
+        await p.evaluate(() => { document.querySelector("[data-composer]").style.width = ""; });
+        ok(fit.tops === 1 && !fit.past && fit.over <= 0, `the pills in 520 px: ${JSON.stringify(fit)}`);
+      });
+      // Ai by default: nothing kept is Ai; the selected row's fill; the window's text against WCAG AA (review/audit.cjs)
+      await step(p, `${T}-ai-default`, async () => {
+        const got = await p.evaluate(() => { const r = getComputedStyle(document.documentElement), row = document.querySelector("aside[aria-label=Conversations] .bg-selected");
+          return { kept: localStorage.getItem("tazuna.accent"), attr: document.documentElement.dataset.accent ?? "-", accent: r.getPropertyValue("--accent").trim(), live: r.getPropertyValue("--live").trim(), selected: r.getPropertyValue("--selected").trim(), row: row ? getComputedStyle(row).backgroundColor : null }; });
+        log.push(`${T} Ai: ${JSON.stringify(got)}`);
+        ok(got.kept === null && got.attr === "-" && got.accent === (theme === "dark" ? "#7fb0d0" : "#1d5f86") && got.live === got.accent && got.selected === (theme === "dark" ? "#303638" : "#e0e7e9"), `Ai: ${JSON.stringify(got)}`);
+        const a = await p.evaluate(AUDIT); log.push(`${T} Ai audit, conversation: ${JSON.stringify({ contrast: a.contrast, clipped: a.clipped, overflowX: a.overflowX })}`);
+      });
+      // the Stats: tiles by default; rows from Settings, kept over a reload, no live dot, lines from 8 calls
+      await step(p, `${T}-stats-tiles`, async () => { await open(p, VIBE); await p.getByTitle(/^Open the work panel/).click(); await p.waitForTimeout(700);
+        const r = await rowsOf(p); ok(r.tiles >= 4 && !r.rows.length, `tiles by default: ${JSON.stringify(r)}`); });
+      await step(p, `${T}-settings-stats`, async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(300);
+        await p.getByRole("button", { name: "Appearance" }).click(); await p.waitForTimeout(200);
+        const text = await p.getByRole("dialog", { name: "Settings" }).innerText();
+        ok(!/System follows|Buttons, focus|larger or smaller|The type an answer/.test(text) && /Stats\s*Tiles\s*Rows/.test(text), `Appearance: ${text}`);
+        await p.getByRole("radiogroup", { name: "Stats" }).getByRole("radio", { name: "Rows" }).click(); await p.waitForTimeout(200);
+        ok(await p.evaluate(() => localStorage.getItem("tazuna.stats")) === "rows", "Rows was not kept"); });
+      await esc(p);
+      await step(p, `${T}-stats-rows-turn`, async () => { const r = await rowsOf(p); log.push(`${T} rows, this turn: ${JSON.stringify(r)}`);
+        ok(r.rows.length >= 7 && !r.tiles && !r.lines && r.wide <= 0 && r.rows[0].startsWith("In") && r.rows.some((x) => /^Calls 3$/.test(x)) && r.rows.some((x) => /^Time to first token median \d/.test(x)), `rows, this turn: ${JSON.stringify(r)}`); });
+      await step(p, `${T}-stats-rows-conversation`, async () => { await p.getByRole("radio", { name: "Conversation" }).click(); await p.waitForTimeout(300);
+        const r = await rowsOf(p); log.push(`${T} rows, the conversation: ${JSON.stringify(r)}`); ok(r.lines === 3 && r.rows.some((x) => /^Calls 11$/.test(x)) && r.wide <= 0, `rows, 11 calls: ${JSON.stringify(r)}`); });
+      // a reply just started: no call yet, zeros quiet, no line, no live dot
+      await step(p, `${T}-stats-rows-running`, async () => { await p.getByRole("radio", { name: "This turn" }).click();
+        await p.evaluate(() => window.__MOCK__.emit("p6", (v) => ({ ...v, activity: "Thinking", blocks: [...v.blocks, { kind: "prompt", text: "And the README" }] }))); await p.waitForTimeout(500);
+        const r = await rowsOf(p); log.push(`${T} rows, running with no call: ${JSON.stringify(r)}`); ok(!r.dot && r.quiet.includes("Calls") && !r.rows.some((x) => /–/.test(x)), `rows while running: ${JSON.stringify(r)}`); });
+      await step(p, `${T}-stats-rows-kept`, async () => { await p.reload(); await p.waitForTimeout(1100); await open(p, VIBE); await p.getByTitle(/^Open the work panel/).click(); await p.waitForTimeout(700);
+        const r = await rowsOf(p); ok(r.rows.length >= 7, `rows after a reload: ${JSON.stringify(r)}`); });
+      // the tiles' empty states: back to tiles, a reply with one call so far: no sparkline box, quiet zeros, never an empty "–" box
+      await step(p, `${T}-stats-tiles-empty`, async () => { await p.evaluate(() => { localStorage.setItem("tazuna.stats", "tiles"); window.dispatchEvent(new Event("tz-looks")); });
+        await p.evaluate(() => window.__MOCK__.emit("p6", (v) => ({ ...v, activity: "Thinking", blocks: [...v.blocks, { kind: "prompt", text: "And the README" }] }))); await p.waitForTimeout(500);
+        const t = await p.evaluate(() => { const s = document.querySelector("section[aria-label=Stats]"); return { text: s.innerText.replace(/\s+/g, " "), sparks: s.querySelectorAll("[role=group]").length, quiet: [...s.querySelectorAll(".text-faint.leading-\\[25px\\]")].map((e) => e.textContent) }; });
+        log.push(`${T} tiles, no call yet: ${JSON.stringify(t)}`);
+        await p.screenshot({ path: `${OUT}/${T}-stats-tiles-no-call.png` });
+        ok(!t.sparks && !/Time to first token|Writing speed|Cache hit rate/.test(t.text) && t.quiet.includes("0"), `the tiles' empty state: ${JSON.stringify(t)}`);
+        await p.evaluate(() => window.__MOCK__.emit("p6", (v) => v)); await p.waitForTimeout(300); });
+      // the reading column beside the panel: centred (equal sheet each side within 1 px), at 1440 and 1600; the glide sampled
+      // the header's panel button, pressed in the page (the pointer resting on it takes its title for the tooltip)
+      const panelKey = () => p.evaluate(() => document.querySelector("main > header button[data-panel]").click());
+      for (const w of [1440, 1600]) await step(p, `${T}-centred-${w}`, async () => {
+        await p.setViewportSize({ width: w, height: 900 }); await p.waitForTimeout(300); await open(p, "Why is the CI build");
+        if (await p.locator("aside[aria-label='The work']").evaluate((a) => a.getBoundingClientRect().width > 0).catch(() => false)) { await panelKey(); await p.waitForTimeout(400); }
+        const shut = await gaps(p);
+        const frames = await p.evaluate(async () => { const el = document.querySelector("[data-msg]"), out = []; const t0 = performance.now();
+          document.querySelector("main > header button[data-panel]").click();
+          while (performance.now() - t0 < 320) { await new Promise((r) => requestAnimationFrame(r)); out.push([Math.round(performance.now() - t0), Math.round(el.getBoundingClientRect().left * 10) / 10]); } return out; });
+        const open_ = await gaps(p);
+        const steps = frames.slice(1).map((f, i) => f[1] - frames[i][1]), most = Math.max(...steps.map(Math.abs)), travel = Math.abs(frames.at(-1)[1] - frames[0][1]);
+        log.push(`${T} ${w}: shut ${JSON.stringify(shut)}; open ${JSON.stringify(open_)}; glide ${frames.map((f) => `${f[0]}ms:${f[1]}`).join(" ")} (largest step ${most} px of ${travel})`);
+        await p.screenshot({ path: `${OUT}/${T}-centred-${w}-open.png` });
+        ok(Math.abs(open_.left - open_.right) <= 1 && Math.abs(shut.left - shut.right) <= 1 && open_.text === 700 && Math.abs(open_.boxLeft - open_.boxRight) <= 1, `not centred at ${w}: ${JSON.stringify([shut, open_])}`);
+        // a glide: frames between the two ends, one way only, never the whole way in one frame (a headless sample at ~30 fps
+        // of the ease-out: a slow frame took 113 of 148 px, a jump would take it all)
+        ok(frames.filter((f) => f[1] !== frames[0][1] && f[1] !== frames.at(-1)[1]).length >= 2 && (steps.every((d) => d <= 0) || steps.every((d) => d >= 0)) && most < travel * 0.9, `no glide at ${w}: largest step ${most} of ${travel}`);
+        await panelKey(); await p.waitForTimeout(400);
+        const back = await gaps(p); ok(JSON.stringify(back) === JSON.stringify(shut), `closing did not come back: ${JSON.stringify([shut, back])}`);
+      });
+      await p.setViewportSize({ width: 1440, height: 900 });
+      // mid-glide frames, to look at
+      await step(p, `${T}-glide-frames`, async () => { await open(p, "Why is the CI build");
+        await panelKey();
+        for (const ms of [40, 90]) { await p.waitForTimeout(ms === 40 ? 40 : 50); await p.screenshot({ path: `${OUT}/${T}-glide-${ms}ms.png` }); }
+        await p.waitForTimeout(400); await panelKey(); await p.waitForTimeout(400); });
+      // the window under every accent (rows and the panel open, a selected row, the composer)
+      await p.evaluate(() => { localStorage.setItem("tazuna.stats", "rows"); window.dispatchEvent(new Event("tz-looks")); });
+      await open(p, VIBE); await p.getByTitle(/^Open the work panel/).click(); await p.waitForTimeout(600);
+      for (const accent of ["ai", "indigo", "jade", "amber", "rose", "graphite"]) await step(p, `${T}-window-${accent}`, async () => {
+        await p.evaluate((a) => { if (a === "ai") delete document.documentElement.dataset.accent; else document.documentElement.dataset.accent = a; }, accent); await p.waitForTimeout(150);
+        const a = await p.evaluate(AUDIT); log.push(`${T} ${accent} audit: ${JSON.stringify({ contrast: a.contrast, clipped: a.clipped })}`); });
+      await p.evaluate(() => { delete document.documentElement.dataset.accent; localStorage.removeItem("tazuna.stats"); });
+      log.push(`${T} page errors: ${JSON.stringify(p.errs.slice(0, 5))}`);
+      await ctx.close();
+      // reduced motion: the column snaps (its first frame is already the last)
+      const [c3, q] = await ctxOf({ theme, w: 1440, h: 900, motion: "reduce" });
+      await step(q, `${T}-centred-snap`, async () => { await open(q, "Why is the CI build");
+        const frames = await q.evaluate(async () => { const el = document.querySelector("[data-msg]"), out = []; document.querySelector("main > header button[data-panel]").click();
+          for (let i = 0; i < 8; i++) { await new Promise((r) => requestAnimationFrame(r)); out.push(Math.round(el.getBoundingClientRect().left)); } return out; });
+        log.push(`${T} reduced motion: ${frames.join(" ")}`); ok(new Set(frames).size === 1, `it glided under reduced motion: ${frames}`); });
+      await c3.close();
+      // 1000 px (the panel over the conversation) and the copy pass's places: the start page, the setup dialog, Settings
+      const [c4, r] = await ctxOf({ theme, w: 1000, h: 760 });
+      await step(r, `${T}-1000-conversation`, async () => { await open(r, "Why is the CI build"); });
+      await step(r, `${T}-1000-panel`, async () => { await r.getByTitle(/^Open the work panel/).click(); await r.waitForTimeout(500); });
+      await esc(r);
+      await step(r, `${T}-1000-start`, async () => { await r.keyboard.press("Control+n"); await r.waitForTimeout(500);
+        const t = await r.locator("main").innerText(); ok(!t.includes("any project on this machine"), "the start page's subline is back"); });
+      await step(r, `${T}-1000-providers`, async () => { await r.keyboard.press("Control+,"); await r.waitForTimeout(300); await r.getByRole("button", { name: "Providers" }).click(); await r.waitForTimeout(300);
+        const t = await r.getByRole("dialog", { name: "Settings" }).innerText(); ok(t.includes("Claude runs on your subscription; other providers take a key or a sign-in."), "the providers' line"); });
+      await step(r, `${T}-1000-mcp`, async () => { await r.getByRole("button", { name: "Tools from MCP servers" }).click(); await r.waitForTimeout(300);
+        const t = await r.getByRole("dialog", { name: "Settings" }).innerText(); ok(!/terminal's|\/mcp\b(?!\.)/.test(t.replace(/https?:\S+/g, "")), `a terminal command in Settings: ${t}`); });
+      await step(r, `${T}-1000-appearance`, async () => { await r.getByRole("button", { name: "Appearance" }).click(); await r.waitForTimeout(200); });
+      await esc(r);
+      await step(r, `${T}-1000-setup`, async () => { await r.keyboard.press("Control+k"); await r.keyboard.type("Set up tazuna"); await r.keyboard.press("Enter"); await r.waitForTimeout(500);
+        const t = await r.getByRole("dialog").first().innerText(); ok(t.includes("Everything here can wait. Ctrl+K › Set up tazuna brings this back."), `the setup's first line: ${t.slice(0, 200)}`); });
+      await esc(r);
+      await step(r, `${T}-1000-approval`, async () => { await open(r, "Bump the TLS library"); await r.getByText("Allow a shell command?").waitFor({ timeout: 4000 }); });
+      log.push(`${T} 1000 page errors: ${JSON.stringify(r.errs.slice(0, 5))}`);
+      await c4.close();
+    }
+    // P7, the conversation numbers (mockups/v13.html, M-A): the composer's strip under the box by default, above it, in the
+    // status bar, off; each number once; a click (or Enter) opens Stats over the conversation; plan, free and running; 1000
+    // px; the start page has none; the route line hidden
+    const FREE = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { const m = p?.msg;
+      if (window.__free && m?.type === "models") m.choices = [...m.choices.map((c) => ({ ...c, current: false })), { model: "qwen3-coder:30b", label: "Qwen3 Coder 30B", provider: "Ollama", place: "this machine", price: "free", url: "http://localhost:11434/v1", key_env: null, why_not: null, efforts: [], effort: null, current: true }];
+      return emit(e, p); }; })();`;
+    const strip = (p) => p.evaluate(() => { const c = document.querySelector("[data-composer]"), s = c?.querySelector(".tz-nums"), bar = document.querySelector("footer[aria-label=Status]").innerText;
+      return s ? { at: s === c.firstElementChild || s.previousElementSibling === c.querySelector("textarea[aria-hidden]") ? "top" : s === c.lastElementChild ? "under" : "middle", text: s.innerText.replace(/\s+/g, " ").trim(), drop: s.dataset.drop,
+        h: Math.round(s.getBoundingClientRect().height), over: s.scrollWidth - s.clientWidth, first: Math.round(s.querySelector("button svg").getBoundingClientRect().left - c.querySelector("textarea:not([aria-hidden])").getBoundingClientRect().left), titles: [...s.querySelectorAll("button")].map((b) => b.title || b.getAttribute("aria-description")), bar }
+        : { at: "none", bar }; });
+    const setNumbers = (p, v) => p.evaluate((x) => { localStorage.setItem("tazuna.numbers", x); window.dispatchEvent(new Event("tz-looks")); }, v);
+    for (const theme of ["dark", "light"]) {
+      const T = `v13-${theme[0]}`, [ctx, p] = await ctxOf({ theme, w: 1440, h: 900, extra: AGAIN + FREE });
+      const box = (name) => p.locator("[data-composer]").screenshot({ path: `${OUT}/${T}-${name}-box.png` });
+      await step(p, `${T}-start-none`, async () => { const s = await strip(p); ok(s.at === "none", `a strip on the start page: ${JSON.stringify(s)}`); });
+      await step(p, `${T}-under`, async () => { await open(p, "Why is the CI build"); await p.mouse.move(5, 400); await p.waitForTimeout(200); const s = await strip(p); log.push(`${T} under: ${JSON.stringify(s)}`);
+        ok(s.at === "under" && s.h === 32 && Math.abs(s.first) <= 1 && !/context|cache \d|this chat \$/.test(s.bar), `the strip under the box, the status bar without the numbers: ${JSON.stringify(s)}`); await box("under"); });
+      await step(p, `${T}-opens-stats`, async () => { await p.locator(".tz-nums button").first().click(); await p.waitForTimeout(700);
+        const sc = await p.getByRole("radio", { name: "Conversation" }).getAttribute("aria-checked"); ok(sc === "true", `Stats not over the conversation: ${sc}`); });
+      await p.evaluate(() => document.querySelector("main > header button[data-panel]")?.click()); await p.waitForTimeout(400);
+      await step(p, `${T}-keys`, async () => { await p.getByRole("textbox", { name: "Message" }).focus(); await p.keyboard.press("ArrowLeft"); await p.locator(".tz-nums button").first().focus(); await box("focus");
+        await p.keyboard.press("Enter"); await p.waitForTimeout(600); ok(await p.locator("section[aria-label=Stats]").count() === 1, "Enter on a number did not open Stats"); });
+      await p.evaluate(() => document.querySelector("main > header button[data-panel]")?.click()); await p.waitForTimeout(400);
+      // a plan at API prices (the Mistral Vibe plan), then one with no reference price (Z.ai Coding Plan)
+      await step(p, `${T}-plan`, async () => { await open(p, VIBE); await p.mouse.move(5, 400); const s = await strip(p); log.push(`${T} plan: ${JSON.stringify(s)}`);
+        ok(/\$[\d.]+ at API prices · not billed/.test(s.text) && s.titles.some((t) => /On your Mistral Vibe plan/.test(t)), `the plan's cost: ${JSON.stringify(s)}`); await box("plan"); });
+      await step(p, `${T}-plan-no-ref`, async () => { await open(p, "Rename the config loader"); await p.mouse.move(5, 400);
+        // every turn on the plan with no reference price (the mock's last one was paid)
+        await p.evaluate(() => window.__again((v) => ({ ...v, blocks: v.blocks.map((b) => (b.kind === "done" ? { ...b, plan: true, provider: "Z.ai Coding Plan", price_m: undefined, model: b.model ?? "glm-5.3", cost: 0, run_cost: 0 } : b)) }))); await p.waitForTimeout(300);
+        const s = await strip(p); log.push(`${T} no reference: ${JSON.stringify(s)}`);
+        ok(/not billed \(Z\.ai Coding Plan\)/.test(s.text) && !/\$0(?!\.)/.test(s.text), `a plan with no reference price: ${JSON.stringify(s)}`); await box("plan-no-ref"); });
+      // running: t/s comes last, nothing before it moves
+      await step(p, `${T}-running`, async () => { await open(p, VIBE); const before = await strip(p);
+        await p.evaluate(() => window.__MOCK__.emit("p6", (v) => ({ ...v, activity: "Tool", blocks: [...v.blocks, { kind: "prompt", text: "And the README" }],
+          calls: [...v.calls, { block: v.blocks.length + 1, fresh: 900, cached: 157000, out: 120, first_ms: 800, tps: 210, total_ms: 1500, role: null, model: "mistral-medium-3.5", provider: "Mistral Vibe", cost: 0.004 }] }))); await p.waitForTimeout(500);
+        const s = await strip(p); log.push(`${T} running: ${JSON.stringify(s)}`);
+        ok(/\d+ t\/s$/.test(s.text) && s.first === before.first && s.over <= 0, `running: ${JSON.stringify([before, s])}`); await box("running"); await p.screenshot({ path: `${OUT}/${T}-running-window.png` }); });
+      await p.evaluate(() => window.__MOCK__.emit("p6", (v) => v)); await p.waitForTimeout(300);
+      // a local model: "free on this machine", no cache part
+      await step(p, `${T}-free`, async () => { await open(p, "Why is the CI build");
+        await p.evaluate(() => { window.__free = true; window.__TAURI_INTERNALS__.invoke("op", { tid: window.__lastView.tid, msg: { op: "models" } }); }); await p.waitForTimeout(300);
+        await p.evaluate(() => window.__again((v) => ({ ...v, model: "qwen3-coder:30b", cost: 0, context_window: null, usage: { ...v.usage, cache_read: 0, cache_write: 0 },
+          calls: (v.calls ?? []).map((c) => ({ ...c, fresh: c.fresh + c.cached, cached: 0, cost: 0 })), blocks: v.blocks.map((b) => (b.kind === "done" ? { ...b, cost: 0, run_cost: 0, plan: false, provider: undefined, estimate: false } : b)) }))); await p.waitForTimeout(400);
+        const s = await strip(p); log.push(`${T} free: ${JSON.stringify(s)}`); ok(/free on this machine/.test(s.text) && !/cached|%/.test(s.text), `a local model: ${JSON.stringify(s)}`); await box("free");
+        // its Cost tile: "$0" quiet, not a big number
+        await p.locator(".tz-nums button").first().click(); await p.waitForTimeout(500);
+        const q = await p.evaluate(() => [...document.querySelectorAll("section[aria-label=Stats] .leading-\\[25px\\]")].map((e) => e.textContent));
+        await p.evaluate(() => document.querySelector("main > header button[data-panel]")?.click()); await p.waitForTimeout(300);
+        ok(q.includes("$0"), `the free model's Cost tile: ${JSON.stringify(q)}`); });
+      await p.evaluate(() => { window.__free = false; window.__TAURI_INTERNALS__.invoke("op", { tid: window.__lastView.tid, msg: { op: "models" } }); }); await p.waitForTimeout(300);
+      // the route line: a paid model says nothing under the box now
+      await step(p, `${T}-route-line-hidden`, async () => { await open(p, "Why is the CI build");
+        await p.evaluate(() => window.__TAURI_INTERNALS__.invoke("op", { tid: window.__lastView.tid, msg: { op: "model", model: "deepseek-v4.1-flash", url: null, key_env: null } })); await p.waitForTimeout(500);
+        const under = await p.evaluate(() => document.querySelector("[data-composer]").parentElement.innerText); ok(!/→ .* paid/.test(under), `the route line shows: ${under}`); });
+      // the setting: above, the status bar, off, and back
+      await step(p, `${T}-above`, async () => { await setNumbers(p, "above"); await p.waitForTimeout(200); const s = await strip(p); ok(s.at === "top" && !/this chat \$/.test(s.bar), `above: ${JSON.stringify(s)}`); await box("above"); });
+      await step(p, `${T}-in-bar`, async () => { await setNumbers(p, "bar"); await p.waitForTimeout(200); const s = await strip(p); log.push(`${T} in the status bar: ${s.bar}`); ok(s.at === "none" && /context|this chat/.test(s.bar), `the status bar: ${JSON.stringify(s)}`);
+        await p.screenshot({ path: `${OUT}/${T}-in-bar-window.png` }); });
+      await step(p, `${T}-off`, async () => { await setNumbers(p, "off"); await p.waitForTimeout(200); const s = await strip(p); ok(s.at === "none" && !/context|this chat/.test(s.bar), `off: ${JSON.stringify(s)}`); });
+      await step(p, `${T}-settings-numbers`, async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(300); await p.getByRole("button", { name: "Appearance" }).click();
+        await p.getByRole("radiogroup", { name: "Conversation numbers" }).getByRole("radio", { name: "Under the box" }).click(); await p.waitForTimeout(200);
+        ok(await p.evaluate(() => localStorage.getItem("tazuna.numbers")) === "under", "Under the box was not kept"); });
+      await esc(p);
+      // the review's fixes: the cost opens the conversation's slip with the strip on; Tab reaches the numbers, Shift+Tab
+      // from the box with them above; the speed opens Stats at this turn; a running reply keeps its cost ("so far")
+      await step(p, `${T}-cost-slip`, async () => { await setNumbers(p, "under"); await open(p, VIBE); await p.mouse.move(5, 400);
+        await p.locator(".tz-nums button").nth(1).click(); await p.waitForTimeout(400);
+        const t = await p.getByRole("dialog", { name: "This conversation's receipt" }).innerText(); ok(/Total|Mistral Vibe/.test(t), `the slip from the strip: ${t.slice(0, 120)}`);
+        await p.screenshot({ path: `${OUT}/${T}-cost-slip.png` }); await esc(p); });
+      await step(p, `${T}-tab-reach`, async () => { await p.getByRole("textbox", { name: "Message" }).focus(); await p.keyboard.press("Tab");
+        const at = await p.evaluate(() => !!document.activeElement?.closest(".tz-nums")); ok(at, "Tab from the box does not reach the numbers"); });
+      await step(p, `${T}-shift-tab-above`, async () => { await setNumbers(p, "above"); await p.waitForTimeout(200); const mode0 = await p.locator("[data-composer] button[aria-haspopup=menu]").first().innerText();
+        await p.getByRole("textbox", { name: "Message" }).focus(); await p.keyboard.press("Shift+Tab"); await p.waitForTimeout(150);
+        const at = await p.evaluate(() => !!document.activeElement?.closest(".tz-nums")), mode1 = await p.locator("[data-composer] button[aria-haspopup=menu]").first().innerText();
+        ok(at && mode0 === mode1, `Shift+Tab with the numbers above: in the strip ${at}, mode ${mode0} → ${mode1}`); await box("shift-tab-above"); await setNumbers(p, "under"); });
+      await step(p, `${T}-running-keeps-cost`, async () => {
+        const read = () => p.evaluate(() => { const s = document.querySelector(".tz-nums"), b = [...s.querySelectorAll("button")]; return { text: s.innerText.replace(/\s+/g, " "), ctx: Math.round(b[0].getBoundingClientRect().left), n: b.length }; });
+        await open(p, VIBE); const before = await read();
+        // Claude's own models bring no model on a call: no running sum; the finished turns' stays, "so far"
+        await p.evaluate(() => window.__MOCK__.emit("p6", (v) => ({ ...v, activity: "Tool", blocks: [...v.blocks, { kind: "prompt", text: "And the README" }],
+          calls: [...v.calls, { block: v.blocks.length + 1, fresh: 900, cached: 157000, out: 120, first_ms: 800, tps: 210, total_ms: 1500, role: null }] }))); await p.waitForTimeout(400);
+        const during = await read(); log.push(`${T} a reply with no price yet: ${JSON.stringify([before, during])}`);
+        ok(/\$0\.069 so far/.test(during.text) && during.n === before.n + 1 && during.ctx === before.ctx, `the cost during a reply: ${JSON.stringify([before, during])}`);
+        await p.locator(".tz-nums button").last().click(); await p.waitForTimeout(600);
+        ok(await p.getByRole("radio", { name: "This turn" }).getAttribute("aria-checked") === "true", "the speed did not open Stats at this turn");
+        await p.evaluate(() => document.querySelector("main > header button[data-panel]")?.click()); await p.evaluate(() => window.__MOCK__.emit("p6", (v) => v)); await p.waitForTimeout(400); });
+      // a side chat has the column: a number opens nothing, nor later by itself, and a Stats opened by hand is not flipped
+      await step(p, `${T}-side-chat-owns`, async () => { await open(p, VIBE); await p.getByRole("button", { name: "Side chat", exact: true }).click(); await p.waitForTimeout(500);
+        await p.locator(".tz-nums button").first().click(); await p.waitForTimeout(300);
+        await p.getByRole("button", { name: "Side chat", exact: true }).click(); await p.waitForTimeout(500);
+        const opened = await p.locator("section[aria-label=Stats]").count();
+        await p.evaluate(() => document.querySelector("main > header button[data-panel]").click()); await p.waitForTimeout(600);
+        const scope = await p.getByRole("radio", { name: "This turn" }).getAttribute("aria-checked");
+        ok(!opened && scope === "true", `with a side chat: opened by itself ${opened}, This turn ${scope}`);
+        await p.evaluate(() => document.querySelector("main > header button[data-panel]").click()); await p.waitForTimeout(400); });
+      // the palette's efforts and the picker's effort keys in sentence case; the providers' line on one line
+      await step(p, `${T}-providers-one-line`, async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(300); await p.getByRole("button", { name: "Providers" }).click(); await p.waitForTimeout(300);
+        const h = await p.getByText("Claude runs on your subscription; other providers take a key or a sign-in.").evaluate((e) => Math.round(e.getBoundingClientRect().height)); ok(h <= 22, `the providers' line is ${h} px high`); });
+      await esc(p);
+      log.push(`${T} page errors: ${JSON.stringify(p.errs.slice(0, 5))}`);
+      await ctx.close();
+      // 1000 px: running, with the plan's long words; one row, what does not fit dropped in order. Larger text is the
+      // webview's zoom: a 1000 px window at 1.25 is 800 CSS px wide on a 1.25 scale
+      for (const [w, zoom] of [[1000, 1], [1000, 1.25]]) {
+        const [c5, r] = await ctxOf({ theme, w: w / zoom, h: 760 / zoom, scale: zoom, extra: AGAIN }), N = `${T}-${w}${zoom > 1 ? "-zoom" : ""}`;
+        await step(r, `${N}-running`, async () => { if (w / zoom < 1000) { await r.getByRole("button", { name: "Conversations", exact: true }).click(); await r.waitForTimeout(250); } await open(r, VIBE);
+          await r.evaluate(() => window.__MOCK__.emit("p6", (v) => ({ ...v, activity: "Tool", blocks: [...v.blocks, { kind: "prompt", text: "And the README" }],
+            calls: [...v.calls, { block: v.blocks.length + 1, fresh: 900, cached: 157000, out: 120, first_ms: 800, tps: 210, total_ms: 1500, role: null, model: "mistral-medium-3.5", provider: "Mistral Vibe", cost: 0.004 }] }))); await r.waitForTimeout(500);
+          const s = await strip(r); log.push(`${N} running: ${JSON.stringify(s)}`); ok(s.at === "under" && s.h === 32 && s.over <= 0, `${N}: ${JSON.stringify(s)}`);
+          await r.locator("[data-composer]").screenshot({ path: `${OUT}/${N}-running-box.png` });
+          // a box narrower than any window gives it (a side chat's): parts drop in order, one row, nothing past it
+          await r.evaluate(() => { document.querySelector("[data-composer]").style.width = "400px"; }); await r.waitForTimeout(300);
+          const n = await strip(r); log.push(`${N} in 400 px: ${JSON.stringify(n)}`);
+          await r.locator("[data-composer]").screenshot({ path: `${OUT}/${N}-400-box.png` });
+          await r.evaluate(() => { document.querySelector("[data-composer]").style.width = ""; });
+          ok(Number(n.drop) >= 2 && n.h === 32 && n.over <= 0 && !/cached|so far/.test(n.text), `400 px: ${JSON.stringify(n)}`); });
+        await c5.close();
+      }
+      // 1000 px: the panel opens over the conversation; a press on a number keeps it open (no shut-and-open), Esc gives the
+      // number its focus back; Settings at Larger text keeps the numbers' keys inside the card
+      { const [c6, r] = await ctxOf({ theme, w: 1000, h: 760 }), [c7, z] = await ctxOf({ theme, w: 800, h: 608, scale: 1.25 });
+        await open(r, VIBE);
+        await step(r, `${T}-effort-labels`, async () => { await r.getByRole("textbox", { name: "Message" }).focus(); await r.keyboard.press("Control+k"); await r.keyboard.type("effort"); await r.waitForTimeout(300);
+          await r.screenshot({ path: `${OUT}/${T}-effort-palette.png` });
+          const t = await r.evaluate(() => [...document.querySelectorAll("[role=dialog]")].map((d) => d.innerText).join(" | ")); await esc(r); log.push(`${T} palette efforts: ${JSON.stringify(t)}`);
+          ok(/Effort\n(Off|Low)\n.*High/s.test(t) && !/\n(high|low|max|off)\n/.test(t), `the palette's efforts: ${JSON.stringify(t)}`); });
+        await step(r, `${T}-1000-floating`, async () => { await r.mouse.move(600, 300); const b = r.locator(".tz-nums button").first();
+          await b.click(); await r.waitForTimeout(500); const one = await r.locator("div[data-panel].tz-pop").count();
+          await b.click(); await r.waitForTimeout(500); const two = await r.locator("div[data-panel].tz-pop").count();
+          await r.keyboard.press("Escape"); await r.waitForTimeout(300); const back = await r.evaluate(() => !!document.activeElement?.closest(".tz-nums"));
+          ok(one === 1 && two === 1 && back, `the floating panel: open ${one}, after a second press ${two}, focus back ${back}`); });
+        await step(z, `${T}-1000-larger-settings`, async () => { await z.keyboard.press("Control+,"); await z.waitForTimeout(300);
+          await z.getByRole("button", { name: "Appearance" }).click(); await z.waitForTimeout(200);
+          const fit = await z.evaluate(() => { const g = document.querySelector("[role=radiogroup][aria-label='Conversation numbers']").getBoundingClientRect(), card = document.querySelector("[role=radiogroup][aria-label='Conversation numbers']").closest(".rounded-lg").getBoundingClientRect(); return { past: Math.round(g.right - card.right) }; });
+          log.push(`${T} Larger text, the numbers' keys: ${JSON.stringify(fit)}`); ok(fit.past <= 0, `past the card: ${JSON.stringify(fit)}`); });
+        await c6.close(); await c7.close(); }
+    }
+    if (process.env.ONLY === "v12" || process.env.ONLY === "v13") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok"); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
   }
   // design review 14 (ONLY=r14: these alone): a row's menu (PopMenu) by pointer and keyboard, focus back after Esc; the
   // header's "Open in" (its editors under a rule); best-of's check rows by Space; a retry's countdown with Stop and Change
@@ -433,7 +726,7 @@ const log = [];
     // the same conversation's second turn ran on another model, paid to a provider: its own slip says so, and the
     // conversation's slip has the plan's part and the provider's on a line each
     await step(p, `${T}-receipt-mixed`, async () => { await p.getByTitle(/^The receipt/).nth(1).click(); await p.waitForTimeout(500); await p.mouse.move(640, 400); await p.mouse.wheel(0, 9000); });
-    await step(p, `${T}-receipt-chat`, async () => { await p.getByTitle(/^This conversation's receipt/).click(); }); await esc(p);
+    await step(p, `${T}-receipt-chat`, async () => { await toBar(p); await p.getByTitle(/^This conversation's receipt/).click(); }); await esc(p);
     await step(p, `${T}-panel-tab`, async () => { await p.mouse.move(640, 400); await p.mouse.wheel(0, -9000); });
     await step(p, `${T}-panel-open`, async () => { await p.getByTitle(/^The work panel: changes/).click(); await p.waitForTimeout(500); });
     const col = () => p.evaluate(() => `${document.querySelector('[style*="grid-template-columns"]').style.gridTemplateColumns.split(" ").pop()} column, ${document.querySelectorAll('button[aria-label^="The work panel"]').length} tab`);
@@ -445,7 +738,7 @@ const log = [];
     // a turn saved before the core said how it was paid: its total alone, no price per call; and the conversation's slip
     // while a reply runs, with a row for what is not a finished turn yet
     await step(p, `${T}-receipt-old`, async () => { await open(p, "Fix the flaky retry test"); await p.getByTitle(/^The receipt/).first().click(); await p.waitForTimeout(500); });
-    await step(p, `${T}-receipt-chat-running`, async () => { await p.getByTitle(/^This conversation's receipt/).click(); }); await esc(p);
+    await step(p, `${T}-receipt-chat-running`, async () => { await toBar(p); await p.getByTitle(/^This conversation's receipt/).click(); }); await esc(p);
     // the segmented control by keyboard: Tab stops on the chosen key, the arrows move and choose
     await step(p, `${T}-segmented-keys`, async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(600); await p.getByRole("radio", { name: "Serif" }).focus(); await p.keyboard.press("ArrowRight"); });
     log.push(`${theme} segmented by keyboard: focus on ${await p.evaluate(() => `${document.activeElement?.textContent} (checked ${document.activeElement?.getAttribute("aria-checked")}), ${document.querySelectorAll('[role=radiogroup][aria-label=Answers] [tabindex="0"]').length} tab stop`)} (Sans, true, 1 wanted)`);
@@ -466,13 +759,13 @@ const log = [];
   }
   { const [ctx, p] = await ctxOf({ w: 760, h: 640 });
     await step(p, "w760-receipt-open", async () => { await p.getByRole("button", { name: "Conversations", exact: true }).click(); await open(p, "Why is the CI build"); await p.getByTitle(/^The receipt/).first().click(); await p.waitForTimeout(500); });
-    await step(p, "w760-receipt-chat", async () => { await p.getByTitle(/^This conversation's receipt/).click(); });
+    await step(p, "w760-receipt-chat", async () => { await toBar(p); await p.getByTitle(/^This conversation's receipt/).click(); });
     await ctx.close(); }
   for (const [w, h] of [[873, 545], [768, 480]]) {
     const [ctx, p] = await ctxOf({ w, h });
     await step(p, `z${w}-start`, async () => {});
     await step(p, `z${w}-receipt-open`, async () => { await p.getByRole("button", { name: "Conversations", exact: true }).click(); await open(p, "Why is the CI build"); await p.getByTitle(/^The receipt/).first().click(); await p.waitForTimeout(500); });
-    await step(p, `z${w}-receipt-chat`, async () => { await p.getByTitle(/^This conversation's receipt/).click(); });
+    await step(p, `z${w}-receipt-chat`, async () => { await toBar(p); await p.getByTitle(/^This conversation's receipt/).click(); });
     log.push(`z${w} the conversation's slip: ${await p.evaluate(() => { const r = document.querySelector('[role=dialog][aria-label="This conversation\'s receipt"]').getBoundingClientRect(); return `y ${Math.round(r.top)}..${Math.round(r.bottom)} of ${innerHeight}, x ${Math.round(r.left)}..${Math.round(r.right)} of ${innerWidth}${r.top < 0 || r.left < 0 || r.right > innerWidth ? " CUT" : ""}`; })}`);
     await ctx.close(); }
   for (const [w, h] of [[980, 720], [760, 640], [1680, 1050]]) {
@@ -774,7 +1067,7 @@ const log = [];
       await box.fill(""); await box.focus(); await p.keyboard.press("Shift+Tab");
       const at = await p.evaluate(() => document.activeElement?.textContent?.trim());
       must(/^Decline/.test(at ?? ""), `Shift+Tab from the box went to "${at}"`);
-      must(!!(await p.getByText(/click, or Shift\+Tab to the buttons/).count()), "no hint on the card");
+      must(!(await p.getByText(/to the buttons/).count()), "the card's hint is back (design review 14 took it out)");
     });
     // Enter on Decline reached by Shift+Tab answers, and the focus goes back to the box, not the page
     await step(p, "d-asks-key-after-pause", async () => {
@@ -840,7 +1133,7 @@ const log = [];
   { const [ctx, p] = await ctxOf({ w: 900, h: 700 });
     await step(p, "d-asks-drawer", async () => {
       await open(p, "Bump the TLS library").catch(() => {});
-      if (!(await p.getByText("tazuna asks to use").count())) { await p.getByRole("button", { name: "Conversations" }).first().click(); await p.locator("dialog[open]").locator('a[title^="Bump the TLS"]').first().click(); await p.waitForTimeout(900); }
+      if (!(await p.getByText("Allow a shell command?").count())) { await p.getByRole("button", { name: "Conversations" }).first().click(); await p.locator("dialog[open]").locator('a[title^="Bump the TLS"]').first().click(); await p.waitForTimeout(900); }
       await p.waitForTimeout(700); await p.getByRole("button", { name: "Conversations" }).first().click(); await p.locator("dialog[open]").waitFor(); await p.waitForTimeout(900);
       await p.keyboard.press("Escape"); await p.waitForTimeout(300);
       must(!(await answersOf(p)).length, `Escape in the sidebar answered: ${await answersOf(p)}`);
@@ -856,7 +1149,7 @@ const log = [];
   ]) {
     const [ctx, p] = await ctxOf({ extra: `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { const m = p?.msg; if (m?.type === "view" && m.session_id === "p2" && m.asking) m.asking = { ...m.asking, what: "git push --force origin main", ...${JSON.stringify(asking)} }; return emit(e, p); }; })();` });
     await step(p, name, async () => {
-      await open(p, "Bump the TLS library"); await p.getByText("tazuna asks to use").waitFor(); await p.waitForTimeout(700);
+      await open(p, "Bump the TLS library"); await p.getByText("Allow a shell command?").waitFor(); await p.waitForTimeout(700);
       must(!!(await p.getByText(reason, { exact: true }).count()), `"${reason}" not on the card`);
       must(!(await p.getByRole("button", { name: /^Always/ }).count()), "a destructive question offers Always");
       must(!/bg-accent/.test(await p.getByRole("button", { name: /^Allow/ }).getAttribute("class")), "Allow is the filled accent button");
@@ -1131,7 +1424,7 @@ const log = [];
     await ctx.close(); }
   // D2: each accent, chosen in Settings, in both themes: its tokens set and kept, on-accent text, the selected row and the
   // accent-soft tag read 4.5:1 or more; the swatches by keyboard; the accents in the command palette
-  { const ACC = { Indigo: ["#3d4aa8", "#8f9bf0"], Jade: ["#2f7a5e", "#6cc3a0"], Amber: ["#9a5f12", "#e3b25f"], Rose: ["#a8425f", "#ec8fae"], Graphite: ["#45433e", "#c9c4b9"] };
+  { const ACC = { Ai: ["#1d5f86", "#7fb0d0"], Indigo: ["#3d4aa8", "#8f9bf0"], Jade: ["#2f7a5e", "#6cc3a0"], Amber: ["#9a5f12", "#e3b25f"], Rose: ["#a8425f", "#ec8fae"], Graphite: ["#45433e", "#c9c4b9"] };
     const contrast = (p) => p.evaluate(() => {
       const rgb = (v) => { const d = document.createElement("i"); d.style.color = v; document.body.append(d); const c = getComputedStyle(d).color; d.remove(); const n = c.replace(/^[^(]*\(/, "").match(/[\d.]+/g).map(Number); return c.startsWith("color(") ? n.slice(0, 3).map((x) => x * 255) : n.slice(0, 3); };
       const L = (c) => { const [r, g, b] = c.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
@@ -1170,16 +1463,16 @@ const log = [];
       await step(p, `${T}-d2-swatch-keys`, async () => {
         await p.keyboard.press("Control+,"); await p.getByRole("radio", { name: "Graphite" }).focus(); await p.keyboard.press("ArrowRight");
         const at = await p.evaluate(() => `${document.activeElement?.getAttribute("aria-label")} ${document.activeElement?.getAttribute("aria-checked")} ${localStorage.getItem("tazuna.accent")} ${document.querySelectorAll('[role=radiogroup][aria-label=Accent] [tabindex="0"]').length}`);
-        must(at === "Indigo true Indigo 1", `ArrowRight from Graphite: ${at} (Indigo true Indigo 1 wanted)`);
+        must(at === "Ai true Ai 1", `ArrowRight from Graphite: ${at} (Ai true Ai 1 wanted)`);
       });
-      await p.keyboard.press("ArrowRight"); await esc(p);
+      await p.keyboard.press("ArrowRight"); await p.keyboard.press("ArrowRight"); await esc(p);
       await step(p, `${T}-d2-accent-jade-window`, async () => { await p.getByRole("textbox", { name: "Message" }).focus(); });
       await step(p, `${T}-d2-palette`, async () => {
         await p.keyboard.press("Control+k"); await p.keyboard.type("accent"); await p.waitForTimeout(250);
         const rows = await p.locator("[role=dialog] button[data-i]").allInnerTexts();
-        must(rows.length === 5 && rows.some((r) => /Accent: Jade\s*now/.test(r)), `the palette: ${JSON.stringify(rows)}`);
+        must(rows.length === 6 && rows.some((r) => /Accent: Jade\s*now/.test(r)), `the palette: ${JSON.stringify(rows)}`);
         await p.screenshot({ path: `${OUT}/${T}-d2-palette-rows.png` });
-        await p.keyboard.press("ArrowDown"); await p.keyboard.press("ArrowDown"); await p.keyboard.press("Enter"); await p.waitForTimeout(200);
+        await p.keyboard.press("ArrowDown"); await p.keyboard.press("ArrowDown"); await p.keyboard.press("ArrowDown"); await p.keyboard.press("Enter"); await p.waitForTimeout(200);
         must(await p.evaluate(() => localStorage.getItem("tazuna.accent")) === "Amber", "the palette's Accent: Amber did not take");
       });
       await p.evaluate(() => { localStorage.removeItem("tazuna.accent"); });
@@ -1187,7 +1480,7 @@ const log = [];
       await ctx.close();
     } }
   // the accent is an attribute, not the root's inline style: a plugin's theme.set (that style) outlives a flip of the theme
-  // and a change in Settings, and wins over the chosen accent; Indigo takes the attribute off
+  // and a change in Settings, and wins over the chosen accent; Ai (the default) takes the attribute off
   { const [ctx, p] = await ctxOf({ theme: "dark" });
     const now = () => p.evaluate(() => `${getComputedStyle(document.documentElement).getPropertyValue("--accent").trim()} ${document.documentElement.dataset.accent ?? "-"}`);
     await step(p, "d2-plugin-accent-kept", async () => {
@@ -1202,7 +1495,9 @@ const log = [];
       await p.evaluate(() => document.documentElement.style.removeProperty("--accent")); await p.waitForTimeout(100);
       must((await now()) === "#6cc3a0 jade", `the plugin gone: ${await now()}`);
       await p.keyboard.press("Control+,"); await p.getByRole("radio", { name: "Indigo" }).click(); await p.waitForTimeout(200);
-      must((await now()) === "#8f9bf0 -", `Indigo: ${await now()}`);
+      must((await now()) === "#8f9bf0 indigo", `Indigo: ${await now()}`);
+      await p.getByRole("radio", { name: "Ai" }).click(); await p.waitForTimeout(200);
+      must((await now()) === "#7fb0d0 -", `Ai: ${await now()}`);
     });
     await esc(p); await ctx.close(); }
   // what means a state keeps the live indigo under any accent: the status bar's meters, the sidebar's working row, a
@@ -1217,7 +1512,7 @@ const log = [];
         return { accent: getComputedStyle(document.documentElement).getPropertyValue("--accent").trim(), live, fills: fills.length, marks: marks.length, off: [...fills, ...marks].filter((c) => c !== want(live)) };
       });
       log.push(`${N}: ${JSON.stringify(seen)}`);
-      must(seen.live === (theme === "dark" ? "#8f9bf0" : "#3d4aa8") && seen.accent !== seen.live, `the tokens: ${JSON.stringify(seen)}`);
+      must(seen.live === (theme === "dark" ? "#7fb0d0" : "#1d5f86") && seen.accent !== seen.live, `the tokens: ${JSON.stringify(seen)}`);
       must(seen.fills >= 2 && seen.marks >= 2 && !seen.off.length, `the state marks: ${JSON.stringify(seen)}`);
     });
     await ctx.close();
@@ -1263,23 +1558,23 @@ const log = [];
   { const modes = `(() => { const T = window.__TAURI_INTERNALS__, inv = T.invoke.bind(T); T.invoke = async (c, a) => { if (c === "op" && a?.msg?.op === "mode") { setTimeout(() => window.__again((m) => ({ ...m, mode: a.msg.mode })), 10); return null; } return inv(c, a); }; })();`;
     for (const [theme, w, h] of [["dark", 1280, 800], ["light", 1280, 800], ["dark", 760, 640]]) {
       const [ctx, p] = await ctxOf({ theme, w, h, extra: LAST + modes }), N = `${theme[0]}-d4${w === 1280 ? "" : `-w${w}`}`;
-      const pill = p.locator("[data-composer] button[aria-haspopup=menu]").filter({ hasText: /^(auto|ask|edits|review|plan|full)/ });
+      const pill = p.locator("[data-composer] button[aria-haspopup=menu]").filter({ hasText: /^(Auto|Ask|Edits|Review|Plan|Full)/ });
       if (w < 1000) { await p.getByRole("button", { name: "Conversations", exact: true }).click(); await p.waitForTimeout(250); }
       await open(p, "Why is the CI build");
       for (const m of ["full", "plan", "ask"]) await step(p, `${N}-mode-${m}`, async () => {
-        await pill.click(); await p.getByRole("menuitemradio").filter({ hasText: new RegExp(`^${m}`) }).click(); await p.mouse.move(5, 400); await p.waitForTimeout(300);
+        await pill.click(); await p.getByRole("menuitemradio").filter({ hasText: new RegExp(`^${m}`, "i") }).click(); await p.mouse.move(5, 400); await p.waitForTimeout(300);
         const s = await pill.evaluate((b) => ({ tint: (b.className.match(/tz-mode-\w+/) ?? [""])[0], text: b.innerText.trim(), fill: b.querySelector("svg").getAttribute("fill"), color: getComputedStyle(b).color }));
         log.push(`${N} ${m}: ${JSON.stringify(s)}`);
-        const want = { full: ["tz-mode-full", "full · never asks", "currentColor"], plan: ["tz-mode-plan", "plan", "none"], ask: ["", "ask", "none"] }[m];
+        const want = { full: ["tz-mode-full", "Full · never asks", "currentColor"], plan: ["tz-mode-plan", "Plan", "none"], ask: ["", "Ask", "none"] }[m];
         must(s.tint === want[0] && s.text === want[1] && s.fill === want[2], `${m}: ${JSON.stringify(s)}, wanted ${want}`);
         await p.locator("[data-composer]").screenshot({ path: `${OUT}/${N}-mode-${m}-box.png` });
       });
-      await step(p, `${N}-mode-menu`, async () => { await pill.click(); must((await p.getByRole("menuitemradio").count()) === 6 && (await p.getByText("never asks, not even before destructive commands").isVisible()), "the mode menu lost its descriptions"); });
+      await step(p, `${N}-mode-menu`, async () => { await pill.click(); must((await p.getByRole("menuitemradio").count()) === 6 && (await p.getByText("a second model approves commands").isVisible()), "the mode menu lost its descriptions"); });
       await esc(p);
       // plan keeps the live indigo under every accent, never the accent (under Amber it looked like full)
-      if (w === 1280) for (const accent of ["indigo", "jade", "amber", "rose", "graphite"]) await step(p, `${N}-plan-vs-full-${accent}`, async () => {
-        await p.evaluate((a) => { if (a === "indigo") delete document.documentElement.dataset.accent; else document.documentElement.dataset.accent = a; }, accent);
-        const read = async (m) => { await pill.click(); await p.getByRole("menuitemradio").filter({ hasText: new RegExp(`^${m}`) }).click(); await p.mouse.move(5, 400); await p.waitForTimeout(250);
+      if (w === 1280) for (const accent of ["ai", "indigo", "jade", "amber", "rose", "graphite"]) await step(p, `${N}-plan-vs-full-${accent}`, async () => {
+        await p.evaluate((a) => { if (a === "ai") delete document.documentElement.dataset.accent; else document.documentElement.dataset.accent = a; }, accent);
+        const read = async (m) => { await pill.click(); await p.getByRole("menuitemradio").filter({ hasText: new RegExp(`^${m}`, "i") }).click(); await p.mouse.move(5, 400); await p.waitForTimeout(250);
           return pill.evaluate((b) => { const cs = getComputedStyle(b), root = getComputedStyle(document.documentElement), hex = (v) => `rgb(${[1, 3, 5].map((i) => parseInt(root.getPropertyValue(v).trim().slice(i, i + 2), 16)).join(", ")})`;
             return { color: cs.color, border: cs.borderColor, liveInk: hex("--live-ink"), warn: hex("--warn") }; }); };
         const plan = await read("plan");
