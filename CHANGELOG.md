@@ -16,6 +16,17 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.230 (2026-11-26): live numbers for the window; usage over any range
+
+What the desktop's live stats and new usage ranges need from the core (no measurable metric moves).
+- While a model call streams, the app-server view carries `live`: when it started, its first token, the output so far
+  (estimated from the streamed pieces, Claude's thinking counts taken over its summary text), the input and cached input,
+  the input's cost and the output price, and the call's row; null between calls and while a retry waits. Calls carry
+  `plan`, so a plan run reads "at API prices, not billed" while it runs. Time to first token counts from the try that
+  answered, not from the first refused one; a router chat answer overlapping an agent call keeps its own call state.
+- The `usage` op takes `since` (0: the whole run log; 90 days without it), runs off the command loop, and reads the
+  recordings for its signals only when asked, cached per file until it changes.
+
 ## 0.1.229 (2026-11-26): the terminal speaks its own words
 
 Design review 14's terminal picks (from desktop/mockups/v12.html; no measurable metric moves).

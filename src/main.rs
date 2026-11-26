@@ -1136,10 +1136,11 @@ fn chat_turn(c: RouteCtx, text: String, prior: Option<ChatLast>, tx: std::sync::
             for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
                 if let Ok(e) = serde_json::from_str::<serde_json::Value>(&line) && chat_shows(&e) {
                     // with its own question: two chat answers can overlap (one shared question handed the wrong one on); a
-                    // result with what the chat was sent, which a hand-off gives the agent
+                    // result with what the chat was sent, which a hand-off gives the agent. Each event marked as the chat's:
+                    // its stream keeps its call apart from the agent's it may overlap (session.rs chat_stream)
                     let mut ev = json!({"type": "tazuna_chat_event", "q": &text, "e": e});
+                    ev["e"]["tazuna_chat"] = json!(true);
                     if ev["e"]["type"] == "result" {
-                        ev["e"]["tazuna_chat"] = json!(true);
                         ev["sent"] = json!(sent);
                     }
                     let _ = tx.send(ev);
@@ -1761,16 +1762,10 @@ fn app_server(a: &Args) -> Result<()> {
                             let _ = writeln!(o, "{}", json!({"type": "sessions", "dirs": found}));
                             let _ = o.flush();
                         }
-                        // the usage page: the run log's last 90 days, one compact row per run (the window groups them)
+                        // the usage page: the run log since the window's `since`, one compact row per run (the window groups them)
                         Some("usage") => {
-                            let base = labels::dir()?;
-                            let log = std::fs::read_to_string(base.join("runs.jsonl")).unwrap_or_default();
-                            let labels_text = std::fs::read_to_string(base.join("labels.jsonl")).unwrap_or_default();
                             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-                            let rows = usage_rows(&log, now.saturating_sub(90 * 86_400), &labels_text, cmd["signals"] == true);
-                            let mut o = out.lock();
-                            let _ = writeln!(o, "{}", json!({"type": "usage", "rows": rows}));
-                            let _ = o.flush();
+                            usage_reply(usage_since(&cmd, now), cmd["signals"] == true);
                         }
                         // a conversation renamed or taken off the lists (the CLI's /resume list too)
                         Some("rename") | Some("hide") => {
@@ -3380,6 +3375,29 @@ fn new_conversation(live: &mut live::Live, s: &mut Session, v: &mut View, earlie
         }
         Err(err) => s.apply(&json!({"type": "harness_info", "text": format!("{err:#}")}), live.elapsed_ms()),
     }
+}
+
+/// The usage op's first second: the window's `since` (0: the whole log, for All and a range picked by hand), else the last
+/// 90 days (the start page's ledger, an older window).
+#[inline(never)]
+fn usage_since(cmd: &serde_json::Value, now: u64) -> u64 {
+    cmd["since"].as_u64().unwrap_or_else(|| now.saturating_sub(90 * 86_400))
+}
+
+/// The usage op's answer, off the command loop: the whole log, and with the signals every recording it names (2,940 files,
+/// 515 MB here), stalled a streaming reply. `since` and `signals` are said back: the window tells its own answer from the
+/// start page's (90 days, no signals).
+#[inline(never)]
+fn usage_reply(since: u64, signals: bool) {
+    std::thread::spawn(move || {
+        let base = labels::dir().ok();
+        let read = |f: &str| base.as_ref().and_then(|b| std::fs::read_to_string(b.join(f)).ok()).unwrap_or_default();
+        let rows = usage_rows(&read("runs.jsonl"), since, &read("labels.jsonl"), signals);
+        use std::io::Write;
+        let mut o = std::io::stdout().lock();
+        let _ = writeln!(o, "{}", json!({"type": "usage", "rows": rows, "since": since, "signals": signals}));
+        let _ = o.flush();
+    });
 }
 
 /// The run log's runs since `since` (seconds), each as [ts, model, version, on the claude CLI (the plan), cost, input,
@@ -6739,6 +6757,19 @@ broken"#;
         // a Mistral Vibe run that escalated to it: the plan's $0.30 at its reference price is not paid to Anthropic API
         let log = r#"{"ts": 100, "meta": {"model": "claude-opus-5-5", "claude_version": "2", "plan": false, "provider": "Anthropic API"}, "cost_usd": 0.8, "plan_cost_usd": 0.3}"#;
         assert!((super::usage_rows(log, 0, "", false)[0][4].as_f64().unwrap() - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn usage_since_is_the_windows_or_90_days() {
+        let now = 100 * 86_400;
+        assert_eq!(super::usage_since(&json!({"op": "usage"}), now), 10 * 86_400);
+        assert_eq!(super::usage_since(&json!({"op": "usage", "since": 0}), now), 0, "All: the whole log");
+        assert_eq!(super::usage_since(&json!({"op": "usage", "since": 5}), now), 5);
+        // not a second: the 90 days
+        for bad in [json!(-1), json!(1.5), json!("0"), json!(null)] {
+            assert_eq!(super::usage_since(&json!({"op": "usage", "since": bad}), now), 10 * 86_400, "{bad}");
+        }
+        assert_eq!(super::usage_since(&json!({}), 5), 0);
     }
 
     #[test]

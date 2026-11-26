@@ -220,12 +220,31 @@ impl Bill {
     }
 }
 
+/// A model call in flight's own state, swapped with the session's while a router chat answer's stream is applied (main.rs
+/// chat_turn): the chat's start and end neither reset nor end the agent's call it overlaps.
+#[derive(Default)]
+struct Flight {
+    start: Option<f64>,
+    first: Option<f64>,
+    est: f64,
+    deltas: u32,
+    thinking: Vec<usize>,
+    input: Option<Usage>,
+    row: usize,
+    retry_from: Option<f64>,
+    think_text: f64,
+    thought: bool,
+    ready: Option<f64>,
+}
+
 /// One model call's bill, fixed as it ran: its model, the prices and the provider in force when it began, and what the
 /// own loop charged for it (None on claude and in recordings from before 0.1.193: its cost is then an estimate).
 /// `unreported`: the provider sent no usage, so nobody knows the cost (it read "Paid to X $0", design review 12);
-/// `uncounted`: tries before its answer the provider may have billed, not in its cost.
+/// `uncounted`: tries before its answer the provider may have billed, not in its cost. `plan`: it ran on a plan
+/// (`on_plan` as it began).
 struct CallBill {
     timing: Option<usize>,
+    plan: bool,
     model: String,
     price: Option<(f64, f64, f64)>,
     provider: Option<String>,
@@ -240,6 +259,12 @@ struct CallBill {
 #[inline(never)]
 fn claude_list(model: &str) -> Option<(f64, f64, f64)> {
     model.starts_with("claude-opus-5-5").then_some((4.0, 0.4, 20.0))
+}
+
+/// The wall clock in Unix ms.
+#[inline(never)]
+fn wall_ms() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_millis() as f64)
 }
 
 #[inline(never)]
@@ -407,6 +432,19 @@ pub struct Session {
     /// Each subagent's own messages, by the call that started it: ctrl-b opens one as a conversation of its own.
     pub sub_events: std::collections::HashMap<String, Vec<(f64, Value)>>,
     call_est: f64,
+    /// The call in flight's input as its message_start says it (Claude's does; the own loop's says nothing): its live numbers.
+    call_in: Option<Usage>,
+    /// The call in flight's row in `turn_usage` (a router chat answer's call may come after it).
+    call_row: usize,
+    /// When the request that answered the call in flight went out, where it was tried again (ms into the session): its time
+    /// to first token counts from there, not from the first refused try.
+    retry_from: Option<f64>,
+    /// The call's thinking text in its estimate (tokens), until claude's own thinking estimates come (`call_thought`): then
+    /// it is left out, as the estimates count the same thinking (129 of 1,011 recorded calls counted both).
+    call_think_text: f64,
+    call_thought: bool,
+    /// A router chat answer's call while it streams beside the agent's (`Flight`).
+    chat_call: Flight,
     /// How many pieces the call in flight has streamed (a speed needs a few, not one handed over at the end).
     call_deltas: u32,
     call_thinking: Vec<usize>,
@@ -435,8 +473,9 @@ pub struct Session {
     /// of the transcript only once they are sent (`harness_held_start`). They were drawn as sent, amid the reply's retries
     /// (design review 14).
     pub queued: std::collections::VecDeque<String>,
-    /// The wall clock (Unix ms) at the session's 0 ms, as of the last retry: the window's countdown to the next try.
-    retry_epoch_ms: f64,
+    /// The wall clock (Unix ms) at the session's 0 ms, as of the last call's start or retry: the window's countdown to the
+    /// next try, and the times of the call in flight (`live_view`).
+    epoch_ms: f64,
     /// Esc during verification: the run ends when the tests return, as stopped (the status said a green "✓ done").
     pub verify_cancelled: bool,
     /// Bumped whenever a new block appears or a tool finishes (effects key off it).
@@ -555,6 +594,12 @@ impl Session {
             waiting_note: None,
             retry: None,
             call_est: 0.0,
+            call_in: None,
+            call_row: 0,
+            retry_from: None,
+            call_think_text: 0.0,
+            call_thought: false,
+            chat_call: Flight::default(),
             call_deltas: 0,
             call_thinking: vec![],
             last_call_ms: None,
@@ -567,7 +612,7 @@ impl Session {
             asking_since: None,
             asked_ms: 0.0,
             queued: Default::default(),
-            retry_epoch_ms: 0.0,
+            epoch_ms: 0.0,
             verify_cancelled: false,
             new_blocks: 1,
             finished_tools: 0,
@@ -759,7 +804,7 @@ impl Session {
                 let mut v = json!({"kind": "notice", "error": r.gave_up, "text": format!("{}: {} {} failed{} ({})", r.why, r.tries,
                     if r.tries == 1 { "try" } else { "tries" }, if r.next_ms.is_some() { ", trying again" } else { "" }, r.raw), "tries": r.tries});
                 if let Some(t) = r.next_ms {
-                    v["retry_at"] = json!((self.retry_epoch_ms + t).round() as u64);
+                    v["retry_at"] = json!((self.epoch_ms + t).round() as u64);
                 }
                 v
             }
@@ -771,7 +816,41 @@ impl Session {
         json!({"type": "view", "blocks": blocks, "model": self.model, "effort": self.effort, "cwd": self.cwd, "profile": self.profile,
             "mode": self.mode, "activity": format!("{:?}", self.activity), "cost": self.cost(), "usage": usage(&self.usage), "turns": self.turns,
             "context": self.context, "context_window": self.context_window, "limits": self.limits, "limits_at": self.limits_at, "limits_reset": self.limits_reset, "balance": self.balance,
-            "calls": self.calls_view()})
+            "calls": self.calls_view(), "live": self.live_view()})
+    }
+
+    /// The call in flight, for the window's live numbers (desktop/DESIGN.md, Motion): the agent's, else a router chat
+    /// answer's; none while it waits to be tried again. When it began (or its answering try went out) and when its first
+    /// token came (Unix ms); its output so far as estimated while it streams (`call_est`: text, reasoning and tool input at
+    /// ~4 characters a token, Claude's thinking by its own estimates) and the pieces streamed (`deltas`, for the speed's
+    /// rule in `stream`); its input (Claude's message_start says it; for the own loop, the context the last call left plus
+    /// that call's output, cached at that call's share); the input's cost and the output's price per million at the call's
+    /// prices (null where `calls_view` would give it no `model`: a rough figure the window hides), so the window prices
+    /// the output it counts; and its row in `calls`. Null between calls; the exact numbers come with its end, in `calls`.
+    #[inline(never)]
+    fn live_view(&self) -> Value {
+        let c = &self.chat_call;
+        let (start, first, est, deltas, input, row, retry_from) = match (self.call_start, c.start) {
+            (Some(s), _) => (s, self.first_token, self.call_est, self.call_deltas, self.call_in, self.call_row, self.retry_from),
+            (None, Some(s)) => (s, c.first, c.est, c.deltas, c.input, c.row, c.retry_from),
+            (None, None) => return Value::Null,
+        };
+        if self.retry.is_some() {
+            return Value::Null;
+        }
+        let input = input.unwrap_or_else(|| {
+            let prev = self.turn_usage[..row.min(self.turn_usage.len())].iter().rev().find(|u| u.total_in() > 0);
+            let all = self.context + prev.map_or(0, |u| u.output);
+            let cached = (all as f64 * prev.map_or(0.0, Usage::cache_hit)) as u64;
+            Usage { input: all - cached, cache_read: cached, ..Usage::default() }
+        });
+        let b = self.call_bill.get(row);
+        let price = b.map_or(self.price_m, |b| b.price);
+        // Usage::estimate's output rate where the call has no prices of its own (Claude's)
+        let priced_in = b.filter(|b| !b.model.is_empty() && (price.is_some() || claude_list(&b.model).is_some())).map(|_| (priced(&input, price), price.map_or(20.0, |p| p.2)));
+        let at = |ms: f64| (self.epoch_ms + ms).round() as u64;
+        json!({"started": at(retry_from.map_or(start, |r| r.max(start))), "first": first.map(at), "out": est as u64, "deltas": deltas, "in": input.total_in(),
+            "cached": input.cache_read, "in_cost": priced_in.map(|p| p.0), "out_m": priced_in.map(|p| p.1), "row": row})
     }
 
     /// Each model call for the desktop's per-turn view: where it began (a block index), its tokens (new input: sent
@@ -795,14 +874,58 @@ impl Session {
             let mut v = json!({"block": block, "fresh": u.input + u.cache_write, "cached": u.cache_read, "out": u.output, "cost": cost,
                 "first_ms": c.and_then(|c| c.ttft_ms), "tps": c.filter(|c| c.gen_ms > 0.0).map(|c| c.out as f64 / c.gen_ms * 1000.0),
                 "total_ms": c.map(|c| c.total_ms)});
-            if charged.is_none() && !unreported {
+            // the own loop's call in flight has its charge still to come, not a list price ("about" came and went with
+            // each call)
+            let flying = self.call_start.is_some() && i == self.call_row || self.chat_call.start.is_some() && i == self.chat_call.row;
+            if charged.is_none() && !unreported && !(flying && price.is_some()) {
                 v["estimate"] = json!(true);
             }
             if let Some(b) = b.filter(|b| !b.model.is_empty() && (price.is_some() || claude_list(&b.model).is_some())) {
                 (v["model"], v["role"], v["provider"]) = (json!(b.model), Value::Null, json!(b.provider));
             }
+            // on a plan (at API prices, not billed): a reply still running says so as a finished one does
+            if b.is_some_and(|b| b.plan) {
+                v["plan"] = json!(true);
+            }
             v
         }).collect()
+    }
+
+    /// The call state and `f` trade places (`Flight`).
+    #[inline(never)]
+    fn swap_flight(&mut self, f: &mut Flight) {
+        std::mem::swap(&mut self.call_start, &mut f.start);
+        std::mem::swap(&mut self.first_token, &mut f.first);
+        std::mem::swap(&mut self.call_est, &mut f.est);
+        std::mem::swap(&mut self.call_deltas, &mut f.deltas);
+        std::mem::swap(&mut self.call_thinking, &mut f.thinking);
+        std::mem::swap(&mut self.call_in, &mut f.input);
+        std::mem::swap(&mut self.call_row, &mut f.row);
+        std::mem::swap(&mut self.retry_from, &mut f.retry_from);
+        std::mem::swap(&mut self.call_think_text, &mut f.think_text);
+        std::mem::swap(&mut self.call_thought, &mut f.thought);
+        std::mem::swap(&mut self.ready_at, &mut f.ready);
+    }
+
+    /// A router chat answer's stream (main.rs chat_turn): its blocks and its call's numbers as any call's, its call state
+    /// apart from the agent's (a chat's start reset the agent's live count, its result ended the agent's call).
+    #[inline(never)]
+    fn chat_stream(&mut self, ev: &Value) {
+        let mut f = std::mem::take(&mut self.chat_call);
+        self.swap_flight(&mut f);
+        self.stream(ev);
+        self.swap_flight(&mut f);
+        self.chat_call = f;
+    }
+
+    /// A call starts: its input where its message_start says it, and the wall clock now for its live times.
+    #[inline(never)]
+    fn call_began(&mut self, ev: &Value) {
+        let u = &ev["message"]["usage"];
+        let n = |k: &str| u[k].as_u64().unwrap_or(0);
+        self.call_in = u["input_tokens"].is_u64().then(|| Usage { input: n("input_tokens"), cache_write: n("cache_creation_input_tokens"), cache_read: n("cache_read_input_tokens"), output: 0 });
+        self.epoch_ms = wall_ms() - self.now_ms;
+        (self.retry_from, self.call_think_text, self.call_thought) = (None, 0.0, false);
     }
 
     pub fn call_time(&self, row: usize) -> Option<&CallTime> {
@@ -1128,8 +1251,13 @@ impl Session {
                 let msg = s(&e["message"]);
                 let (raw, secs) = msg.rsplit_once(" · trying again in ").map_or((msg.as_str(), 0.0), |(w, t)| (w, t.trim_end_matches('s').parse().unwrap_or(0.0)));
                 let (why, raw, next_ms) = (retry_words(raw), shown(raw, 4000), Some(at_ms + secs * 1000.0));
-                let wall = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_millis() as f64);
-                self.retry_epoch_ms = wall - at_ms;
+                self.epoch_ms = wall_ms() - at_ms;
+                // the call's next try: its time to first token counts from there
+                match (e["tazuna_chat"] == true, self.call_start.is_some()) {
+                    (true, _) => self.chat_call.retry_from = next_ms,
+                    (false, true) => self.retry_from = next_ms,
+                    _ => {}
+                }
                 match self.retry.and_then(|i| self.blocks.get_mut(i)) {
                     Some(Block::Retry(r)) => (r.why, r.raw, r.next_ms, r.tries) = (why, raw, next_ms, r.tries + 1),
                     _ => {
@@ -1416,6 +1544,9 @@ impl Session {
             // comes with the call's end. Its stream's thinking_delta carries the same steps rounded to 50.
             (Some("system"), Some("thinking_tokens")) => {
                 let n = e["estimated_tokens_delta"].as_u64().unwrap_or(0);
+                if !self.call_thought {
+                    (self.call_est, self.call_thought) = (self.call_est - self.call_think_text, true);
+                }
                 self.call_est += n as f64;
                 if let Some(&i) = self.call_thinking.last()
                     && let Some(Block::Thinking { tokens, .. }) = self.blocks.get_mut(i)
@@ -1487,6 +1618,7 @@ impl Session {
                 }
                 self.activity = Activity::Ready;
             }
+            (Some("stream_event"), _) if e["tazuna_chat"] == true => self.chat_stream(&e["event"]),
             (Some("stream_event"), _) => self.stream(&e["event"]),
             // claude's own error as a message ("Not logged in · Please run /login"): its result says it, once, as the
             // error; it showed as the answer too (review 12)
@@ -1561,7 +1693,12 @@ impl Session {
                         t.done_ms = Some(at_ms);
                     }
                 }
-                (self.call_start, self.first_token) = (None, None); // a stopped call never ends with message_delta
+                // a stopped call never ends with message_delta; a chat answer's result ends its own call, not the agent's
+                if e["tazuna_chat"] == true {
+                    self.chat_call = Flight::default();
+                } else {
+                    (self.call_start, self.first_token) = (None, None);
+                }
                 // a slash command answered without a model turn (/cost, /context …): its text is the only output
                 let text = s(&e["result"]);
                 if e["num_turns"] == 0 && self.last_prompt.starts_with('/') {
@@ -1659,10 +1796,12 @@ impl Session {
                 let ready = self.ready_at.take();
                 self.call_start = Some(if ev["tazuna_request_start"] == true { self.now_ms } else { ready.unwrap_or(self.now_ms) });
                 (self.first_token, self.call_est, self.call_deltas) = (None, 0.0, 0);
+                self.call_began(ev);
                 self.call_thinking.clear();
                 self.turn_usage.push(Usage::default());
+                self.call_row = self.turn_usage.len() - 1;
                 self.call_blocks.push(self.blocks.len());
-                self.call_bill.push(CallBill { model: self.model.clone(), price: self.price_m, provider: self.provider.clone(), cost: None, unreported: false, uncounted: 0, timing: None });
+                self.call_bill.push(CallBill { model: self.model.clone(), price: self.price_m, provider: self.provider.clone(), cost: None, unreported: false, uncounted: 0, timing: None, plan: self.on_plan(false) });
                 // a call with nothing running (a queued message's, after the run before it ended): work begins here
                 self.clock_on(self.now_ms);
             }
@@ -1705,16 +1844,23 @@ impl Session {
                 // reasoning that streams (DeepSeek's thinking) is output as well: without it, a call whose reasoning was
                 // shown read as reasoning kept back, and its speed counted the wait before the first token (0.1.137-0.1.147:
                 // 88 tok/s shown for 169 on a DeepSeek V4.1 Flash call, 2026-11-16)
-                self.call_est += d["text"].as_str().or(d["partial_json"].as_str()).or(d["thinking"].as_str()).map_or(0, str::len) as f64 / 4.0;
+                self.call_est += d["text"].as_str().or(d["partial_json"].as_str()).map_or(0, str::len) as f64 / 4.0;
+                // claude's thinking is counted by its own estimates once they come, not its summary text on top
+                if !self.call_thought {
+                    let t = d["thinking"].as_str().map_or(0, str::len) as f64 / 4.0;
+                    (self.call_est, self.call_think_text) = (self.call_est + t, self.call_think_text + t);
+                }
                 if let (Some("text_delta"), Some(Block::Text { text, .. })) = (d["type"].as_str(), self.live_block()) {
                     text.push_str(d["text"].as_str().unwrap_or_default());
                 }
             }
             Some("content_block_stop") => self.end_live(),
             Some("message_delta") => {
+                // the call's own row (a chat answer's call may have come after it), the last for an end with no start
+                let row = if self.call_start.is_some() { self.call_row } else { self.turn_usage.len().saturating_sub(1) };
                 // the own loop says what it charged for the call (null: the provider reported no usage), and the tries
                 // before it the provider may have billed
-                if let Some(b) = self.call_bill.last_mut() {
+                if let Some(b) = self.call_bill.get_mut(row) {
                     match ev.get("tazuna_cost") {
                         Some(Value::Null) => b.unreported = true,
                         Some(c) => b.cost = Some(b.cost.unwrap_or(0.0) + c.as_f64().unwrap_or(0.0)),
@@ -1756,7 +1902,7 @@ impl Session {
                         }
                     }
                 }
-                if let (Some(start), Some(bill)) = (self.call_start.take(), self.call_bill.last_mut()) {
+                if let (Some(start), Some(bill)) = (self.call_start.take(), self.call_bill.get_mut(row)) {
                     // the speed is the output over the time after the first token, only where the stream shows the model
                     // writing (all recorded calls of every model, 2026-11-16); otherwise the call has none (gen_ms 0)
                     // rather than a figure that takes the wait in:
@@ -1778,10 +1924,10 @@ impl Session {
                     let measured = first.is_some() && t.output >= 20 && self.call_deltas >= 5 && after >= 500.0 && !burst && !kept_back
                         && self.call_est <= 2.0 * out + 50.0;
                     bill.timing = Some(self.calls.len());
-                    self.calls.push(CallTime { ttft_ms: first.filter(|_| !burst).map(|f| f - start), gen_ms: if measured { after } else { 0.0 }, out: t.output,
+                    self.calls.push(CallTime { ttft_ms: first.filter(|_| !burst).map(|f| f - self.retry_from.map_or(start, |r| r.max(start))), gen_ms: if measured { after } else { 0.0 }, out: t.output,
                         total_ms: self.now_ms - start });
                 }
-                if let Some(last) = self.turn_usage.last_mut() {
+                if let Some(last) = self.turn_usage.get_mut(row) {
                     *last = t;
                 }
             }
@@ -2232,6 +2378,83 @@ mod tests {
         assert_eq!(shown, ["thinking ~8", "I'll run the tests.", "bash cargo test -> 94 passed", "All 94 pass.", "done 33.5s"]);
         assert_eq!(crate::ui::cost_str(&s), "$0.00019");
         assert_eq!([0.0, 0.004321, 0.0123, 1.5].map(crate::ui::usd), ["$0", "$0.0043", "$0.01", "$1.50"]);
+    }
+
+    #[test]
+    fn live_estimates_the_call_in_flight_and_clears_at_its_end() {
+        let mut s = Session::new("", "medium");
+        let ev = |e: Value| json!({"type": "stream_event", "event": e});
+        let delta = |d: Value| ev(json!({"type": "content_block_delta", "delta": d}));
+        assert!(s.view()["live"].is_null(), "nothing runs");
+        s.apply(&json!({"type": "system", "subtype": "init", "model": "claude-opus-5-5"}), 0.0);
+        // claude's message_start says the input
+        s.apply(&ev(json!({"type": "message_start", "message": {"usage": {"input_tokens": 2, "cache_creation_input_tokens": 300, "cache_read_input_tokens": 9700, "output_tokens": 16}}})), 1000.0);
+        let l = s.view()["live"].clone();
+        assert_eq!([&l["first"], &l["out"], &l["in"], &l["cached"], &l["row"]], [&Value::Null, &json!(0), &json!(10002), &json!(9700), &json!(0)]);
+        // the input at Opus's list prices (Usage::estimate: 2 x 4 + 300 x 6 + 9,700 x 0.4 per million), its output at 20
+        assert!((l["in_cost"].as_f64().unwrap() - 0.005688).abs() < 1e-9 && l["out_m"] == json!(20.0), "{l}");
+        let started = l["started"].as_u64().unwrap();
+        // claude's thinking by its own estimates: summary text before the first estimate is taken back out, after it not
+        // counted; text and tool input at ~4 characters a token
+        s.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "thinking"}})), 1500.0);
+        s.apply(&delta(json!({"type": "thinking_delta", "thinking": "t".repeat(80)})), 1600.0);
+        assert_eq!(s.view()["live"]["out"], json!(20));
+        s.apply(&json!({"type": "system", "subtype": "thinking_tokens", "estimated_tokens_delta": 50}), 1700.0);
+        s.apply(&delta(json!({"type": "thinking_delta", "thinking": "t".repeat(80)})), 1750.0);
+        s.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "text"}})), 1800.0);
+        s.apply(&delta(json!({"type": "text_delta", "text": "x".repeat(40)})), 1900.0);
+        s.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "tool_use", "id": "t1", "name": "Read"}})), 2000.0);
+        s.apply(&delta(json!({"type": "input_json_delta", "partial_json": "y".repeat(20)})), 2100.0);
+        let l = s.view()["live"].clone();
+        assert_eq!((l["first"].as_u64().unwrap() - started, &l["out"], &l["deltas"]), (600, &json!(65), &json!(4)), "the first token 600 ms in; 50 + 10 + 5");
+        // the call's end: its exact numbers in `calls`, on the plan (claude's login), no live call
+        s.apply(&ev(json!({"type": "message_delta", "usage": {"input_tokens": 2, "cache_creation_input_tokens": 300, "cache_read_input_tokens": 9700, "output_tokens": 70}})), 2500.0);
+        assert!(s.view()["live"].is_null());
+        assert_eq!((&s.view()["calls"][0]["out"], &s.view()["calls"][0]["plan"]), (&json!(70), &json!(true)));
+        // the next call starts from nothing; with no input in its start (the own loop's) the input is the last context plus its
+        // output, cached at its share; a model whose cost would be a rough figure has no prices
+        s.apply(&json!({"type": "system", "subtype": "init", "model": "claude-sonnet-5-5"}), 2600.0);
+        s.apply(&ev(json!({"type": "message_start", "tazuna_request_start": true})), 3000.0);
+        let l = s.view()["live"].clone();
+        assert_eq!([&l["first"], &l["out"], &l["in"], &l["cached"], &l["in_cost"], &l["out_m"]], [&Value::Null, &json!(0), &json!(10072), &json!(9767), &Value::Null, &Value::Null], "{l}");
+        // a stopped call ends with the run's result, without message_delta
+        s.apply(&json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "total_cost_usd": 0.01}), 3500.0);
+        assert!(s.view()["live"].is_null());
+
+        // the own loop: its prices, no list-price estimate on its call in flight (its charge comes with its end), not on a plan
+        let mut o = Session::new("", "medium");
+        o.apply(&json!({"type": "system", "subtype": "init", "model": "deepseek-v4.1-flash", "price_per_m": [0.3, 0.03, 1.2]}), 0.0);
+        o.apply(&ev(json!({"type": "message_start", "tazuna_request_start": true})), 10.0);
+        // refused and tried again 8 s later: no live numbers while it waits, and its time to first token from the try that answers
+        o.apply(&json!({"type": "system", "subtype": "call_retry", "message": "HTTP 429: slow down · trying again in 8s"}), 20.0);
+        assert!(o.view()["live"].is_null(), "waiting to retry");
+        o.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "text"}})), 8100.0);
+        o.apply(&delta(json!({"type": "text_delta", "text": "x".repeat(400)})), 8300.0);
+        let v = o.view();
+        let l = &v["live"];
+        assert_eq!(l["first"].as_u64().unwrap() - l["started"].as_u64().unwrap(), 280, "from the try at 8,020 ms: {v}");
+        assert!(v["calls"][0].get("estimate").is_none() && v["calls"][0].get("plan").is_none() && l["in_cost"] == json!(0.0) && l["out_m"] == json!(1.2), "{v}");
+        o.apply(&ev(json!({"type": "message_delta", "usage": {"input_tokens": 900, "output_tokens": 100}, "tazuna_cost": 0.0004})), 9000.0);
+        assert_eq!(o.view()["calls"][0]["first_ms"], json!(280.0), "the receipt's time to first token too");
+
+        // a router chat answer streaming beside the agent's call (main.rs chat_turn): its start and result leave the agent's
+        // call alone, and each call's end lands on its own row
+        let mut a = Session::new("", "medium");
+        let chat = |e: Value| json!({"type": "stream_event", "event": e, "tazuna_chat": true});
+        a.apply(&json!({"type": "system", "subtype": "init", "model": "claude-opus-5-5"}), 0.0);
+        a.apply(&ev(json!({"type": "message_start"})), 100.0);
+        a.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "text"}})), 200.0);
+        a.apply(&delta(json!({"type": "text_delta", "text": "a".repeat(400)})), 300.0);
+        a.apply(&chat(json!({"type": "message_start"})), 400.0);
+        a.apply(&chat(json!({"type": "content_block_start", "content_block": {"type": "text"}})), 450.0);
+        a.apply(&chat(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "c".repeat(40)}})), 500.0);
+        assert_eq!((&a.view()["live"]["out"], &a.view()["live"]["row"]), (&json!(100), &json!(0)), "the agent's call");
+        a.apply(&chat(json!({"type": "message_delta", "usage": {"input_tokens": 50, "output_tokens": 12}})), 600.0);
+        a.apply(&json!({"type": "result", "subtype": "success", "result": "c", "total_cost_usd": 0.001, "tazuna_chat": true}), 650.0);
+        assert_eq!(a.view()["live"]["out"], json!(100), "the chat's result did not end it");
+        a.apply(&ev(json!({"type": "message_delta", "usage": {"input_tokens": 3000, "output_tokens": 110}})), 900.0);
+        let calls = a.view()["calls"].clone();
+        assert_eq!((&calls[0]["out"], &calls[1]["out"]), (&json!(110), &json!(12)), "{calls}");
     }
 
     #[test]

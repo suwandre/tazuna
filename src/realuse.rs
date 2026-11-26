@@ -9,6 +9,7 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// A typed message in a recording: the next one, the seconds between them, whether the run was stopped or rewound.
+#[derive(Clone)]
 pub struct Msg {
     pub next: String,
     pub gap: Option<f64>,
@@ -16,28 +17,49 @@ pub struct Msg {
     pub rewound: bool,
 }
 
+/// Each recording's messages as last read, with its length and time: the usage page asks again on every finished turn while
+/// it is open, and reading every recording each time was 2,940 files, 515 MB (2026-11-26). A finished one never changes.
+type Read = HashMap<String, ((u64, Option<std::time::SystemTime>), Vec<(String, Msg)>)>;
+static READ: std::sync::LazyLock<std::sync::Mutex<Read>> = std::sync::LazyLock::new(Default::default);
+
 /// The typed messages of these recordings, by (recording, the message's first line up to 200 characters), in order. Only
-/// the lines that can matter are parsed (a recording holds every tool output too).
+/// the lines that can matter are parsed (a recording holds every tool output too); a file unchanged since it was last read
+/// is not read again.
 pub fn messages(recordings: &HashSet<String>) -> HashMap<(String, String), VecDeque<Msg>> {
     let mut out: HashMap<(String, String), VecDeque<Msg>> = HashMap::new();
+    let mut read = READ.lock().unwrap_or_else(|e| e.into_inner());
     for path in recordings {
-        let Ok(text) = std::fs::read_to_string(path) else { continue };
-        let ev: Vec<(f64, Value)> = text.lines()
-            .filter(|l| l.contains("\"harness_user\"") || l.contains("\"harness_interrupt\"") || l.contains("\"harness_rewind"))
-            .filter_map(|l| serde_json::from_str::<Value>(l).ok()).map(|d| (d["t"].as_f64().unwrap_or(0.0), d["e"].clone())).collect();
-        let users: Vec<usize> = ev.iter().enumerate().filter(|(_, e)| e.1["type"] == "harness_user").map(|(i, _)| i).collect();
-        for (k, &i) in users.iter().enumerate() {
-            let nxt = users.get(k + 1).copied();
-            let span = &ev[i..nxt.unwrap_or(ev.len())];
-            let text = ev[i].1["text"].as_str().unwrap_or_default();
-            let key: String = text.lines().next().unwrap_or_default().chars().take(200).collect();
-            out.entry((path.clone(), key)).or_default().push_back(Msg {
-                next: nxt.and_then(|j| ev[j].1["text"].as_str()).unwrap_or_default().to_string(),
-                gap: nxt.map(|j| (ev[j].0 - ev[i].0) / 1000.0),
-                stopped: span.iter().any(|e| e.1["type"] == "harness_interrupt"),
-                rewound: span.iter().any(|e| e.1["type"].as_str().is_some_and(|t| t.starts_with("harness_rewind"))),
-            });
+        let Ok(meta) = std::fs::metadata(path) else { continue };
+        let stamp = (meta.len(), meta.modified().ok());
+        if read.get(path).is_none_or(|(s, _)| *s != stamp) {
+            let Ok(text) = std::fs::read_to_string(path) else { continue };
+            read.insert(path.clone(), (stamp, typed(&text)));
         }
+        for (key, m) in &read[path].1 {
+            out.entry((path.clone(), key.clone())).or_default().push_back(m.clone());
+        }
+    }
+    out
+}
+
+/// One recording's typed messages, keyed by their first line, in order.
+fn typed(text: &str) -> Vec<(String, Msg)> {
+    let mut out = vec![];
+    let ev: Vec<(f64, Value)> = text.lines()
+        .filter(|l| l.contains("\"harness_user\"") || l.contains("\"harness_interrupt\"") || l.contains("\"harness_rewind"))
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok()).map(|d| (d["t"].as_f64().unwrap_or(0.0), d["e"].clone())).collect();
+    let users: Vec<usize> = ev.iter().enumerate().filter(|(_, e)| e.1["type"] == "harness_user").map(|(i, _)| i).collect();
+    for (k, &i) in users.iter().enumerate() {
+        let nxt = users.get(k + 1).copied();
+        let span = &ev[i..nxt.unwrap_or(ev.len())];
+        let text = ev[i].1["text"].as_str().unwrap_or_default();
+        let key: String = text.lines().next().unwrap_or_default().chars().take(200).collect();
+        out.push((key, Msg {
+            next: nxt.and_then(|j| ev[j].1["text"].as_str()).unwrap_or_default().to_string(),
+            gap: nxt.map(|j| (ev[j].0 - ev[i].0) / 1000.0),
+            stopped: span.iter().any(|e| e.1["type"] == "harness_interrupt"),
+            rewound: span.iter().any(|e| e.1["type"].as_str().is_some_and(|t| t.starts_with("harness_rewind"))),
+        }));
     }
     out
 }
@@ -149,6 +171,24 @@ pub fn skipped_folder(cwd: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recordings_are_read_again_only_when_they_change() {
+        use serde_json::json;
+        let path = std::env::temp_dir().join(format!("tazuna-realuse-{}.jsonl", std::process::id()));
+        let line = |t: u64, text: &str| format!("{}\n", json!({"t": t, "e": {"type": "harness_user", "text": text}}));
+        std::fs::write(&path, line(0, "fix it") + &line(60_000, "still broken")).unwrap();
+        let p = path.to_string_lossy().to_string();
+        let set = HashSet::from([p.clone()]);
+        let first = messages(&set);
+        assert_eq!(first[&(p.clone(), "fix it".into())][0].next, "still broken");
+        assert_eq!(messages(&set)[&(p.clone(), "fix it".into())].len(), 1, "a second read from what was kept, the same");
+        // grown (a conversation went on): read again
+        std::fs::write(&path, line(0, "fix it") + &line(60_000, "still broken") + &line(90_000, "thanks")).unwrap();
+        assert_eq!(messages(&set)[&(p.clone(), "still broken".into())][0].next, "thanks");
+        let _ = std::fs::remove_file(&path);
+        assert!(messages(&set).is_empty(), "a recording gone is left out");
+    }
 
     #[test]
     fn signals_read_the_next_message_as_the_script_does() {
