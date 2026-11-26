@@ -28,6 +28,10 @@ colors:
     ok: "#347045"
     bad: "#aa4236"
     warn: "#8c5811"
+    diff-add: "ok at 9% (on card #edf1eb)"
+    diff-del: "bad at 9% (on card #f7ede9)"
+    diff-add-word: "ok at 20%"
+    diff-del-word: "bad at 20%"
     scrim: "#1d1b1640"
     desk: "#efebe3"
   dark:
@@ -55,6 +59,10 @@ colors:
     ok: "#7cc08f"
     bad: "#e08b7f"
     warn: "#e0b46a"
+    diff-add: "ok at 10% (on card #30352d)"
+    diff-del: "bad at 10% (on card #3a302b)"
+    diff-add-word: "ok at 18%"
+    diff-del-word: "bad at 18%"
     scrim: "#0000008c"
     desk: "#121110"
 typography:
@@ -130,7 +138,18 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   too); code spans are read before math; an unclosed `$$` stays text;
   `- [x]` and `- [ ]` are task items with a drawn box (not a form's checkbox); `~~struck~~` is struck and muted.
 - Code in answers has its own four tokens (`code-keyword` = live-ink, `code-string` ochre, `code-number` plum,
-  `code-comment` = faint, italic), so syntax never borrows the result colours.
+  `code-comment` = faint, italic), so syntax never borrows the result colours. A step's code and the review's are
+  coloured by the file's language, from its extension (`langOf`, lib/markdown.tsx: its comment marks, `#`, `//` and
+  `/* */`, `--`, `<!-- -->`; markdown and unknown files plain); an answer's block keeps the guess that suits most.
+- Diffs (a step's, an approval's, the review's) tint a whole row: `diff-add` and `diff-del`, the result colours at 9%
+  (10% in dark, where 9% hardly showed). They sit on `card`, under a hairline, where every coloured text on a row keeps
+  4.5:1 (the lowest: a comment, 5.1:1 light, 4.7:1 dark; on `field` faint fell to 4.3:1). The changed words are marked on
+  top of the row (`diff-add-word`, `diff-del-word`, 20%, 18% in dark) and set in `ink`, without syntax colours: over the
+  row a mark is 27% of the colour (26% in dark), where strings and comments fell to 3.0-4.3:1 and ink reads 10.4:1
+  (7.2:1 dark). The tints are the result colours', whatever the accent. The +/− has a narrow column of its own in the
+  row's colour; line numbers are faint tabular figures in a gutter where they are known, never made up. Gutters are drawn
+  by CSS (`tz-gut`), so a copy takes the code alone; a blank line is a `<br>`, a blank line in a copy. The sweep measures
+  every coloured text on a tinted row against what is under it (`ONLY=steps`).
 - Text levels: `ink` for content, `ink-2` for secondary content, `muted` for supporting text, `faint` for labels and
   metadata. No grey text on coloured backgrounds. Every text level reads at 4.5:1 or more on every background in both
   themes (WCAG AA; faint was 2.3-2.9:1 until desktop 0.1.34). Check with axe-core or review/audit.cjs (the sweep's in-page WCAG check) before changing a colour.
@@ -173,13 +192,17 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   SubRouter balance and the app's version: the status bar along the window's bottom (prototype `mockups/v4.html`, variant
   B, 2026-11-19), a click on the plan opening the usage page. This conversation's numbers: the composer's own strip along
   its lower edge, inside its border (design review 14, M-A of `mockups/v13.html`): 32 px, the box's full width, a ground of
-  `field` at 40% on the card, 12.5 px, 14 px Lucide icons; its context against the model's window ("20.3k of 128k", a bar
-  and "16%" where the window is known), its cost (the compact rule: "$0.0053 this chat"; on a plan "$0.521 at API prices ·
+  `field` at 40% on the card, 12.5 px, 14 px Lucide icons; its context (the last call's input and output) against the
+  model's window ("20.3k of 128k", a bar and "16%" where the window is known), its cost (the compact rule: "$0.0053 this chat"; on a plan "$0.521 at API prices ·
   not billed", the plan named on hover; "not billed (Z.ai Coding Plan)" where the plan has no reference price; "free on
-  this machine" on a local model, "free" on another free one; while a reply runs the Stats' "$0.54 so far", the finished
+  this machine" on a local model, "free" on another free one; while a reply runs the Stats' "$0.54 so far" (on a plan,
+  with every finished turn on it, "at API prices · not billed" as after it), the finished
   turns' sum where its calls bring no price yet, so the part never goes and comes back), the cache's share ("95% cached", none where the provider reports
-  none) and, while a reply runs, its speed ("28 t/s", last, so nothing moves; the reply's "↓ tokens" stay on its Working
-  row). They start at the box's text edge; a short row drops the cache, then the cost's words, then "of 128k", and never
+  none) and a speed, last, so nothing moves: while a model call streams (Live stats) its time to first token counting
+  ("0.8 s"), then its own speed ("188 t/s") once the core's rule can time it; between calls the reply's, eased; once a reply
+  has ended the last reply's average writing speed ("210 t/s", "Average writing speed of the last reply"; `writing`; where
+  that reply wrote too little to time, the last one before it that could be timed, and its tooltip says so), and
+  none before any reply (the reply's "↓ tokens" stay on its Working row). They start at the box's text edge; a short row drops the cache, then the cost's words, then "of 128k", and never
   wraps. Each is a button (a Tab stop; with the strip above the box, Shift+Tab from the box reaches it): the cost opens the
   conversation's slip from it, the speed the work panel at Stats over this turn, the rest Stats over the conversation
   (nothing while a side chat or a subagent has the column). The Stats' and the status bar's own
@@ -202,7 +225,8 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   line under the transcript shows only before the first step, directly under its reply and above any message queued behind
   it (under them it read as theirs, design review 14). Both have the mark at work before them,
   their words under a slow shimmer, and the reply's output so far once there is some ("↓ 1.2k tokens": the output of its
-  model calls since the last finished turn, as each ends; a subagent's tokens are its whole context, not output, and stay
+  model calls since the last finished turn, as each ends, and with Live stats the call in flight's estimate counting with
+  it (`Tokens`, Stats.tsx); a subagent's tokens are its whole context, not output, and stay
   on its own row; design review 13, D1).
 - A message of yours sent while a reply runs (from the box, review comments, the work panel, the pull request) waits in
   the window, shown queued under it (as is one the core holds, sent in the moment between a reply and its checks: its
@@ -225,7 +249,7 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   Attachments are chips over the text, an image with its thumbnail. An answer that names an image file shows it under
   the answer (a click shows it whole); nothing loads from the network.
 - Settings is one part at a time, chosen in a list on its left (Appearance first: theme, accent, text size, the type answers
-  are set in, the Stats as tiles or rows, where the conversation's numbers stand; its rows have no line under them, the
+  are set in, the Stats as tiles or rows, where the conversation's numbers stand, Live stats on or off; its rows have no line under them, the
   labels and controls say it: design review 14); a provider's key field shows when asked for. Claude is the first of your providers: signed in, or how to sign
   in (`claude auth login` with Copy, and Check again), or its install page; the first-run dialog ticks it only when it is
   signed in.
@@ -262,9 +286,23 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   nothing is faded at its top or end, and a message jumped to starts under the fade. The way back down stands over the lower fade, which is deeper while it shows.
 - The usage page speaks Settings' language: sections (Right now, Spending), each a card of rows; every account's windows
   as meters (amber from 75%); accounts with nothing used fold into one line ("4 windows at 0%"), and so do providers
-  whose API tells no balance (their pages inside); a zero is a quiet line, not a big number; the daily bars stack the plan
+  whose API tells no balance (their pages inside); a zero is a quiet line, not a big number; the bars stack the plan
   and paid parts; each plan is named by its provider ("Mistral Vibe plan"; "Claude plan" where the run names none), one with no reference
   price counted by its runs and "not billed", never $0. How the runs went (for tuning tazuna) is folded at the bottom, closed (design review 9, mockups/v6.html).
+  Spending's range is one button by its heading, naming the range, with the window's menu (PopMenu; nine keys in a
+  Segmented were wider than the row): the last 15 minutes, hour, 3 hours, 24 hours, 7, 30 or 90 days (30 at first), All
+  time (since the first run) and Custom range…, whose two date and time fields (the system's own) stand under the heading,
+  start never after end (moving one past the other takes the other along); the choice is kept. Everything in the section
+  and the fold follows it, the line under the heading saying which ("The last hour from the run log.", "Everything in the
+  run log, since Oct 6 (the first run).", "Nov 20, 2pm to Nov 26, 1pm from the run log."). A bar is a minute, 5 minutes,
+  15 minutes or an hour for the four short ranges (the minutes and hours a rolling window, its first bar a part), a day
+  for 7 to 90 days (from a midnight: 7 days are seven bars), and for All and a custom range the finest of those that draws
+  at most 60 bars, days up to 90 (as the 90 days), then a week (from a Monday), a month or a year; its axis and tip in that
+  unit, times on the app's one clock ("Nov 25, 2pm" where not today), "max $0.60 per 5 minutes", "an hour", "a day". A
+  range with nothing in it is one quiet line ("Nothing ran in the last 15 minutes."), no empty figures or chart
+  (lib/usage.ts `spanOf`, its check in `demo`). Custom range… brings back the last one picked; no start before 1970. The
+  page stays current while open: a rolling range moves on each minute, and the run log is read again after each turn.
+  How the runs went reads the recordings (its signals) only while it is open, for the range.
 - The sidebar lifts out what needs you or works (Needs you, Working); every saved conversation sits under the day it last
   ran (Today, Yesterday, This week, Earlier), two lines each: its title; its project and when (today its age, yesterday its
   time, this week its day, then its date). One open with nothing to do stays under its day with an accent dot (× closes
@@ -296,7 +334,8 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - The review is a pane over the conversation, header and box included (Esc or "Conversation" goes back): the scopes and
   Unified or Split at its top, the changed files on its left (A, M, D), every file's diff one under another; the words
   that changed inside a line are marked; Stage and Revert per piece and per file (a file's revert takes a second
-  click); a click on a line writes a comment, and the comments go to the agent as one message.
+  click); a click on a line writes a comment, and the comments go to the agent as one message. Its rows are a step's
+  (CodeRow): one look for a diff wherever it shows.
 - The transcript is a document, not two-sided bubbles: no speaker labels (your message is the field block), a reply's
   steps folded into one line ("Worked 41 s · read 2 files, ran 3 commands"; open while it runs, a click unfolds it), prose,
   then a change card (file, +/-, Diff, Review, Undo; once undone it says "Undone" and its Diff buttons are off) and its metadata line (cost, tokens, cached, time) on hover. A short
@@ -304,16 +343,36 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   less, no code block, table or list) is a quiet line in the fold, in its place; longer prose stays in the answer (and in
   Copy), so an answer followed by a to-do step is not folded away. A declined step says its plain verb ("Edit main.rs | declined"). A change of
   model that goes on in a new session is a quiet divider ("continued on Mock Coder 7B"); the conversation above it stays.
+- A step unfolded draws its code as code (review 14, steps; components/Step.tsx, lib/steps.ts): an edit as a diff (the
+  lines the old and new text share as context, the rest removed then added; a multi-edit's pieces under a thin rule); a
+  write as its text with its line numbers under a faint "whole file · 10 lines" ("new file" only where its result says it
+  made one: before it, or after the own loop's "ok", it may write over a file); replace_all under a faint "all
+  occurrences"; a read's lines with claude's numbers moved into the gutter (the own loop's numbered from its offset as the
+  core reads it, "100,140" too, its notes unnumbered, never a "12→" read into its text: a TSV's first column is its own); a command that prints one file (cat, head, tail, nl,
+  `sed -n …p`, bat, on one path) coloured by that file's language; `grep -n` and `rg -n` with the numbers in the gutter
+  (a search over several files: each file's name over its lines). A long line wraps under its own indent, two columns in,
+  in the code's column, never under the gutter. Anything else stays plain mono. An edit's or a write's result that only
+  says it worked, all of it ("…updated successfully.", "File created successfully at…", "ok") is not shown under its
+  diff; an error or any other words are (a hook's, replace_all's). Long code keeps the box's height and scrolls; a box
+  draws 1,000 rows at most ("… 5,000 more lines"), colours its first 60,000 characters, and a line over 2,000 characters
+  is plain and unmarked (one minified line of 476 KB froze an approval for 32 s; it is drawn in 0.15 s). What a step
+  draws is drawn once per content, not once per view of the reply.
+- Paths in a step's title, a read's line and an approval are from the conversation's folder (outside it, ~ for home): the
+  folder faint, cut from its left when long, the file's name in ink and never cut, the whole path on hover (`PathLabel`);
+  the approval's wraps instead, never cut ("~/other-app/…" cut from the left read as inside the project). A command's
+  leading `cd "<the project or a folder in it>" &&` is not shown, in the step's title too; a folder in it is a faint "in
+  src/routes" before the `$`; a cd elsewhere stays ("cd /tmp && rm -rf build"); the whole command is on hover and in the
+  box's Copy.
 - An approval asks in its title ("Allow a shell command?", "Allow this edit?", else "Allow <tool>?"). One of an edit or a
-  write shows what would change (the step's own diff rendering, in a scroll of its own under the file's name); a command
-  shows as itself.
+  write shows what would change (the step's own diff rendering, in a scroll of its own under the file's name, which is
+  the core's own made-safe path); a command shows as itself.
 - A message answered by the router as a chat carries an `answered as a chat · send to agent` tag. One the agent answered in
   a chat's place (the chat said it needs live data or this computer, or you sent it there)
   carries `answered by the agent · why` the same way; a plain chat's answers have Send to agent beside Copy.
 - The work panel: Stats (this turn or the conversation: In, Out, Cost and Calls as tiles, a sparkline for time to first
   token, speed and cache hit rate, the context against the model's window; data marks in `live`; the user, 2026-11-25,
   `mockups/v11.html`; a sparkline of fewer than 3 points is left out, never an empty box with "–", and a zero is quiet text,
-  not a big number. Or, by Settings › Appearance › Stats, rows on the desk with no boxes (design review 14, S4 of
+  not a big number; the call in flight counted in every frame while it streams: Live stats in Motion. Or, by Settings › Appearance › Stats, rows on the desk with no boxes (design review 14, S4 of
   `mockups/v12.html`): the label left, the value right in tabular figures, rules between; a row with nothing to say left
   out, a zero quiet, a 2 px line at a row's right only from 8 calls, no live dot), Changes (the files this conversation changed, the branch, Review), Checks (tazuna's runs after a
   turn), Pull request (state, CI, Checks and reviews), your messages, then the user's own panels.
@@ -329,7 +388,8 @@ when on, the model picker's row hover, Space toggles; never the browser's checkb
 point: a row's right click, a header button's menu; `tz-pop`, arrows, Esc), all in `components/Controls.tsx`; the receipt (`components/Receipt.tsx`: Slip, AnswerSlip, ChatSlip), the start page's ledger
 line, the work panel's tab; Mark (`components/Mark.tsx`); sidebar item (two lines, or one when its place repeats), open row, group heading, project group, thread dot (idle, running), badge; header crumb, cost and
 panel button; message (user, agent, chat), work fold, tool step, change card, metadata line, routed tag; the conversation's
-numbers (components/Stats.tsx `ConvNumbers`: the composer's strip, each part a button to Stats); composer with
+numbers (components/Stats.tsx `ConvNumbers`: the composer's strip, each part a button to Stats; `Num`, a live number's
+growing box; `Tokens`, the Working row's count); composer with
 pills (where, mode, model with its effort; one style: no fill, an icon, sentence-case words, a chevron where a menu opens,
 a hairline in `line-strong` on hover and focus, the first one's icon where the box's text starts: design review 14, S2;
 the mode pill tinted by the freedom it gives: full warn, with a 55% warn border, a 12% warn ground, a filled shield and
@@ -339,7 +399,8 @@ fits, else below it); completion menu and attachment chip (Composer), answer ima
 in it, lib/chrome.ts, only after the pointer really moves onto its element: a row that slides under a still pointer gets
 none); answer copy; error card (the provider's message in words, with a capital, its error codes left to the raw reply, said once even when the answer repeats it; Retry runs
 the last failed turn again without a second message, on the last reply only; its raw reply on request); code
-block with its language and copy; work panel section (Stats, Changes, Checks, Pull request), sparkline, stat tile and
+block with its language and copy; code row (components/DiffView.tsx `CodeRow`: a diff's or a file's line, its gutter, sign,
+colours, marks and hanging indent; the review's and every step's) and path label (`PathLabel`, Step.tsx); work panel section (Stats, Changes, Checks, Pull request), sparkline, stat tile and
 stat row (components/Stats.tsx: a sparkline is one 2 px line, its last point marked, a tip "call N · value" on hover or the
 arrows; a row's line is 56 × 14 px with no mark), usage bar, status bar. Reuse these before adding new ones; add new ones here when they are made.
 
@@ -352,6 +413,30 @@ arrows; a row's line is 56 × 14 px with no mark), usage bar, status bar. Reuse 
   review 13). The working mark draws a pixel every ~70 ms (a band going round where the webview lacks `linear()`).
 - The Stats' numbers move to a call's new values (450 ms, easing out) while a reply runs, the newest point growing in
   from the one before; otherwise, and under reduced motion, they jump.
+- Live stats (Settings › Appearance, on by default; the user, 2026-11-26): while a model call streams, the composer's
+  numbers, the Stats and the Working row's "↓ tokens" (a side chat's too) follow it every animation frame (at most 60 a
+  second), from the core's `live` estimate of the call: its output at ~4 characters a token (Claude's thinking by its own
+  count once that comes, not its summary text on top), its input, the input's cost and the output's price at the call's
+  prices. None while a call waits to be tried again; its time to first token counts from the try that answers. A router
+  chat answer beside the agent keeps its own call (the agent's count does not reset or end with it). Its output counts
+  from where it stands to the core's newest figure over the time the last step took (`Count`, lib/live.ts, with its
+  check): never past that figure, never back. The context grows by it; the cost is the finished calls' plus the input's
+  and the counted output at its price (the price rules above: a reply on a plan says "at API prices · not billed" while
+  it runs too, when it and the finished turns are all on the plan; a paid call among them, "so far"; free stays free); the
+  speed is its output since the first token over the time since then, by the core's rule for timing one (20 tokens, 5
+  pieces, half a second, no burst over 1,000 t/s), and its time to first token counts until the token comes. A call's
+  start moves the context and the cost by its input: they ease there (450 ms), never jump. The Stats' sparklines carry the
+  call as their newest point, moving with it, but a tile comes for 3 finished calls only (one for the call in flight went
+  at its end). The running figures are estimates, drawn in `muted` in place of `ink`, in the strip and in Stats alike (a
+  "≈" would come and go and move the row), and ease to the exact ones (450 ms) when the call ends; a count (tokens, money,
+  time) whose estimate ran over settles there at once, never counting back down (the estimate ran over in 285 of 1,011
+  recorded Claude calls). The context is the last call's input and output, what the next call carries, between calls as
+  while one runs (the input alone dropped at each call's end and jumped back at the next start). Digits in tabular
+  figures, and each moving number's box only grows while the reply runs, so nothing beside it shifts. Only the numbers'
+  own small components draw, never the transcript, and only in the frames where a digit they show moves (`useLive`,
+  `useFrame`: one shared frame loop), while a call streams and they are on screen (a hidden window has no frames). Under
+  reduced motion they take the core's figures a few times a second with no easing (none while the window is hidden).
+  Off: they move as each call ends, as before.
 - Rows move, they do not jump: a sidebar row that changes group slides there (200 ms, kept by the conversation's id); a
   reply's steps unfold and fold in height (180 ms and 150 ms).
 - What closes fades out where it was (`tz-out`, 110 ms; lib/chrome.ts does it for every menu and dialog), and the work

@@ -1,5 +1,6 @@
 // The core's view (Session::view) turned into what the window draws.
 import { isFree } from "./route";
+import { stripCd } from "./steps";
 import type { ModelChoice, View } from "./tazuna";
 import { planName } from "./usage";
 import { median, paidTo, pct, usd, writing, type Call, type Message, type ToolStep, type Usage } from "./types";
@@ -20,11 +21,12 @@ export function readableError(text: string): string {
   return /^[a-z]+ /.test(said) ? said.charAt(0).toUpperCase() + said.slice(1) : said;
 }
 
-function target(input: Record<string, unknown>): string {
+function target(input: Record<string, unknown>, cwd?: string): string {
   for (const k of ["file_path", "command", "pattern", "path", "url", "query", "skill", "description"]) {
-    // a command that first goes to the project's folder says only what it runs there: every step read
-    // `cd "/Users/…/application" && gh pr view …` (design review 6; the whole command is in the step's details)
-    const v = typeof input[k] === "string" && k === "command" ? (input[k] as string).replace(/^cd\s+("[^"]+"|'[^']+'|\S+)\s*&&\s*/, "") : input[k];
+    // a command that first goes to the project's folder (or a folder in it) says only what it runs there: every step read
+    // `cd "/Users/…/application" && gh pr view …` (design review 6; the whole command is in the step's details). A cd
+    // elsewhere stays: "cd /tmp && rm -rf build" is not "rm -rf build" (review of review 14)
+    const v = typeof input[k] === "string" && k === "command" ? stripCd(input[k] as string, cwd).cmd : input[k];
     if (typeof v === "string" && v) return v.length > 80 ? `${v.slice(0, 80)}…` : v;
   }
   return "";
@@ -32,7 +34,7 @@ function target(input: Record<string, unknown>): string {
 
 function verb(name: string): string {
   const n = name.replace(/^mcp__\w+__/, "");
-  return ({ Read: "Read", read: "Read", Bash: "Ran", bash: "Ran", Grep: "Searched", Glob: "Listed", Edit: "Edited", edit: "Edited", Write: "Wrote", write: "Wrote",
+  return ({ Read: "Read", read: "Read", Bash: "Ran", bash: "Ran", Grep: "Searched", Glob: "Listed", Edit: "Edited", edit: "Edited", MultiEdit: "Edited", multi_edit: "Edited", Write: "Wrote", write: "Wrote",
     Task: "Asked a subagent", Agent: "Asked a subagent", fetch: "Fetched", WebFetch: "Fetched", Skill: "Used skill", WebSearch: "Searched the web", search: "Searched the web" } as Record<string, string>)[n] ?? n;
 }
 
@@ -86,6 +88,9 @@ export function stats(v: View, scope: "turn" | "all") {
   const said = turns.length > 0 && turns.every((b) => b.model !== undefined && b.plan != null), plan = said ? turns.filter((b) => b.plan) : [];
   const planned = plan.reduce((a, b) => a + (run(b) ?? 0), 0), paid = turns.reduce((a, b) => a + (b.plan ? 0 : run(b) ?? 0), 0);
   const noMoney = said && turns.every(noRef) && runCost == null;
+  // the turn running on a plan, each of its calls (core 0.1.230's `plan`), after finished turns all on a plan: at API prices
+  // and not billed as they are, not "so far" (the review of 2026-11-26: "about $0.759 so far" counted up on Claude's plan)
+  const planNow = running.length > 0 && running.every((c) => c.plan) && (!turns.length || (said && plan.length === turns.length));
   // this turn: what runs now, or its own when it has ended; the conversation: the core's total, or while a reply runs the
   // finished turns' and that reply's by the same rule
   const done = turns.reduce((a, b) => a + (run(b) ?? 0), 0);
@@ -94,14 +99,14 @@ export function stats(v: View, scope: "turn" | "all") {
   const about = turns.some((b) => b.estimate) || running.some((c) => c.estimate);
   // a payee nobody named (a model on this machine, a gateway it cannot name): no word, as the receipt has none
   const payees = [...new Set(turns.map((b) => paidTo({ plan: b.plan, provider: b.provider ?? undefined, providers: b.providers })))];
-  const how = noMoney ? "not billed" : cost == null || !said && !running.length ? undefined : running.length ? "so far"
+  const how = noMoney ? "not billed" : cost == null || !said && !running.length ? undefined : planNow ? "at API prices · not\u00a0billed" : running.length ? "so far"
     : plan.length === turns.length ? "at API prices · not\u00a0billed" : !plan.length ? (payees.every(Boolean) ? (payees.length === 1 ? `paid to ${payees[0]}` : "paid") : undefined)
     : `${planned > 0 ? `${usd(planned)} ` : ""}not\u00a0billed + ${usd(paid)} paid`;
   // the finished turns' own time (the receipt line's), and the running one's calls so far
   const secs = turns.reduce((a, b) => a + b.secs, 0) + (scope === "all" || open ? after : []).reduce((a, c) => a + (c.total_ms ?? 0) / 1000, 0);
   // on a plan alone (every finished turn says so), and the plans' providers (none: the claude CLI's, "Claude plan")
-  const planOnly = said && plan.length === turns.length, plans = [...new Set(plan.map((b) => b.provider ?? null))];
-  return { busy, open, calls: calls.length, input, cached, hit: input ? (100 * cached) / input : null, out: sum((c) => c.out), tps: writing(calls), cost, about, how, secs, noMoney, planOnly, plans, done,
+  const planOnly = said && plan.length === turns.length, plans = [...new Set([...plan.map((b) => b.provider ?? null), ...(planNow ? running.map((c) => c.provider ?? null) : [])])];
+  return { busy, open, calls: calls.length, input, cached, hit: input ? (100 * cached) / input : null, out: sum((c) => c.out), tps: writing(calls), cost, about, how, secs, noMoney, planOnly, planNow, plans, done,
     ttft: series((c) => (c.first_ms == null ? null : c.first_ms / 1000)), speed: series((c) => c.tps || null),
     hits: series((c) => (c.fresh + c.cached ? (100 * c.cached) / (c.fresh + c.cached) : null)) };
 }
@@ -192,9 +197,9 @@ export function messages(v: View, refused: ReadonlyMap<number, string> = new Map
     // (it showed in every hand-off and added "used 1 other tool" to the summary; real window, 2026-11-22)
     else if (b.kind === "tool" && b.name === "ToolSearch") { /* nothing */ }
     else if (b.kind === "tool") {
-      const t: ToolStep = { kind: "tool", id: b.id, name: b.name, verb: verb(b.name), target: target(b.input ?? {}), secs: b.secs ?? 0, ok: !b.error,
+      const t: ToolStep = { kind: "tool", id: b.id, name: b.name, verb: verb(b.name), target: target(b.input ?? {}, v.cwd), secs: b.secs ?? 0, ok: !b.error,
         running: b.running, stopped: b.stopped, declined: b.declined, input: b.input, result: b.declined ? undefined : b.result,
-        waiting: !!(b.running && v.asking) };
+        waiting: !!(b.running && v.asking), cwd: v.cwd };
       step(t);
     }
     else if (b.kind === "thinking") {
@@ -305,6 +310,11 @@ export function demoView() {
     { kind: "notice", text: "Not logged in · Please run /login", error: true }, { ...done, ok: false }] } as View)
     .map((x) => (x.role === "user" ? `user:${x.text}` : x.role === "notice" ? `notice:${x.text}` : `agent:${x.tools!.map((t) => t.kind).join("+")}|${x.prose.join("+")}|${x.failure?.text ?? ""}`));
   if (shaped.join(" / ") !== "user:a / agent:said+tool|Done.| / user:c / agent:tool|All set.| / notice:continued on Mock Coder 7B / user:b / agent:||Please run /login") throw new Error(`shapes: ${shaped.join(" / ")}`);
+  // a step's title drops a cd into the project or a folder in it, and keeps one elsewhere (review of review 14)
+  const cmd = (id: string, command: string) => ({ ...bash, id, input: { command } });
+  const titles = messages({ ...v, cwd: "/p", calls: [], blocks: [{ kind: "prompt", text: "a" }, cmd("1", 'cd "/p" && ls'), cmd("2", "cd /p/src && make"), cmd("3", "cd /tmp && rm -rf build"), done] } as View)
+    .flatMap((x) => (x.role === "agent" ? x.tools!.map((t) => t.target) : []));
+  if (titles.join(" | ") !== "ls | make | cd /tmp && rm -rf build") throw new Error(`cd titles: ${titles.join(" | ")}`);
   const retry = { kind: "notice", text: "the provider is rate limiting this model: 2 tries failed, trying again (HTTP 429: busy)", error: false } as const;
   const live = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "fail" }, retry] } as View)[1], ended = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "fail" }, retry, { ...done, ok: false }] } as View)[1];
   if (live.role !== "agent" || !live.retrying || ended.role !== "agent" || ended.retrying || !ended.failure?.raw.includes("2 tries")) throw new Error("retry notice");
@@ -474,7 +484,8 @@ export function costSaid(s: ReturnType<typeof stats>, choice: ModelChoice | unde
   const plan = s.plans.map(planName).join(", ") || planName(null), money = (n: number) => `${s.about ? "about " : ""}${usd(n)}`;
   if (s.noMoney) return ["not billed", `(${plan})`, `On your ${plan}: it has no reference price, not billed`];
   if (choice && isFree(choice) && !s.cost) return ["free", /^https?:\/\/(localhost|127\.|\[::1\])/.test(choice.url ?? "") ? "on this machine" : "", "Nothing paid"];
-  if (busy) { const n = s.cost ?? s.done; return [n ? money(n) : "–", "so far", "This conversation's cost so far"]; }
+  if (busy) { const n = s.cost ?? s.done;
+    return n && s.planNow ? [money(n), "at API prices · not billed", `On your ${plan}: what it would cost at API prices so far, not billed`] : [n ? money(n) : "–", "so far", "This conversation's cost so far"]; }
   if (s.cost && s.planOnly) return [money(s.cost), "at API prices · not billed", `On your ${plan}: what it would cost at API prices, not billed`];
   return s.cost ? [money(s.cost), "this chat", `This conversation's cost${s.how ? `, ${s.how}` : ""}`] : null;
 }
@@ -493,6 +504,12 @@ export function demoStrip() {
     // calls with no model (Claude's Sonnet): no running sum, the finished turns' stays
     ["a reply running with no price yet", said(view([...plan3, p], [call(0), call(1), call(2), call(4)], "Tool", 0.53), true), "$0.53 so far"],
     ["the first reply running with no price", said(view([p], [call(1)], "Tool"), true), "– so far"],
+    // the review of 2026-11-26: a reply running on the plan after plan turns is at API prices, not billed, as they are; after a
+    // paid turn, or with a call not on the plan, "so far"
+    ["a plan reply running after plan turns", said(view([...plan3, p], [call(0), call(1), call(2), call(4, { model: "claude-opus-5-5", cost: 0.01, plan: true })], "Writing", 0.53), true), "$0.54 at API prices · not billed"],
+    ["the first plan reply running", said(view([p], [call(1, { model: "claude-opus-5-5", cost: 0.01, plan: true })], "Writing"), true), "$0.01 at API prices · not billed"],
+    ["a plan reply running after a paid turn", said(view([done(0.02, { plan: false, provider: "DeepSeek" }), p], [call(0), call(2, { model: "claude-opus-5-5", cost: 0.01, plan: true })], "Writing", 0.02), true), "$0.03 so far"],
+    ["a plan reply with a paid call", said(view([...plan3, p], [call(0), call(1), call(2), call(4, { model: "claude-opus-5-5", cost: 0.01, plan: true }), call(5, { model: "deepseek-v4.1-flash", cost: 0.01 })], "Tool", 0.53), true), "$0.55 so far"],
     ["a plan with no reference price", said(view([done(0, { provider: "Z.ai Coding Plan", model: "glm-5.3" })], [call(0)]), false), "not billed (Z.ai Coding Plan)"],
     ["a local model", said(view([done(0, { plan: false, provider: "Ollama" })], [call(0)]), false, { model: "q", provider: "Ollama", price: "free", why_not: null, url: "http://localhost:11434/v1" }), "free on this machine"],
     ["paid", said(view([done(0.02, { plan: false, provider: "DeepSeek" })], [call(0)], "Done", 0.02), false), "$0.02 this chat"],

@@ -747,6 +747,20 @@ Claude, plus an anti-AI-slop round; the visual proposals wait in mockups/v12.htm
 - The reading column re-centres beside the work panel, gliding with it; Stats as rows on the desk, a setting; plain pills,
   sentence case, shorter mode descriptions and Settings copy; "Allow a shell command?" asks the approval.
 
+0.1.131 (with tazuna 0.1.230), the user's next round on design review 14:
+- A reply's steps drawn as code: an edit as a real diff (tinted rows, changed words marked, signs and line numbers in a
+  gutter that copies leave out), the same rows as the review pane; a written file as code ("new file" only when it is
+  one); a read, a one-file cat/head/tail/sed and grep -n output coloured by the file's language with the line numbers in
+  a gutter and wrapped lines indented; "updated successfully" left out under a diff; paths from the project, the file name
+  first; a cd into the project not shown. Very long lines stay plain, so a minified file no longer stalls the window.
+- Live stats (Settings › Appearance, on by default): while a reply streams, the numbers strip, Stats and the Working
+  row count up every frame from the core's live figures and settle to the exact ones at each call's end; a plan run
+  says "at API prices · not billed" throughout; after a reply the strip keeps its average writing speed.
+- The usage page takes 15 minutes, 1 hour, 3 hours, 24 hours, 7, 30 or 90 days, all time or a custom range, its bars in
+  minutes, hours, days, weeks, months or years to fit; it updates while open.
+- The conversation's receipt no longer runs a three-digit turn number into its title, says "1 h 39 min" and "$1,234.46",
+  and keeps its numbers inside the slip; the work panel's Checks show their whole command.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

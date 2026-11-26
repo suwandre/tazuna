@@ -70,7 +70,15 @@ export type View = {
    * charged, and a turn's calls add up to its `run_cost` */
   /** `cost` null: not known (the provider reported no usage, or the call was cut off by a stop) */
   calls?: { block: number; fresh: number; cached: number; out: number; cost: number | null; first_ms: number | null; tps: number | null; total_ms: number | null;
-    model?: string; role?: string | null; provider?: string | null; estimate?: boolean }[];
+    model?: string; role?: string | null; provider?: string | null; estimate?: boolean;
+    /** it ran on a plan (at API prices, not billed; newer cores) */
+    plan?: boolean }[];
+  /** the model call in flight (null between calls and while it waits to be tried again; newer cores): when it began (its
+   * answering try) and its first token came (epoch ms), its output so far as the core estimates it while it streams and the
+   * pieces streamed, its input and the cached part (exact on Claude, else from the context), the input's cost and the
+   * output's price per million at its prices (null: a rough figure, not shown), and its row in `calls`. Its exact numbers
+   * come in `calls` at its end (lib/live.ts). */
+  live?: { started: number; first: number | null; out: number; deltas: number; in: number; cached: number; in_cost: number | null; out_m: number | null; row: number } | null;
 };
 /** `key`: where its key comes from ("logged in", "key in the environment", …), empty: no key */
 export type Provider = { name: string; host: string; page: string; place: string; example: string; key: string; trusted: boolean;
@@ -239,9 +247,10 @@ export const core = {
   sessions: (dirs: string[]) => to("op", { msg: { op: "sessions", dirs } }),
   resume: (id: string) => to("op", { msg: { op: "resume", id } }),
   onSessions: (cb: (s: Sessions) => void) => on<Sessions>("sessions", cb),
-  /** the run log's last 90 days for the usage page (src/lib/usage.ts reads the rows) */
-  usage: (signals = false) => to("op", { msg: { op: "usage", signals } }),
-  onUsage: (cb: (u: { rows: import("./usage").Row[] }) => void) => on<{ rows: import("./usage").Row[] }>("usage", cb),
+  /** the run log since `since` (seconds; 0 the whole log), the last 90 days without one, for the usage page (src/lib/usage.ts
+   * reads the rows; the signals read the recordings, for How the runs went); the reply says its `since` and `signals` back */
+  usage: (signals = false, since?: number) => to("op", { msg: { op: "usage", signals, since } }),
+  onUsage: (cb: (u: { rows: import("./usage").Row[]; since?: number; signals?: boolean }) => void) => on<{ rows: import("./usage").Row[]; since?: number; signals?: boolean }>("usage", cb),
   /** what each account has left (src/accounts.rs): Claude's plan from claude's own /usage (no model call), the providers'
    * credits, OmniRoute's connected accounts; takes a few seconds */
   accounts: () => to("op", { msg: { op: "accounts" } }),

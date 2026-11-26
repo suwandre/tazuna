@@ -46,6 +46,8 @@ export function patchOfFile(f: FileDiff): string {
  * changed (then the line's own colour says it). The review marks those words (design review 9: a whole line green for
  * `.mockResolvedValue("ok")` added at its end). */
 export function changed(before: string, after: string): { before: [number, number]; after: [number, number] } | null {
+  // a line too long to colour is too long to mark (DiffView's LONG): its row says it changed
+  if (before.length > 2000 || after.length > 2000) return null;
   const tok = (s: string) => s.match(/\w+|\s+|[^\w\s]/g) ?? [];
   const a = tok(before), b = tok(after);
   let pre = 0;
@@ -108,6 +110,28 @@ export function numbered(p: Piece): { line: string; old: number | null; new: num
     if (line[0] === "\\") return { line, old: null, new: null };
     return { line, old: o++, new: n++ };
   });
+}
+
+/** An edit (the text it replaced and its replacement) as a piece, for a step's diff: the lines both share as context, the
+ * rest removed then added, by the longest common run of lines. `start`: the line the text begins at in the file, where that
+ * is known (the numbers are drawn only then). */
+export function editPiece(before: string, after: string, start = 1): Piece {
+  const split = (t: string) => (t === "" ? [] : t.replace(/\r?\n$/, "").split(/\r?\n/));
+  const a = split(before), b = split(after), n = a.length, m = b.length, lines: string[] = [];
+  const piece = { header: "", lines, oldStart: start, newStart: start };
+  // ponytail: an n·m table; past 250k cells (two texts of 500 lines) all of it is removed and added, no context
+  if (n * m > 250_000) { lines.push(...a.map((l) => `-${l}`), ...b.map((l) => `+${l}`)); return piece; }
+  const L = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+  const dels: string[] = [], adds: string[] = [];
+  const flush = () => { lines.push(...dels.splice(0).map((l) => `-${l}`), ...adds.splice(0).map((l) => `+${l}`)); };
+  for (let i = 0, j = 0; i < n || j < m;) {
+    if (i < n && j < m && a[i] === b[j]) { flush(); lines.push(` ${a[i]}`); i++; j++; }
+    else if (j < m && (i === n || L[i][j + 1] >= L[i + 1][j])) adds.push(b[j++]);
+    else dels.push(a[i++]);
+  }
+  flush();
+  return piece;
 }
 
 /** A check: `npx tsx -e 'import("./src/lib/unidiff.ts").then(m => m.demo())'`. */

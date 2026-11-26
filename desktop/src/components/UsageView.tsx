@@ -1,22 +1,32 @@
-import { ChevronDown, ChevronRight, ExternalLink, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Check, ChevronDown, ChevronRight, ExternalLink, X } from "lucide-react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { core, type Accounts, type ClaudeSetup, type ModelChoice } from "../lib/tazuna";
 import { useDialog } from "../lib/dialog";
-import { planName, summarize, type Day, type Row } from "../lib/usage";
-import { modelLabel } from "../lib/types";
+import { RANGES, barName, fieldOf, floorTo, fromField, needOf, perUnit, planName, rangeWords, spanOf, summarize, used, type Bar, type Choice, type Row, type Unit } from "../lib/usage";
+import { modelLabel, usd } from "../lib/types";
 import { exactly, parseReset, whenReset } from "../lib/health";
 import { Sep } from "./Sep";
-import { Segmented, dialogShell, quietButton } from "./Controls";
+import { MenuRule, PopMenu, Segmented, dialogShell, menuItem, quietButton } from "./Controls";
 
 // The usage page (Cmd-Shift-U, the menu, a click on the plan bar or the cost): what each account has left right now
-// (Claude's plan from claude's own /usage, OmniRoute's accounts, the providers' credits: src/accounts.rs), what the last
-// days cost, and how the user's own runs went. In Settings' language since desktop 0.1.68 (the second design review,
+// (Claude's plan from claude's own /usage, OmniRoute's accounts, the providers' credits: src/accounts.rs), what a range
+// cost (the last 15 minutes to All, or one picked by hand), and how the user's own runs went. In Settings' language since desktop 0.1.68 (the second design review,
 // prototype mockups/v3.html): a section is a heading, a line on what it is, and a card of rows; a zero is a quiet line,
 // not a big "$0.000".
-const RANGES = [7, 30, 90];
+const KEEP = "tazuna.usage-range", CUSTOM = "tazuna.usage-custom";
+/** A kept range, or null: a hand-picked one from 1970 on, its start not after its end. */
+const read = (key: string): Choice | null => {
+  try {
+    const c = JSON.parse(localStorage.getItem(key) ?? "null");
+    if (c?.key === "custom" ? Number.isFinite(c.from) && Number.isFinite(c.to) && 0 <= c.from && c.from <= c.to : c?.key === "all" || RANGES.some(([k]) => k === c?.key)) return c;
+  } catch { /* a broken entry is none */ }
+  return null;
+};
+/** The range last chosen (a hand-picked one as it was), the last 30 days at first. */
+const kept = (): Choice => read(KEEP) ?? { key: "30d" };
 const big = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${n}`);
 // totals in cents: "$0" for nothing, "< $0.01" below a cent ("$0.000072" beside "$0.26" in one column, design review 5)
-const money = (n: number) => (n <= 0 ? "$0" : n < 0.01 ? "< $0.01" : n >= 100 ? `$${Math.round(n)}` : `$${n.toFixed(2)}`);
+const money = usd;
 
 /** claude's window names, shorter: "Current session" is the 5 hours, "Current week (Fable)" the week on Fable. */
 const windowName = (label: string) => {
@@ -71,10 +81,26 @@ export function UsageView({ onClose, limits, balance, choices = [], claude }: { 
   claude?: ClaudeSetup | null;
   /** the model catalog: names the provider of an API run the run log did not record (one recorded since 0.1.182) */
   choices?: ModelChoice[] }) {
-  const [rows, setRows] = useState<Row[] | null>(null);
+  // the rows, the second they start at (the last 90 days, the whole log once All or an older hand-picked range asks) and
+  // whether they carry the signals (read from the recordings: only while How the runs went is open, for the range)
+  const [got, setGot] = useState<{ rows: Row[]; since: number; signals: boolean } | null>(null);
   const [acc, setAcc] = useState<Accounts | null | undefined>(undefined);
   const dialog = useDialog();
-  const [days, setDays] = useState(30);
+  const [choice, setChoice] = useState(kept);
+  const choose = (c: Choice) => { setChoice(c); localStorage.setItem(KEEP, JSON.stringify(c)); if (c.key === "custom") localStorage.setItem(CUSTOM, JSON.stringify(c)); };
+  const [fold, setFold] = useState(false);
+  const [base] = useState(() => Math.floor(Date.now() / 1000) - 90 * 86_400);
+  const need = needOf(choice, base);
+  // what the page asked last, every start it asked for (a late answer to one is no news), and what it needs now
+  const asked = useRef({ since: Infinity, signals: false }), mine = useRef(new Set<number>()), want = useRef({ since: need, signals: fold });
+  want.current = { since: need, signals: fold };
+  const ask = (w: { since: number; signals: boolean }) => {
+    asked.current = w; mine.current.add(w.since);
+    core.usage(w.signals, w.since).catch(() => setGot({ rows: [], since: w.since, signals: w.signals }));
+  };
+  // a rolling range moves on while the page is open
+  const [tick, setTick] = useState(0);
+  const start = useRef<HTMLInputElement>(null);
   const [allModels, setAllModels] = useState(false);
   const providerOf = (model: string) => {
     if (model.startsWith("agy/")) return "OmniRoute";
@@ -85,15 +111,40 @@ export function UsageView({ onClose, limits, balance, choices = [], claude }: { 
   const close = useRef(onClose);
   close.current = onClose;
   useEffect(() => {
-    const off = core.onUsage((u) => setRows(u.rows));
-    core.usage(true).catch(() => setRows([]));
+    // the page's own answer, or one reaching as far back with what it needs; the start page's (90 days from later, no
+    // signals) is its refresh after a turn: the page asks its own range again, so a run just ended shows
+    const off = core.onUsage((u) => {
+      const a = asked.current, since = u.since ?? a.since, signals = u.signals ?? true;
+      if (since <= a.since && (signals || !a.signals)) setGot({ rows: u.rows, since, signals });
+      else if (since > a.since && !mine.current.has(since)) ask(want.current);
+    });
+    const minute = setInterval(() => setTick((n) => n + 1), 60_000);
     const offAcc = core.onAccounts(setAcc);
     core.accounts().catch(() => setAcc(null));
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") close.current(); };
     window.addEventListener("keydown", esc);
-    return () => { off.then((f) => f()); offAcc.then((f) => f()); window.removeEventListener("keydown", esc); };
+    return () => { off.then((f) => f()); offAcc.then((f) => f()); window.removeEventListener("keydown", esc); clearInterval(minute); };
   }, []);
-  const s = useMemo(() => (rows ? summarize(rows, days) : null), [rows, days]);
+  useEffect(() => { const a = asked.current; if (need < a.since || (fold && !a.signals)) ask({ since: need, signals: fold }); }, [need, fold]);
+  const runs = useMemo(() => (got ? used(got.rows) : null), [got]);
+  const ready = !!got && got.since <= need;
+  const page = useMemo(() => {
+    if (!runs || !ready) return null;
+    const now = Date.now() / 1000, sp = spanOf(choice, now, runs[0]?.ts);
+    return { sp, s: summarize(runs, sp), words: rangeWords(choice, sp, now) };
+  }, [runs, ready, choice, tick]);
+  const s = page?.s, words = page?.words ?? rangeWords(choice, spanOf(choice, Date.now() / 1000));
+  // a range picked by hand is the last one picked (kept as it was), else the one shown to this minute; the focus goes to
+  // its start
+  const custom = () => {
+    const now = Date.now() / 1000;
+    if (choice.key !== "custom") choose(read(CUSTOM) ?? { key: "custom", from: floorTo(page?.sp.from ?? now - 7 * 86_400, "minute"), to: floorTo(now, "minute") });
+    setTimeout(() => start.current?.focus());
+  };
+  // start never after end: moving one past the other takes the other along
+  const setFrom = (v: string) => { const t = fromField(v); if (choice.key === "custom" && !Number.isNaN(t)) choose({ key: "custom", from: t, to: Math.max(t, choice.to) }); };
+  const setTo = (v: string) => { const t = fromField(v); if (choice.key === "custom" && !Number.isNaN(t)) choose({ key: "custom", from: Math.min(t, choice.from), to: t }); };
+  const field = "rounded-md border border-line bg-field px-2 py-[2px] text-[12.5px] tabular-nums text-ink outline-none focus:border-accent";
   const th = "px-3.5 pb-1.5 pt-2.5 text-left text-[11.5px] font-medium text-faint", td = "border-t border-line-soft px-3.5 py-[7px]";
   const num = `${td} text-right tabular-nums`;
   const plans = s?.plans.length === 1 ? s.plans[0].name : "Plans";
@@ -113,9 +164,15 @@ export function UsageView({ onClose, limits, balance, choices = [], claude }: { 
 
           {/* the range by the sections it changes, not in the page's header: there it read as changing "Right now" too,
               which it never did (the user, desktop 0.1.72) */}
-          <Section title="Spending" action={
-            <Segmented label="Days" value={String(days)} options={RANGES.map((d) => [String(d), `${d} days`] as const)} onChange={(d) => setDays(Number(d))} />} note={`The last ${days} days from the run log. A plan's runs are counted at API prices, not billed.`}>
-            {!s ? <div className="px-3.5 py-2.5 text-[12.5px] text-faint">Reading the run log…</div> : <>
+          <Section title="Spending" action={<RangeMenu choice={choice} label={words.button} onChoose={(k) => (k === "custom" ? custom() : choose({ key: k }))} />}
+            note={<>
+              {choice.key === "custom" && <span className="mb-1.5 mt-1 flex items-center gap-2">From
+                <input ref={start} type="datetime-local" aria-label="From" min="1970-01-01T00:00" value={fieldOf(choice.from)} onChange={(e) => setFrom(e.target.value)} className={field} />to
+                <input type="datetime-local" aria-label="To" min="1970-01-01T00:00" value={fieldOf(choice.to)} onChange={(e) => setTo(e.target.value)} className={field} /></span>}
+              {page ? words.note : "From the run log."} A plan's runs are counted at API prices, not billed.</>}>
+            {!s || !page ? <div className="px-3.5 py-2.5 text-[12.5px] text-faint">Reading the run log…</div>
+              // nothing in the range: one quiet line, no empty figures or chart frame
+              : !s.runs ? <div className="px-3.5 py-2.5 text-[12.5px] text-muted">{choice.key === "all" ? "Nothing has run yet." : `Nothing ran ${words.within}.`}</div> : <>
               <div className="grid grid-cols-3 divide-x divide-line-soft">
                 {/* nothing is said once, under the figures ("Nothing spent in these days."), not in each of them (design review 14) */}
                 <Figure label="API providers" value={s.api > 0 ? money(s.api) : "–"} quiet={s.api <= 0} caption="billed" more={[[`${apiRuns}`, "runs"]]} />
@@ -126,7 +183,7 @@ export function UsageView({ onClose, limits, balance, choices = [], claude }: { 
                   more={[...(s.plans.length > 1 ? s.plans.map((p) => [p.cost > 0 ? money(p.cost) : "not billed", p.name] as [string, string]) : []), [`${planRuns}`, "runs"]]} />
                 <Figure label="From the cache" value={s.read ? `${Math.round((100 * s.cached) / s.read)}%` : "Nothing read yet"} quiet={!s.read} caption="of the input" more={[[big(s.cached), "tokens"]]} />
               </div>
-              <Bars days={s.days} plans={plans} />
+              <Bars bars={s.bars} unit={page.sp.unit} plans={plans} within={words.within} />
               {s.byModel.length > 0 && (
                 <table className="w-full text-[12.5px]"><thead><tr><th className={th}>Model</th><th className={th}>Provider</th>
                   <th className={`${th} text-right`}>Runs</th><th className={`${th} text-right`}>Cost</th><th className={`${th} text-right`}>From cache</th></tr></thead>
@@ -149,17 +206,17 @@ export function UsageView({ onClose, limits, balance, choices = [], claude }: { 
 
           {/* how the runs went is for tuning tazuna: folded at the bottom, closed (design review 9; it was a section as
               big as Spending, with a table per version) */}
-          <details className="group mt-6 overflow-hidden rounded-lg border border-line bg-card">
+          <details onToggle={(e) => setFold(e.currentTarget.open)} className="group mt-6 overflow-hidden rounded-lg border border-line bg-card">
             <summary className="flex cursor-pointer list-none items-center gap-2 px-3.5 py-2.5 text-[12.5px] hover:bg-hover [&::-webkit-details-marker]:hidden">
               <ChevronRight size={14} strokeWidth={1.5} className="flex-none text-faint transition-transform group-open:rotate-90" />
               {/* the hint under its title, not after a middle dot (design review 10) */}
               <span className="flex-1"><span className="block font-medium text-ink-2">How the runs went</span><span className="block text-[11.5px] text-faint">For tuning tazuna: clear misses and pushback by version and model</span></span>
             </summary>
-            <p className="border-t border-line-soft px-3.5 py-2.5 text-[12px] leading-relaxed text-muted">The same {days} days as Spending, read from what happened next, with nothing for you to label. A clear miss: you stopped or rewound it, it ended in an error,
+            <p className="border-t border-line-soft px-3.5 py-2.5 text-[12px] leading-relaxed text-muted">The same range as Spending, read from what happened next, with nothing for you to label. A clear miss: you stopped or rewound it, it ended in an error,
             its change was thrown away, or your next message corrected it or asked the same again. Pushback: "wait, …", "why …?", "progress?".</p>
             <div className="border-t border-line-soft">
-            {!s ? <div className="px-3.5 py-2.5 text-[12.5px] text-faint">Reading the run log…</div>
-              : s.byVersion.length === 0 ? <div className="px-3.5 py-2.5 text-[12.5px] text-muted">No runs of your own in these days.</div> : <>
+            {!s || !got?.signals ? <div className="px-3.5 py-2.5 text-[12.5px] text-faint">Reading the run log…</div>
+              : s.byVersion.length === 0 ? <div className="px-3.5 py-2.5 text-[12.5px] text-muted">No runs of your own {words.within}.</div> : <>
               {s.lanes.length > 0 && <div className="grid divide-x divide-line-soft" style={{ gridTemplateColumns: `repeat(${s.lanes.length}, minmax(0, 1fr))` }}>
                 {s.lanes.map((l) => <Figure key={l.lane} label={l.lane} value={`${l.missPct}%`} caption="clear misses" more={[[`${l.softPct}%`, "pushback"], [`${l.runs}`, "runs"]]} />)}
               </div>}
@@ -328,43 +385,60 @@ function Contributing({ notes }: { notes: string[] }) {
   );
 }
 
-/** One bar per day from a shared baseline, the plan's part and the paid part stacked; hover or focus shows the day. */
-// a day as every other date in the window says it: "Nov 6", not "2026-11-06" or "11-06" (design review 10)
-const dayName = (iso: string) => new Date(`${iso}T00:00`).toLocaleDateString([], { month: "short", day: "numeric" });
+/** The range's button and its menu (PopMenu: the arrows, Esc): the presets, All and a range picked by hand, the chosen one
+ * ticked. Nine keys in a Segmented were wider than the heading's row. */
+function RangeMenu({ choice, label, onChoose }: { choice: Choice; label: string; onChoose: (k: Choice["key"]) => void }) {
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null), button = useRef<HTMLButtonElement>(null);
+  const items: [Choice["key"], string][] = [...RANGES.map(([k, , l]) => [k, l] as [Choice["key"], string]), ["all", "All time"], ["custom", "Custom range…"]];
+  return <>
+    <button ref={button} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setAt(at ? null : { x: r.right - 200, y: r.bottom + 6 }); }} aria-haspopup="menu" aria-expanded={!!at}
+      className={`flex items-center gap-1 tabular-nums ${quietButton}`}>{label}<ChevronDown size={13} strokeWidth={1.5} className="text-faint" /></button>
+    {at && <PopMenu at={at} label="Range" anchor={button.current} onClose={() => setAt(null)}>
+      {/* the minutes and hours, the days, then all of it and a range by hand, apart under rules */}
+      {items.map(([k, l], i) => <Fragment key={k}>{(i === 4 || i === 7) && <MenuRule />}
+        <button role="menuitem" onClick={() => { setAt(null); onChoose(k); }} className={menuItem}><span className="flex-1">{l}</span>
+          {choice.key === k && <Check size={14} strokeWidth={1.75} className="text-muted" />}</button></Fragment>)}
+    </PopMenu>}
+  </>;
+}
 
-function Bars({ days, plans }: { days: Day[]; /** what the plans' part is called: "Claude plan", "Plans" */ plans: string }) {
+/** One bar per unit of the range (a minute to a month, lib/usage.ts) from a shared baseline, the plan's part and the paid
+ * part stacked; hover or focus shows the bar. Its times on the app's one clock, its dates as every other date in the
+ * window ("Nov 6", not "2026-11-06": design review 10). */
+function Bars({ bars, unit, plans, within }: { bars: Bar[]; unit: Unit; /** what the plans' part is called: "Claude plan", "Plans" */ plans: string;
+  /** the range in words, for its empty line: "in the last hour" */ within: string }) {
   const [at, setAt] = useState<number | null>(null);
-  const max = Math.max(...days.map((d) => d.plan + d.api), 0);
-  if (max === 0) return <div className="px-3.5 py-2.5 text-[12.5px] text-muted">Nothing spent in these days.</div>;
-  const d = at == null ? null : days[at];
+  const max = Math.max(...bars.map((d) => d.plan + d.api), 0);
+  if (max === 0) return <div className="px-3.5 py-2.5 text-[12.5px] text-muted">Nothing spent {within}.</div>;
+  const d = at == null ? null : bars[at], now = Date.now() / 1000, name = (b: Bar) => barName(b.at, unit, now);
   return (
     <div className="relative px-3.5 pb-2.5 pt-3.5">
-      {/* one stop for the keyboard, the arrows along the days (each bar was a stop of its own and a click did nothing,
+      {/* one stop for the keyboard, the arrows along the bars (each bar was a stop of its own and a click did nothing,
           design review 7) */}
       <div className="flex h-[110px] items-end gap-[3px] rounded-sm" onMouseLeave={() => setAt(null)} tabIndex={0} role="group"
-        aria-label={d ? `${dayName(d.day)}: ${money(d.plan + d.api)}, ${d.runs} runs` : `Spending per day, ${dayName(days[0].day)} to ${dayName(days[days.length - 1].day)}: arrows move along the days`}
-        onFocus={() => setAt((a) => a ?? days.length - 1)} onBlur={() => setAt(null)}
-        onKeyDown={(e) => { const n = e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : e.key === "Home" ? -days.length : e.key === "End" ? days.length : 0;
-          if (n) { e.preventDefault(); setAt((a) => Math.max(0, Math.min(days.length - 1, (a ?? days.length - 1) + n))); } }}>
-        {days.map((day, i) => (
-          <span key={day.day} onMouseEnter={() => setAt(i)} aria-hidden="true" className="flex h-full min-w-0 flex-1 flex-col justify-end">
+        aria-label={d ? `${name(d)}: ${money(d.plan + d.api)}, ${d.runs} runs` : `Spending per ${unit}, ${name(bars[0])} to ${name(bars[bars.length - 1])}: arrows move along the bars`}
+        onFocus={() => setAt((a) => a ?? bars.length - 1)} onBlur={() => setAt(null)}
+        onKeyDown={(e) => { const n = e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : e.key === "Home" ? -bars.length : e.key === "End" ? bars.length : 0;
+          if (n) { e.preventDefault(); setAt((a) => Math.max(0, Math.min(bars.length - 1, (a ?? bars.length - 1) + n))); } }}>
+        {bars.map((bar, i) => (
+          <span key={bar.at} onMouseEnter={() => setAt(i)} aria-hidden="true" className="flex h-full min-w-0 flex-1 flex-col justify-end">
             {/* the paid part solid on top, the plan's (counted at API prices, not billed) light under it: one colour in two
                 strengths; the paid part was a dark pixel-high cap nobody could see (design review 10) */}
-            <span className={`block w-full rounded-t-[3px] ${at === i ? "bg-live-ink" : "bg-live"}`} style={{ height: day.api ? `${Math.max(3, (100 * day.api) / max)}%` : 0 }} />
-            <span className={`block w-full ${day.api ? "" : "rounded-t-[3px]"} ${at === i ? "bg-[color-mix(in_srgb,var(--live)_55%,var(--card))]" : "bg-[color-mix(in_srgb,var(--live)_38%,var(--card))]"}`} style={{ height: day.plan ? `${Math.max(2, (100 * day.plan) / max)}%` : 0 }} />
+            <span className={`block w-full rounded-t-[3px] ${at === i ? "bg-live-ink" : "bg-live"}`} style={{ height: bar.api ? `${Math.max(3, (100 * bar.api) / max)}%` : 0 }} />
+            <span className={`block w-full ${bar.api ? "" : "rounded-t-[3px]"} ${at === i ? "bg-[color-mix(in_srgb,var(--live)_55%,var(--card))]" : "bg-[color-mix(in_srgb,var(--live)_38%,var(--card))]"}`} style={{ height: bar.plan ? `${Math.max(2, (100 * bar.plan) / max)}%` : 0 }} />
           </span>
         ))}
       </div>
-      <div className="mt-1.5 flex justify-between text-[11px] tabular-nums text-faint"><span>{dayName(days[0].day)}</span><span>max {money(max)} a day</span><span>{dayName(days[days.length - 1].day)}</span></div>
+      <div className="mt-1.5 flex justify-between text-[11px] tabular-nums text-faint"><span>{name(bars[0])}</span><span>max {money(max)} {perUnit(unit)}</span><span>{name(bars[bars.length - 1])}</span></div>
       <div className="mt-1.5 flex gap-3.5 text-[11.5px] text-muted">
         <span className="flex items-center gap-1.5"><i className="size-2 rounded-sm bg-[color-mix(in_srgb,var(--live)_38%,var(--card))]" />{plans}, at API prices</span>
         <span className="flex items-center gap-1.5"><i className="size-2 rounded-sm bg-live" />Paid APIs</span>
       </div>
       {d && (
         <div className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-md border border-line-strong bg-card px-2.5 py-1.5 text-[12px] tz-float"
-          style={{ left: `${Math.min(88, Math.max(12, ((at! + 0.5) / days.length) * 100))}%` }}>
+          style={{ left: `${Math.min(88, Math.max(12, ((at! + 0.5) / bars.length) * 100))}%` }}>
           <div className="font-semibold tabular-nums text-ink">{money(d.plan + d.api)}</div>
-          <div className="text-muted">{dayName(d.day)}, {d.runs} runs</div>
+          <div className="text-muted">{name(d)}, {d.runs} runs</div>
           {d.plan > 0 && d.api > 0 && <div className="tabular-nums text-muted">plan {money(d.plan)}, API {money(d.api)}</div>}
         </div>
       )}

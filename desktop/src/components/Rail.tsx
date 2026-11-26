@@ -97,7 +97,10 @@ export function ChecksSection() {
   if (!w.folder || !w.checks.length) return null;
   const [last, ...before] = w.checks;
   return (
-    <Section icon={<SquareTerminal size={14} strokeWidth={1.5} className={ico} />} title="Checks" right={<span className="font-mono">{last.cmd.slice(0, 24)}</span>}>
+    <Section icon={<SquareTerminal size={14} strokeWidth={1.5} className={ico} />} title="Checks">
+      {/* the whole command, wrapped and selectable: cut at 24 characters it read "npm run typecheck --sile" (the user,
+          design review 14) */}
+      <div className="mb-1 select-text break-all font-mono text-[11.5px] leading-[1.45] text-faint" title={last.cmd}>{last.cmd}</div>
       {[last, ...before.slice(0, 2)].map((c, i) => (
         <div key={i} className="flex items-center gap-2 py-[3px] text-[12.5px] text-ink-2">
           {c.none ? <Minus size={14} strokeWidth={1.75} className="flex-none text-faint" />

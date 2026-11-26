@@ -18,7 +18,7 @@ import { SETUP, Setup } from "./components/Setup";
 import { prChip, type Pr } from "./lib/pr";
 import { checkUpdate, watchUpdates } from "./lib/update";
 import { routeLine } from "./lib/route";
-import { today as todayOf, type Row } from "./lib/usage";
+import { lastDays, today as todayOf, type Row } from "./lib/usage";
 import { capital, filesApp, usd, type ChangedFile, type Message, escFor, keysOf, panelChoice, panelState } from "./lib/types";
 import { Sep } from "./components/Sep";
 import type { Turn } from "./components/Receipt";
@@ -522,7 +522,8 @@ export default function App() {
   };
   // where a message goes and what it costs (lib/route.ts), from the catalog and the run log's last 90 days
   const [rows, setRows] = useState<Row[] | null>(null);
-  useEffect(() => { if (!inTauri) return; const off = core.onUsage((u) => setRows(u.rows)); return () => { off.then((f) => f()); }; }, []);
+  // 90 days whatever asked: the usage page's All or an older range fed the estimate all history
+  useEffect(() => { if (!inTauri) return; const off = core.onUsage((u) => setRows(lastDays(u.rows))); return () => { off.then((f) => f()); }; }, []);
   const choice = models?.choices.find((c) => c.current);
   /** A model picked by hand: a non-Claude one is where new conversations of this kind start (START_MODEL). */
   const pickModel = (c: ModelChoice) => {
@@ -1086,7 +1087,7 @@ export default function App() {
           onEdit={inTauri ? (e, text) => {
             const files = new Set((view?.changes ?? []).filter((c) => c.at_block > e.block && !c.undone).flatMap((c) => c.files.map((f) => f.path))).size;
             setEditing({ ...e, files, keep: files > 0 }); setDraft({ text, n: Date.now() });
-          } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} asking={!!view?.asking} since={since} out={liveOut} onSendToAgent={inTauri ? (text) => say(text) : undefined} onRetry={inTauri ? () => { core.retry().catch(() => {}); } : undefined}
+          } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} asking={!!view?.asking} since={since} out={liveOut} live={busy ? view?.live : null} onSendToAgent={inTauri ? (text) => say(text) : undefined} onRetry={inTauri ? () => { core.retry().catch(() => {}); } : undefined}
           onImage={inTauri ? (p) => core.imageData(p, folder ?? undefined) : undefined}
           onDiff={inTauri ? (turn, path) => setReviewing({ scope: "turn", turn, path }) : undefined} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={inTauri ? (turn) => core.undo(turn) : undefined}
           onStop={inTauri ? stop : undefined} onChangeModel={inTauri ? () => { stop(); chooseModel(); } : undefined} />}
@@ -1116,7 +1117,7 @@ export default function App() {
           )}
           {createAsk != null && (
             <div className="mx-auto mb-2 flex w-[calc(100%-56px)] max-w-[700px] flex-wrap items-center gap-2 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
-              <span className="flex-1">What should <span className="text-ink">“{createAsk.slice(0, 60)}”</span> be?</span>
+              <span className="flex-1">What should <span className="text-ink">“{createAsk.length > 60 ? `${createAsk.slice(0, 59)}…` : createAsk}”</span> be?</span>
               <button onClick={() => { createPanel(createAsk); setCreateAsk(null); }} className={quietButton} title="A panel in the right column, or a plugin that changes the window">Part of the window</button>
               <button onClick={() => { createBehaviour(createAsk); setCreateAsk(null); }} className={accentButton} title="A /command, a skill the agent reads, or a tool (MCP server): on every model">Something tazuna does</button>
               <button onClick={() => setCreateAsk(null)} className={quietButton}>Cancel</button>
@@ -1174,7 +1175,7 @@ export default function App() {
               })}
             </div>
           )}
-          {view?.asking && <Approval asking={view.asking} input={askedInput(view)} onAnswer={(allow, always) => core.answer(allow, always)} />}
+          {view?.asking && <Approval asking={view.asking} input={askedInput(view)} cwd={view.cwd} onAnswer={(allow, always) => core.answer(allow, always)} />}
           {!fresh && !failed && composer}
         </div>
       </main>

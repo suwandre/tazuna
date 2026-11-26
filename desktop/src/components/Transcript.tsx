@@ -8,6 +8,8 @@ import { AnswerSlip, dur, priceSaid, refless, tok } from "./Receipt";
 import { Parts, Sep } from "./Sep";
 import { quietButton } from "./Controls";
 import { Mark } from "./Mark";
+import { Tokens } from "./Stats";
+import type { Live } from "../lib/live";
 
 function inlineCode(text: string) {
   return text.split(/(`[^`]+`)/).map((part, i) => part.startsWith("`") ? <code key={i}>{part.slice(1, -1)}</code> : part);
@@ -22,8 +24,9 @@ type Props = {
   asking?: boolean;
   /** when the reply running began (ms), for its time */
   since?: number;
-  /** the running reply's output tokens so far, said on its Working row when there are any */
-  out?: number;
+  /** the running reply's output tokens so far, said on its Working row when there are any (its finished calls'), and the
+   * call in flight, whose estimate counts with them (Live stats) */
+  out?: number; live?: Live | null;
   onSendToAgent?: (text: string) => void;
   onDiff?: (turn: number, path: string) => void; onUndo?: (turn: number) => void; onReview?: (turn: number) => void;
   /** "edit from here" on one of your messages */
@@ -104,7 +107,7 @@ export function Transcript({ messages, activity, jumps = true, ...props }: Props
   let queuedFrom = messages.length;
   while (queuedFrom > 0 && messages[queuedFrom - 1].role === "user" && (messages[queuedFrom - 1] as { queued?: boolean }).queued) queuedFrom--;
   const working = busy && !folded && activity && doing[activity]
-    ? <Working what={retry ? "waiting to retry" : doing[activity]} since={rest.since} out={rest.out} retryAt={retry?.retryAt} above={queuedFrom < messages.length} /> : null;
+    ? <Working what={retry ? "waiting to retry" : doing[activity]} since={rest.since} out={rest.out} live={rest.live} retryAt={retry?.retryAt} above={queuedFrom < messages.length} /> : null;
   // follow new output while the reader is at the bottom; stay put once they scroll up
   const box = useRef<HTMLElement>(null), stick = useRef(true);
   // a long conversation draws its latest messages; earlier ones on request (a three-day session is ~1,900 blocks)
@@ -169,7 +172,7 @@ export function Transcript({ messages, activity, jumps = true, ...props }: Props
                   </span>
                 </div>
               )}
-              {m.tools && m.tools.length > 0 && <WorkFold tools={m.tools} secs={m.meta?.secs} live={!!busy && !m.meta} asking={rest.asking} since={rest.since} out={rest.out} retry={m.retrying ? m.retryAt ?? 0 : undefined} />}
+              {m.tools && m.tools.length > 0 && <WorkFold tools={m.tools} secs={m.meta?.secs} live={!!busy && !m.meta} asking={rest.asking} since={rest.since} out={rest.out} liveCall={rest.live} retry={m.retrying ? m.retryAt ?? 0 : undefined} />}
               <div className="prose-answer text-ink">{m.prose.map((p, j) => <Slot key={j} name="message.text" props={{ text: p }} only />)}</div>
               <Slot name="message.after" props={{ message: m, index: hidden + i }} />
             </>
@@ -260,7 +263,7 @@ function useFold(shown: boolean, set: (open: boolean) => void) {
 
 /** A reply's steps as one line, "Worked 41 s · read 2 files, ran 3 commands ›": open while the reply runs, folded once it
  * is done (a click keeps it as chosen). Until desktop 0.1.64 each step was a line of its own above every answer. */
-function WorkFold({ tools, secs, live, asking, since, out, retry }: { tools: ToolStep[]; secs?: number; live: boolean; asking?: boolean; since?: number; out?: number;
+function WorkFold({ tools, secs, live, asking, since, out, liveCall, retry }: { tools: ToolStep[]; secs?: number; live: boolean; asking?: boolean; since?: number; out?: number; liveCall?: Live | null;
   /** a call being tried again: when the next try is (epoch ms; 0 where the core does not say) */
   retry?: number }) {
   const [open, setOpen] = useState<boolean | null>(null);
@@ -283,7 +286,7 @@ function WorkFold({ tools, secs, live, asking, since, out, retry }: { tools: Too
         <span className={`flex-none ${live && asking ? "font-medium text-warn" : ""}`}>{live ? (asking ? "Waiting for you"
           : retry != null ? <><span className="tz-shimmer font-medium">Waiting to retry</span>{retry > 0 && <> <span className="tabular-nums"><Countdown at={retry} /></span></>}</>
           : <><span className="tz-shimmer font-medium">Working</span>{since && <> <Ticking since={since} /></>}</>) : `Worked${took}`}</span>
-        {live && !asking && !!out && <span className="flex flex-none items-center text-faint"><Sep />↓ {tok(out)} tokens</span>}
+        {live && !asking && <span className="flex flex-none items-center text-faint"><Tokens out={out} live={liveCall} /></span>}
         {what && <span className="flex min-w-0 items-center truncate text-faint"><Sep />{what}</span>}
         {failed > 0 && <span className="flex flex-none items-center text-bad"><Sep />{failed} failed</span>}
       </button>
@@ -303,7 +306,7 @@ const MARK_AT_WORK = 16;
 
 /** Under a reply that is still going: the mark at work, what it is doing with dots that count, how long the reply has run
  * (it stays mounted from the reply's start to its end) and its tokens so far. */
-function Working({ what, since, out, retryAt, above }: { what: string; since?: number; out?: number;
+function Working({ what, since, out, live, retryAt, above }: { what: string; since?: number; out?: number; live?: Live | null;
   /** a call being tried again: the next try (epoch ms), counted down in place of the time */
   retryAt?: number;
   /** messages queued behind the reply follow it */
@@ -314,7 +317,7 @@ function Working({ what, since, out, retryAt, above }: { what: string; since?: n
     <div role="status" className={`mx-auto flex max-w-[756px] items-center gap-2 px-7 text-[12.5px] text-muted ${above ? "mb-[22px]" : ""}`}>
       <Mark size={MARK_AT_WORK} motion="write" />
       <span className="tz-shimmer font-medium">{what}</span><span className="tz-dots -ml-2" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>
-      <span className="tabular-nums text-faint">{retryAt ? <Countdown at={retryAt} /> : <Ticking since={start} />}{!!out && <><Sep />↓ {tok(out)} tokens</>}</span>
+      <span className="tabular-nums text-faint">{retryAt ? <Countdown at={retryAt} /> : <Ticking since={start} />}<Tokens out={out} live={live} /></span>
     </div>
   );
 }

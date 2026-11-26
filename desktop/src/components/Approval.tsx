@@ -2,7 +2,7 @@ import { ShieldQuestion } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { View } from "../lib/tazuna";
 import { Sep } from "./Sep";
-import { Given, writes } from "./Step";
+import { Given, PathLabel, writes } from "./Step";
 
 // how long before a key the one before it went down, window-wide and first (capture), so keys typed before the card came
 // count too; the window coming back counts as a key (a key pressed as it comes back was meant for where it was)
@@ -29,10 +29,11 @@ function answers(e: KeyboardEvent, onCard: boolean): boolean {
 // tazuna's permission question over the composer: allow once, always (this command or tool, for the session), or
 // decline. y / a / n answer from the keyboard (see `answers`); nothing answers in the first 600 ms of each question, so a
 // key meant for something else cannot approve a question that just appeared (the terminal's ANSWER_DELAY_MS).
-export function Approval({ asking, onAnswer, keys = true, input }: { asking: NonNullable<View["asking"]>; onAnswer: (allow: boolean, always: boolean) => void;
+export function Approval({ asking, onAnswer, keys = true, input, cwd }: { asking: NonNullable<View["asking"]>; onAnswer: (allow: boolean, always: boolean) => void;
   /** y / a / n answer it (the side chat's question takes clicks only, so keys stay the conversation's) */ keys?: boolean;
   /** what the asked call was given (its step's input): an edit or a write shows what would change */
-  input?: Record<string, unknown> | null }) {
+  input?: Record<string, unknown> | null;
+  /** the conversation's folder: the file's path is shown from it */ cwd?: string }) {
   // auto asks before a destructive command alone (the core's `risky` and `risky_why`; an older core's note says so):
   // why, under the title, as the terminal says it; Allow then no filled button, as plain as Decline, so a reflex click
   // does not take it, and never "always" (design review 13). Risky with no reason said: its note, as before
@@ -67,7 +68,8 @@ export function Approval({ asking, onAnswer, keys = true, input }: { asking: Non
     window.addEventListener("keydown", press);
     return () => window.removeEventListener("keydown", press);
   }, [ready, asking, onAnswer, keys]);
-  // the core sends the tool, what it would do and the note apart (each made safe): shown as they come, nothing cut
+  // the core sends the tool, what it would do and the note apart (each made safe): shown whole, nothing cut (an edit's path
+  // from the project's folder, wrapped where it is long: PathLabel's `wrap`)
   const tool = asking.tool.replace(/^mcp__lean__/, "");
   const what = asking.what;
   const btn = "rounded-md px-2.5 py-1 text-[12px] font-medium disabled:opacity-50";
@@ -84,8 +86,8 @@ export function Approval({ asking, onAnswer, keys = true, input }: { asking: Non
         {why && <div className="-mt-0.5 mb-1.5 pl-[23px] text-[12px] text-warn">{why}</div>}
         {/* an edit or a write: the file, then what would change in it, as the step shows it (it showed the file's name
             alone, design review 12); its own scroll, so the buttons stay in sight */}
-        {input && writes(asking.tool) ? <div className="mb-2.5"><div className="break-all font-mono text-[12px] text-ink select-text">{what}</div>
-          <Given name={asking.tool} input={input} cap="max-h-[min(14rem,28vh)]" /></div>
+        {input && writes(asking.tool) ? <div className="mb-2.5"><PathLabel path={what} cwd={cwd} wrap className="text-[12px] select-text" />
+          <Given name={asking.tool} input={input} cap="max-h-[min(14rem,28vh)]" cwd={cwd} /></div>
           : <pre className="mb-2.5 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-md bg-field px-2.5 py-2 font-mono text-[12px] text-ink select-text">{what}</pre>}
         <div className="flex items-center gap-1.5">
           <button disabled={!ready} onClick={() => answer(true, false)} className={`${btn} border ${risky ? "border-line text-ink" : "border-transparent bg-accent text-on-accent"}`}>Allow <kbd className={`ml-1 font-mono ${risky ? "text-faint" : "opacity-70"}`}>y</kbd></button>

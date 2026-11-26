@@ -2,6 +2,10 @@ import type { ReactNode } from "react";
 import { median, modelLabel, paidTo, pct, tenths, usd, usdExact, writing, type Billing, type Meta, type ToolStep } from "../lib/types";
 import { Mark } from "./Mark";
 
+/** A row number's column, as wide as the largest number and a gap: a fixed 16-20 px ran "111" into the title (the user,
+ * design review 14). */
+const gutter = (most: number) => ({ minWidth: `${String(Math.max(1, most)).length + 1}ch` });
+
 // The receipt (design review 11, variant A of mockups/v8.html): what an answer cost, itemised, on a slip of paper with a
 // torn lower edge. No other harness shows the price of a reply honestly; here it is one faint line under every answer
 // that opens into its model calls, and the conversation's own from the status bar. Real numbers only: a row whose number
@@ -84,7 +88,13 @@ export function demoReceipt() {
 export const tok = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
 /** "41 s", "2 min 5 s"; "<1 s" under a second: the core's time is its own run's, without the model's start, and a quick
  * local answer of 0.25 s read "0 s" (design review 12) */
-export const dur = (secs: number) => { if (secs < 1) return "<1 s"; const s = Math.round(secs); return s < 60 ? `${s} s` : s % 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s / 60} min`; };
+export const dur = (secs: number) => {
+  if (secs < 1) return "<1 s";
+  const s = Math.round(secs);
+  // an hour and more in hours and minutes ("1 h 38 min", not "98 min 35 s": the slip's column ran past its edge)
+  if (s >= 3600) { const m = Math.round((s % 3600) / 60), h = Math.floor(s / 3600) + (m === 60 ? 1 : 0); return m % 60 ? `${h} h ${m} min` : `${h} h`; }
+  return s < 60 ? `${s} s` : s % 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s / 60} min`;
+};
 const took = (ms: number | null) => (ms == null ? "" : ms < 10_000 ? tenths(ms / 1000) : dur(Math.round(ms / 1000)));
 
 const th = "border-b border-line pb-[5px] text-[11.5px] font-medium text-faint";
@@ -194,7 +204,7 @@ export function AnswerSlip({ meta, tools = [], toolsSaid }: { meta: Meta; tools?
           <tbody>
             {calls.map((c, i) => (
               <tr key={i}>
-                <td className={`${first} max-w-0`} title={c.tools || "It wrote the answer"}><span className="inline-block w-4 text-faint">{i + 1}</span>
+                <td className={`${first} max-w-0`} title={c.tools || "It wrote the answer"}><span className="inline-block text-faint" style={gutter(calls.length)}>{i + 1}</span>
                   {c.model ? <>{modelLabel(c.model)} <span className="text-faint">{c.role || c.tools || "Answer"}</span></> : c.tools || "Answer"}</td>
                 <td className={num}>{tok(c.fresh + c.cached)}</td><td className={num}>{tok(c.cached)}<Share part={c.cached} whole={c.fresh + c.cached} /></td><td className={num}>{tok(c.out)}</td>
                 <td className={`${num} ${ttft}`}>{took(c.firstMs) || "–"}</td><td className={`${num} ${speed}`}>{c.tps ? perSec(c.tps) : "–"}</td>
@@ -205,7 +215,7 @@ export function AnswerSlip({ meta, tools = [], toolsSaid }: { meta: Meta; tools?
             ))}
             {ran.length > 0 && (
               <tr>
-                <td className={`${first} max-w-0`} colSpan={4} title="The time the tools themselves took"><span className="inline-block w-4" />Tools <span className="text-faint">{toolsSaid}</span></td>
+                <td className={`${first} max-w-0`} colSpan={4} title="The time the tools themselves took"><span className="inline-block" style={gutter(calls.length)} />Tools <span className="text-faint">{toolsSaid}</span></td>
                 <td className={ttft} /><td className={speed} /><td className={num}>{took(toolMs)}</td>{priced && <td />}
               </tr>
             )}
@@ -213,7 +223,7 @@ export function AnswerSlip({ meta, tools = [], toolsSaid }: { meta: Meta; tools?
                 writing time, the time with the tools' (the user, 2026-11-25, mockups/v11.html) */}
             {calls.length + (ran.length ? 1 : 0) > 1 && (
               <tr className="font-medium text-ink">
-                <td className="max-w-0 truncate border-t border-line pt-[5px]"><span className="inline-block w-4" />Total</td>
+                <td className="max-w-0 truncate border-t border-line pt-[5px]"><span className="inline-block" style={gutter(calls.length)} />Total</td>
                 <td className={tot}>{tok(input)}</td><td className={tot}>{tok(cached)}<Share part={cached} whole={input} /></td><td className={tot}>{tok(sum((c) => c.out) ?? 0)}</td>
                 <td className={`${tot} ${ttft}`} title="the median of the calls">{med == null ? "–" : <>{took(med)}<span className="ml-1 text-[11px] font-normal text-faint">med</span></>}</td>
                 <td className={`${tot} ${speed}`}>{tps ? perSec(tps) : "–"}</td>
@@ -254,11 +264,11 @@ export function ChatSlip({ turns, cost, busy, children }: { turns: Turn[]; /** t
             <td className={num}>{priceSaid(turns.slice(0, -last).reduce((a, t) => a + (t.cost ?? 0), 0), turns.slice(0, -last).some((t) => t.estimate), true)}</td></tr>}
           {turns.slice(-last).map((t, i) => (
             <tr key={i}>
-              <td className={`max-w-[230px] ${first}`} title={t.title}><span className="inline-block w-5 text-faint">{Math.max(0, turns.length - last) + i + 1}</span>{t.title}</td>
+              <td className={`w-full max-w-0 ${first}`} title={t.title}><span className="inline-block text-faint" style={gutter(turns.length)}>{Math.max(0, turns.length - last) + i + 1}</span>{t.title}</td>
               <td className={num}>{t.calls ?? "–"}</td><td className={num}>{dur(t.secs)}</td><td className={num}>{refless(t.billing) ? "not billed" : priceSaid(t.cost, t.estimate, true)}</td>
             </tr>
           ))}
-          {rest > 0 && <tr className="text-faint"><td className={first} colSpan={3}><span className="inline-block w-5" />{busy ? "Running now, so far" : "Not in a finished turn"}</td><td className={num}>{usdExact(rest)}</td></tr>}
+          {rest > 0 && <tr className="text-faint"><td className={first} colSpan={3}><span className="inline-block" style={gutter(turns.length)} />{busy ? "Running now, so far" : "Not in a finished turn"}</td><td className={num}>{usdExact(rest)}</td></tr>}
         </tbody>
       </table>
       <Rule />

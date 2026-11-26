@@ -24,8 +24,8 @@ export function useDialog() {
     };
     el.addEventListener("keydown", trap);
     // focus taken behind the panel (a conversation opening there focuses its message box) comes back; another dialog over
-    // this one keeps it
-    const back = (e: FocusEvent) => { if (!el.contains(e.target as Node) && !(e.target as HTMLElement).closest?.("[role=dialog], [role=alertdialog]")) el.focus(); };
+    // this one keeps it, and so does a menu it opened (PopMenu sits on the body: the usage page's range)
+    const back = (e: FocusEvent) => { if (!el.contains(e.target as Node) && !(e.target as HTMLElement).closest?.("[role=dialog], [role=alertdialog], [role=menu]")) el.focus(); };
     document.addEventListener("focusin", back);
     // focus goes back once the panel is really gone (React's development mode detaches and attaches it once on opening)
     // and only when nothing else took it (an action that moved on, such as New chat into the composer, keeps its focus)

@@ -4,7 +4,8 @@
 //
 //   npm run dev                                   # the app on localhost:1420
 //   node review/sweep.cjs [http://localhost:1420] [out dir]   # needs playwright: npx playwright install chromium
-//   ENGINE=webkit node review/sweep.cjs …         # in WebKit (the Mac app's engine); ONLY=rows: the window's rows alone
+//   ENGINE=webkit node review/sweep.cjs …         # in WebKit (the Mac app's engine); ONLY=rows: the window's rows alone,
+//                                                 # ONLY=steps: a step's insides (diffs, code, gutters) alone
 //
 // BASE may be a built copy too (vite build --base ./, with review/mock.js loaded before the app).
 const chromium = require(process.env.PW || "playwright")[process.env.ENGINE || "chromium"];
@@ -193,6 +194,154 @@ const log = [];
         must(text.includes("Z.ai Coding Plan") && /Z\.ai Coding Plan\s+not billed/.test(text) && !text.includes("No plan runs") && !/\$0(?!\.)/.test(text), `only plans with no price: ${text}`); });
       await c5.close(); }
     if (process.env.ONLY === "stats") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n")); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
+  }
+  // Live stats (desktop/DESIGN.md, Motion; ONLY=live: these alone): a call streaming in the mock (the core's `live` estimate
+  // every 50 ms: 0.8 s to the first token, then 200 t/s), the composer's strip and the Stats (tiles, rows) caught waiting for
+  // the first token, mid-stream, as the call ends and once settled, then the last reply's speed after the reply; both themes,
+  // Live stats on and off. On: the Out count moves between views and never goes back, the strip's parts after a moving number
+  // stand still, the estimates are `muted` and exact ones `ink`; off: nothing moves until the call ends.
+  if (!process.env.ONLY || process.env.ONLY === "live") {
+    const must = (ok, what) => { if (!ok) throw new Error(what); };
+    const VIBE = "Make the request logger";
+    const read = (p) => p.evaluate(() => { const g = document.querySelector("[aria-label=\"This conversation's numbers\"]"), s = document.querySelector("section[aria-label=Stats]");
+      const tile = [...s.querySelectorAll("div")].find((d) => d.textContent === "Out" && d.className.includes("text-faint"))?.nextElementSibling;
+      const out = tile ?? [...s.querySelectorAll("span")].find((d) => d.textContent === "Out")?.parentElement.lastElementChild;
+      const colour = (v) => { const i = document.createElement("i"); i.style.color = `var(${v})`; s.append(i); const c = getComputedStyle(i).color; i.remove(); return c; };
+      const parts = [...g.children], speed = parts[parts.length - 1];
+      return { strip: g.innerText.replace(/\s+/g, " "), lefts: parts.map((e) => e.getBoundingClientRect().left), cut: g.scrollWidth - g.clientWidth, out: out.textContent,
+        outColour: getComputedStyle(out).color, muted: colour("--muted"), ink: colour("--ink"), speed: speed.innerText.replace(/\s+/g, " "), speedTitle: speed.querySelector("[title]")?.getAttribute("title") ?? "",
+        stats: s.innerText.replace(/\s+/g, " ") }; });
+    const ctxOfStrip = (r) => num(r.strip.match(/^([\d.]+k)/)?.[1] ?? "0");
+    const num = (t) => parseFloat(t) * (/k$/.test(t) ? 1000 : 1);
+    // the setting: Settings › Appearance › Live stats, On by default, kept
+    for (const theme of ["dark", "light"]) { const [ctx, p] = await ctxOf({ theme, w: 1280, h: 800 });
+      await step(p, `${theme[0]}-live-setting`, async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(300); await p.getByRole("button", { name: "Appearance" }).click();
+        const g = p.getByRole("radiogroup", { name: "Live stats" });
+        must(await g.getByRole("radio", { name: "On" }).getAttribute("aria-checked") === "true", "Live stats is not on by default");
+        await g.getByRole("radio", { name: "Off" }).click(); await p.waitForTimeout(150); const off = await p.evaluate(() => localStorage.getItem("tazuna.live-stats"));
+        await g.getByRole("radio", { name: "On" }).click(); await p.waitForTimeout(150); const on = await p.evaluate(() => localStorage.getItem("tazuna.live-stats"));
+        must(off === "off" && on === "on", `not kept: ${off} ${on}`); await g.scrollIntoViewIfNeeded(); });
+      await ctx.close(); }
+    for (const theme of ["dark", "light"]) for (const layout of ["tiles", "rows"]) for (const mode of ["on", "off"]) {
+      const T = `${theme[0]}-live-${layout}-${mode}`;
+      const [ctx, p] = await ctxOf({ theme, w: 1440, h: 900, extra: `localStorage.setItem("tazuna.live-stats", "${mode}"); localStorage.setItem("tazuna.stats", "${layout}");` });
+      await open(p, VIBE); await p.getByTitle(/^Open the work panel/).click(); await p.waitForTimeout(700); await p.mouse.move(700, 450);
+      await p.evaluate(() => { window.__PLAY__.start(); window.__PLAY__.next(); }); await p.waitForTimeout(800);
+      // the call starts: the context moves by its input eased (158.3k, the last call's input and output, to 158.9k), never a jump
+      await p.evaluate(() => { window.__PLAY__.stream(200); });
+      const start = []; for (let i = 0; i < 12; i++) { start.push(ctxOfStrip(await read(p))); await p.waitForTimeout(30); }
+      await step(p, `${T}-wait`, async () => { const r = await read(p); log.push(`${T} waiting: ${r.strip}; the context at the start ${[...new Set(start)].join(" → ")}`);
+        if (mode === "on") must(new Set(start).size >= 3 && start.every((x, i) => !i || x >= start[i - 1]), `the start jumped: ${start.join(" ")}`);
+        must(mode === "on" ? /^(<0\.1|\d\.\d) s$/.test(r.speed) && r.speedTitle.startsWith("Time to first token, counting") : /t\/s$/.test(r.speed), `the first token's wait: ${r.speed} | ${r.speedTitle}`); });
+      await p.waitForTimeout(700);
+      await step(p, `${T}-mid`, async () => {
+        const seen = []; for (let i = 0; i < 50; i++) { seen.push(await read(p)); await p.waitForTimeout(25); }
+        const outs = seen.map((r) => r.out), still = seen.map((r) => r.lefts.slice(1).join()), r = seen[seen.length - 1];
+        log.push(`${T} mid: Out ${[...new Set(outs)].slice(0, 6).join(" → ")}… (${new Set(outs).size} values), strip ${r.strip}`);
+        must(seen.every((x) => x.cut <= 0), `the strip spills: ${r.cut}`);
+        // on the plan (each call says so): at API prices, not billed, while it runs too; a sparkline's tile does not come for the call in flight
+        must(r.strip.includes("at API prices · not billed") && !r.strip.includes("so far"), `the plan's words: ${r.strip}`);
+        must(layout !== "tiles" || !r.stats.includes("Writing speed"), `a speed tile for the call in flight: ${r.stats}`);
+        if (mode === "on") {
+          must(outs.every((o, i) => !i || num(o) >= num(outs[i - 1])) && new Set(outs).size >= 12, `the count: ${outs.join(" ")}`);
+          must(new Set(still).size === 1, `the strip moved: ${[...new Set(still)].join(" | ")}`);
+          must(r.outColour === r.muted && /t\/s$/.test(r.speed), `the estimate: ${r.outColour} (muted ${r.muted}), ${r.speed}`);
+        } else must(new Set(outs).size === 1 && r.outColour === r.ink, `off moved: ${[...new Set(outs)].join(" ")}`); });
+      // the call ends: its exact numbers (260 + 1,900 out this turn), eased there
+      await p.evaluate(() => { window.__PLAY__.next(); }); await p.waitForTimeout(120); await p.screenshot({ path: `${OUT}/${T}-settling.png` });
+      await p.waitForTimeout(600);
+      await step(p, `${T}-settled`, async () => { const r = await read(p); log.push(`${T} settled: Out ${r.out}, ${r.strip}`);
+        // the context is the call's input and output (158.9k + 1.9k), as it was while it ran: no drop at the end
+        must(r.out === "2.2k" && r.outColour === r.ink && /^160\.8k of 256k/.test(r.strip), `settled: ${JSON.stringify(r)}`); });
+      await p.evaluate(() => { window.__PLAY__.end(); }); await p.waitForTimeout(500);
+      await step(p, `${T}-final`, async () => { const r = await read(p); log.push(`${T} after the reply: ${r.speed} (${r.speedTitle})`);
+        must(/^\d+ t\/s$/.test(r.speed) && r.speedTitle.startsWith("Average writing speed of the last reply"), `the last reply's speed: ${r.speed} | ${r.speedTitle}`); });
+      // an estimate over the exact count (270 for 260) settles without counting back down
+      if (mode === "on" && layout === "tiles") await step(p, `${T}-overshoot`, async () => {
+        await p.evaluate(() => { window.__PLAY__.start(); window.__PLAY__.stream(2000); }); await p.waitForTimeout(1400);
+        const before = (await read(p)).out; await p.evaluate(() => { window.__PLAY__.next(); });
+        const after = []; for (let i = 0; i < 20; i++) { after.push((await read(p)).out); await p.waitForTimeout(25); }
+        log.push(`${T} over the exact count: ${before} → ${[...new Set(after)].join(" → ")}`);
+        must(before === "270" && after[after.length - 1] === "260" && after.every((o) => o === "270" || o === "260"), `counted down: ${before} ${after.join(" ")}`); });
+      await ctx.close();
+    }
+    if (process.env.ONLY === "live") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n")); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
+  }
+  // the usage page's ranges (ONLY=usage: these alone): the menu by the keyboard, every preset and All with its bars and
+  // words, a range picked by hand over midnight, one with nothing in it, the last 15 minutes with nothing (today's runs
+  // left out), the range kept on reopening; both themes, 1000 px wide. Nothing wider than the page, the axis' three labels apart
+  if (!process.env.ONLY || process.env.ONLY === "usage") {
+    const must = (ok, what) => { if (!ok) throw new Error(what); };
+    const local = (d) => new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    for (const theme of ["dark", "light"]) {
+      const T = `range-${theme[0]}`, [ctx, p] = await ctxOf({ theme, w: 1000, h: 900 });
+      const dlg = p.getByRole("dialog", { name: "Usage" }), btn = dlg.locator("button[aria-haspopup=menu]");
+      const fits = () => dlg.evaluate((d) => { const body = d.querySelector(".overflow-auto"), axis = [...d.querySelectorAll(".justify-between > span")].map((s) => s.getBoundingClientRect());
+        return { wide: body.scrollWidth - body.clientWidth, apart: axis.every((r, i) => !i || r.left >= axis[i - 1].right + 4), bars: d.querySelectorAll("[role=group] > span").length }; });
+      const pick = async (name) => { await btn.click(); await p.getByRole("menuitem", { name }).click(); await p.waitForTimeout(300); };
+      // what the page asks the core (the start page's own asks have no `since`)
+      await p.evaluate(() => { const T = window.__TAURI_INTERNALS__, inv = T.invoke.bind(T); window.__asks = [];
+        T.invoke = (cmd, args, o) => { if (cmd === "op" && args?.msg?.op === "usage" && args.msg.since != null) window.__asks.push({ ...args.msg, tid: args.tid }); return inv(cmd, args, o); }; });
+      const asks = () => p.evaluate(() => window.__asks);
+      await p.keyboard.press("Control+Shift+U"); await p.waitForTimeout(900);
+      await step(p, `${T}-menu`, async () => { await btn.focus(); await p.keyboard.press("Enter"); await p.waitForTimeout(150); await p.keyboard.press("ArrowDown");
+        must(await p.getByRole("menuitem", { name: "Last hour" }).evaluate((e) => e === document.activeElement), "the menu's arrows"); });
+      await step(p, `${T}-menu-esc`, async () => { await p.keyboard.press("Escape"); await p.waitForTimeout(250);
+        must(await dlg.isVisible() && await btn.evaluate((e) => e === document.activeElement), "Esc shuts the menu alone, the focus back on its button"); });
+      const want = { "Last 15 minutes": [/The last 15 minutes from the run log/, /max \$\S+ a minute/, [15, 16]], "Last hour": [/The last hour/, /per 5 minutes/, [12, 13]], "Last 3 hours": [/The last 3 hours/, /per 15 minutes/, [12, 13]],
+        "Last 24 hours": [/The last 24 hours/, /an hour/, [24, 25]], "Last 7 days": [/The last 7 days/, /a day/, [7]], "Last 30 days": [/The last 30 days/, /a day/, [30]], "Last 90 days": [/The last 90 days/, /a day/, [90]],
+        "All time": [/Everything in the run log, since \w+ \d+ \(the first run\)/, /a day/, [30, 31]] };
+      for (const [name, [note, max, bars]] of Object.entries(want)) await step(p, `${T}-${name.toLowerCase().replace(/\s+/g, "-")}`, async () => {
+        await pick(name); const text = await dlg.innerText(), f = await fits();
+        must(note.test(text) && max.test(text) && bars.includes(f.bars) && f.wide <= 0 && f.apart && (await btn.innerText()).trim() === name, `${name}: ${JSON.stringify(f)} ${text.slice(text.indexOf("Spending"), text.indexOf("Spending") + 260)}`);
+        await dlg.locator("[role=group]").hover(); });
+      // the lower half under the last hour: the table and How the runs went, open, on the same range
+      // the signals (every recording read) only once the fold opens, for the page's range
+      await step(p, `${T}-last-hour-below`, async () => { await pick("Last hour"); const before = await asks();
+        await dlg.getByText("How the runs went").click(); await p.waitForTimeout(200); const after = await asks();
+        must(before.length && before.every((a) => !a.signals) && after.length === before.length + 1 && after.at(-1).signals && after.at(-1).since === before[0].since, `the signals: ${JSON.stringify([before, after.at(-1)])}`);
+        await dlg.getByText("The same range as Spending").scrollIntoViewIfNeeded(); must((await fits()).wide <= 0, "the lower half wider than the page"); });
+      await dlg.getByText("How the runs went").click({ timeout: 3000 }).catch(() => {});
+      // the start page's refresh after a turn (90 days from later, no signals): the page asks its own range again, and keeps its rows meanwhile
+      await step(p, `${T}-refresh`, async () => { const before = await asks(), a = before.at(-1);
+        await p.evaluate((a) => window.__TAURI_INTERNALS__.emit("tazuna-view", { tid: a.tid, msg: { type: "usage", rows: [], since: a.since + 3600, signals: false } }), a); await p.waitForTimeout(300);
+        const after = await asks(), f = await fits(); must(after.length === before.length + 1 && after.at(-1).since === a.since && [12, 13].includes(f.bars), `the refresh: ${JSON.stringify([a, after.at(-1), f])}`); });
+      // yesterday 9am to 2pm today: hours over midnight
+      const now = new Date(), y9 = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 9), t14 = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 14);
+      await step(p, `${T}-custom`, async () => { await pick("Custom range…");
+        must(await dlg.getByLabel("From").evaluate((e) => e === document.activeElement), "the range's start takes the focus");
+        await dlg.getByLabel("From").fill(local(y9)); await dlg.getByLabel("To").fill(local(t14)); await p.waitForTimeout(300);
+        const text = await dlg.innerText(), f = await fits(), label = (await btn.innerText()).trim();
+        must(/^\w+ \d+, 9am – \w+ \d+, 2pm$/.test(label) && text.includes(`${label.replace(" – ", " to ")} from the run log.`) && /an hour/.test(text) && f.bars === 30 && f.wide <= 0 && f.apart, `custom: ${label} ${JSON.stringify(f)}`); });
+      // the end before the start takes the start along
+      await step(p, `${T}-custom-swap`, async () => { await dlg.getByLabel("To").fill(local(new Date(y9.getTime() - 3600e3))); await p.waitForTimeout(250);
+        must(await dlg.getByLabel("From").inputValue() === local(new Date(y9.getTime() - 3600e3)), "start after end"); });
+      // 8pm to 2am: nothing ran then in the test data
+      await step(p, `${T}-custom-empty`, async () => { await dlg.getByLabel("From").fill(local(new Date(y9.getTime() + 11 * 3600e3))); await dlg.getByLabel("To").fill(local(new Date(t14.getTime() - 12 * 3600e3))); await p.waitForTimeout(300);
+        const text = await dlg.innerText(); must(/Nothing ran from \w+ \d+, 8pm to \w+ \d+, 2am\./.test(text) && !(await fits()).bars, `custom empty: ${text.slice(text.indexOf("Spending"), text.indexOf("Spending") + 200)}`); });
+      // a year before 1970 (years 1 to 99 read as 1901 to 1999) is no start: the range stays, the page never waits on it
+      await step(p, `${T}-custom-1970`, async () => { const label = (await btn.innerText()).trim();
+        for (const v of ["1950-01-01T00:00", "0050-01-01T00:00"]) { await dlg.getByLabel("From").fill(v); await p.waitForTimeout(200); }
+        const text = await dlg.innerText(); must((await btn.innerText()).trim() === label && !text.includes("Reading the run log") && !(await asks()).some((a) => a.since < 0), `before 1970: ${label} ${text.slice(text.indexOf("Spending"), text.indexOf("Spending") + 120)}`); });
+      // the range picked by hand comes back as it was, from another range or picked again
+      await step(p, `${T}-custom-kept`, async () => { const label = (await btn.innerText()).trim(); await pick("Last hour"); await pick("Custom range…"); const back = (await btn.innerText()).trim();
+        await pick("Custom range…"); must(back === label && (await btn.innerText()).trim() === label, `the custom range kept: ${label} | ${back}`); });
+      await pick("Last 15 minutes"); await esc(p);
+      // today's runs gone: the last 15 minutes empty, the range kept on reopening
+      await p.evaluate(() => { window.__NO_TODAY__ = true; });
+      await step(p, `${T}-empty`, async () => { await p.keyboard.press("Control+Shift+U"); await p.waitForTimeout(900); const text = await dlg.innerText();
+        must(text.includes("Nothing ran in the last 15 minutes.") && !(await fits()).bars && (await btn.innerText()).trim() === "Last 15 minutes", `empty: ${text.slice(text.indexOf("Spending"), text.indexOf("Spending") + 200)}`); });
+      log.push(`${T} page errors: ${JSON.stringify(p.errs.slice(0, 5))}`);
+      await ctx.close();
+    }
+    // a rolling range moves on while the page is open: two minutes on, the last 15 minutes end two minutes later
+    { const [ctx, p] = await ctxOf({ w: 1000, h: 900, extra: `localStorage.setItem("tazuna.usage-range", '{"key":"15m"}')` });
+      await p.clock.install(); await p.keyboard.press("Control+Shift+U"); await p.waitForTimeout(900);
+      const dlg = p.getByRole("dialog", { name: "Usage" }), right = () => dlg.locator(".justify-between > span").last().innerText();
+      await step(p, "range-tick", async () => { const was = await right(); await p.clock.runFor(120_000); await p.waitForTimeout(200); const is = await right();
+        must(was !== is && /\d(am|pm)$/.test(is), `the last 15 minutes after two minutes: ${was} → ${is}`); });
+      await ctx.close(); }
+    if (process.env.ONLY === "usage") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok"); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
   }
   // design review 14's picks from mockups/v12.html (ONLY=v12: these alone, with v13's below; ONLY=v13: v13's alone): the composer's pills with no fill (a hairline on
   // hover), sentence-case modes and the short placeholder, in a 520 px box too; the Stats as rows (Settings › Appearance ›
@@ -572,6 +721,157 @@ const log = [];
       await c2.close();
     }
     if (process.env.ONLY === "r14") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok"); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
+  }
+  // review 14, a step's insides (ONLY=steps: these alone; review/mock.js "Order the summary lines"): every kind of step
+  // unfolded, its code drawn as code: a read's numbers in a gutter (none in a copy) and its long lines hanging under their
+  // indent in the code's column, a printed file (`sed -n 1,40p x.ts` after a cd into a folder of the project, said "in …")
+  // and a numbered search coloured by the file's language, an edit and a multi-edit as diffs (rows tinted, changed words
+  // marked, the "updated successfully" hidden), a new file with its numbers, a Python and a YAML read, a cd into the project
+  // left out; in both themes, under every accent, in the approval card (edit, multi-edit, write), and the review pane on
+  // the same rows (a click on a line still comments)
+  if (!process.env.ONLY || process.env.ONLY === "steps") {
+    const ok = (c, what) => { if (!c) throw new Error(what); };
+    // a check whose picture is its own element's (no page shot beside it)
+    const check = async (name, fn) => { try { await fn(); log.push(`ok ${name}`); } catch (e) { log.push(`FAIL ${name}: ${String(e).split("\n")[0]}`); } };
+    const shot = async (p, el, name) => { await el.evaluate((e) => e.scrollIntoView({ block: "center" })); await p.mouse.move(2, 2); await p.waitForTimeout(150); await el.screenshot({ path: `${OUT}/${name}.png` }); };
+    // what a copy of a box takes: its text as selected, the gutters' numbers and signs drawn by CSS left out
+    const copied = (el) => el.evaluate((e) => { const s = getSelection(); s.selectAllChildren(e); const t = s.toString(); s.removeAllRanges(); return t; });
+    const guts = (el) => el.locator(".tz-gut").evaluateAll((g) => g.map((e) => e.dataset.n).filter(Boolean));
+    // the contrast of every coloured text in a diff's tinted rows (their tokens, signs, marked words) against what is under it:
+    // the card, the row's tint, a mark's over it, composited in a canvas as the screen does; the lowest, and where
+    const lowest = (box) => box.evaluate((root) => {
+      const c = document.createElement("canvas").getContext("2d", { willReadFrequently: true }); c.canvas.width = c.canvas.height = 1;
+      const px = (...fills) => { c.clearRect(0, 0, 1, 1); for (const f of fills) { c.fillStyle = "#000"; c.fillStyle = f; c.fillRect(0, 0, 1, 1); } return [...c.getImageData(0, 0, 1, 1).data].slice(0, 3); };
+      const L = (p) => { const [r, g, b] = p.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+      const ratio = (a, b) => { const [h, l] = [L(a), L(b)].sort((x, y) => y - x); return (h + 0.05) / (l + 0.05); };
+      const card = getComputedStyle(root).backgroundColor;
+      let low = { ratio: 99, what: "" };
+      for (const row of root.querySelectorAll(".bg-diff-add, .bg-diff-del")) for (const el of [...row.querySelectorAll("span[class*=tok-], mark, .tz-gut")]) {
+        if (el.classList.contains("tz-gut") && !el.dataset.n) continue;
+        const under = [card, getComputedStyle(row).backgroundColor, ...(el.closest("mark") ? [getComputedStyle(el.closest("mark")).backgroundColor] : [])];
+        const r = ratio(px(getComputedStyle(el).color), px(...under));
+        if (r < low.ratio) low = { ratio: Math.round(r * 100) / 100, what: `${el.tagName.toLowerCase()}.${el.className} "${el.textContent || el.dataset.n}"` };
+      }
+      return { ...low, inMarks: root.querySelectorAll("mark span").length };
+    });
+    const KINDS = ["read-ts", "sed-ts", "grep-ts", "edit", "multi-edit", "write", "read-py", "read-yaml", "cd-project", "deep-path"];
+    for (const theme of ["dark", "light"]) {
+      const T = `steps-${theme[0]}`, [ctx, p] = await ctxOf({ theme, w: 1280, h: 900 });
+      const rows = p.locator("[data-msg] button:has(svg.lucide-chevron-right)"), at = (k) => rows.nth(KINDS.indexOf(k) + 1).locator("xpath=../..");
+      await step(p, `${T}-unfolded`, async () => {
+        await open(p, "Order the summary lines");
+        await p.getByRole("button", { name: /^Worked/ }).first().click(); await p.waitForTimeout(300);
+        for (let i = 1; i <= KINDS.length; i++) { await rows.nth(i).click(); await p.waitForTimeout(60); }
+        await p.waitForTimeout(300);
+      });
+      for (const k of KINDS) await check(`${T}-${k}`, async () => {
+        const el = at(k), text = await el.innerText();
+        if (k === "read-ts") {
+          const code = el.locator(".border-line.bg-card");
+          ok(JSON.stringify(await guts(code)) === JSON.stringify(["88", "89", "90", "91", "92", "93", "94", "95"]), `the read's gutter: ${await guts(code)}`);
+          const c = await copied(code);
+          ok(c.startsWith("  // A hold") && !/\b88\b/.test(c), `a copy of the read takes its numbers: ${c.slice(0, 60)}`);
+          // the long comment wraps under its indent, in the code's column: its second line starts right of its first and of the gutter
+          const wrap = await code.locator(".tok-comment").first().evaluate((e) => { const r = document.createRange(); r.selectNodeContents(e); const rs = [...r.getClientRects()];
+            const gut = e.closest(".flex").querySelector(".tz-gut").getBoundingClientRect(); return { lines: rs.length, first: rs[0].left, second: rs[1]?.left, gut: gut.right }; });
+          ok(wrap.lines >= 2 && wrap.second > wrap.first && wrap.second > wrap.gut + 20, `the read's long line: ${JSON.stringify(wrap)}`);
+        }
+        if (k === "sed-ts") {
+          const given = el.locator("[title]").filter({ hasText: "$ sed" }).first();
+          ok((await given.innerText()).startsWith("in src/routes/orders $ sed -n 1,40p summary.unit.ts") && (await given.getAttribute("title")).startsWith('cd "/Users/x/api-gateway/src/routes/orders" && sed'), `the command: ${await given.innerText()}`);
+          ok(await el.locator(".bg-card .tok-keyword").count() > 3 && await el.locator(".bg-card .tok-string").count() > 3 && !(await guts(el)).length, "the printed file is not coloured as TypeScript, or has a gutter");
+        }
+        if (k === "grep-ts") ok(JSON.stringify(await guts(el.locator(".bg-card"))) === '["141","156"]' && await el.locator(".bg-card .tok-keyword").count() > 2, `the search's gutter: ${await guts(el)}`);
+        if (k === "edit" || k === "multi-edit") {
+          ok(!/updated successfully|Applied 2 edits/.test(text), `${k}: its result that only says it worked shows`);
+          const box = el.locator(".bg-card").first(), add = box.locator(".bg-diff-add").first();
+          ok(await box.locator(".bg-diff-del").count() >= 1 && await add.count(), `${k}: no tinted rows`);
+          const tint = await add.evaluate((e) => [getComputedStyle(e).backgroundColor, getComputedStyle(e.closest(".bg-card")).backgroundColor]);
+          ok(tint[0] !== tint[1] && !/rgba\(0, 0, 0, 0\)|transparent/.test(tint[0]), `${k}: the row's tint ${tint}`);
+          ok(!/^[+−-]/m.test(await copied(box)), `${k}: a copy takes the signs`);
+          // every coloured text on a tinted row reads 4.5:1, a marked word in ink 7:1 (review of review 14: tokens in a mark fell to 3.0)
+          const low = await lowest(box);
+          ok(low.ratio >= 4.5 && !low.inMarks, `${k}: ${JSON.stringify(low)}`);
+          const marked = await box.locator("mark").first().evaluate((m) => getComputedStyle(m).color === getComputedStyle(document.body).color);
+          ok(marked, `${k}: a marked word is not in ink`);
+          log.push(`${theme} ${k} lowest contrast on a tinted row ${low.ratio} (${low.what})`);
+          if (k === "edit") ok((await box.locator("mark.bg-diff-add-word").innerText()).includes("sortSummaryLines"), "the edit's changed words are not marked");
+          if (k === "multi-edit") ok(await box.locator(":scope > div").count() === 2, "the multi-edit is not two pieces");
+        }
+        if (k === "write") {
+          ok(text.includes("new file · 10 lines") && (await guts(el)).join(",") === "1,2,3,4,5,6,7,8,9,10" && !text.includes("created successfully"), `the write: ${text.slice(0, 120)}`);
+          // its blank lines copy as nothing, not a space
+          const c = await copied(el.locator(".bg-card"));
+          ok(c.includes("as const;\n\nexport type") && !/\n[ \u200b]+\n/.test(c), `a copy of the write: ${JSON.stringify(c.slice(0, 160))}`);
+        }
+        if (k === "read-py") ok((await el.locator(".tok-comment").allInnerTexts()).some((t) => t.startsWith("# next to this script")), "the Python comment is not a comment");
+        if (k === "read-yaml") ok((await el.locator(".tok-comment").allInnerTexts()).some((t) => t.startsWith("# runs on every push")), "the YAML comment is not a comment");
+        if (k === "cd-project") ok(/^\$ npm test -- summary/.test(await el.locator("[title]").filter({ hasText: "$ npm" }).first().innerText()), `the cd into the project shows: ${text}`);
+        if (k === "deep-path") {
+          // the folder cut from its left, the file name whole, the whole path on hover
+          const cut = await rows.nth(KINDS.indexOf(k) + 1).locator("[title$='SummaryLineDetailBadge.tsx']").evaluate((e) => {
+            const [dir, name] = e.children; return { dir: dir.scrollWidth > dir.clientWidth + 1, name: name.scrollWidth <= name.clientWidth + 1, title: e.title, left: getComputedStyle(dir).direction }; });
+          ok(cut.dir && cut.name && cut.left === "rtl" && cut.title.startsWith("/Users/x/api-gateway/packages/"), `the deep path: ${JSON.stringify(cut)}`);
+        }
+        await shot(p, el, `${T}-${k}-step`);
+      });
+      // the tints are the result colours', whatever the accent: an edit and a multi-edit under each
+      await check(`${T}-accents`, async () => {
+        for (const accent of ["ai", "indigo", "jade", "amber", "rose", "graphite"]) {
+          await p.evaluate((a) => { document.documentElement.dataset.accent = a; }, accent);
+          const a = await at("edit").boundingBox(), b = (await at("multi-edit").evaluate((e) => (e.scrollIntoView({ block: "center" }), 0)), await at("multi-edit").boundingBox());
+          const top = (await at("edit").boundingBox()).y;
+          await p.mouse.move(2, 2); await p.waitForTimeout(100);
+          await p.screenshot({ path: `${OUT}/${T}-accent-${accent}.png`, clip: { x: b.x - 4, y: Math.max(0, top - 4), width: b.width + 8, height: b.y + b.height - top + 8 } });
+          ok(a && b, "no edit steps");
+        }
+        await p.evaluate(() => { delete document.documentElement.dataset.accent; });
+      });
+      // the approval card: what would change, as the step draws it, under the file's path from the project
+      for (const kind of ["edit", "multi", "write"]) await step(p, `${T}-approval-${kind}`, async () => {
+        await p.evaluate((k) => window.__STEPS__.ask(k), kind); await p.waitForTimeout(400);
+        const card = p.locator("[data-asking]");
+        await card.getByText("Allow this edit?").waitFor({ timeout: 4000 });
+        const t = await card.innerText();
+        ok(t.includes("src/routes/orders/") && !t.includes("/Users/x/api-gateway"), `the card's path: ${t.slice(0, 120)}`);
+        // before its result a write may be over a file: "whole file", never "new file" (review of review 14)
+        ok(kind === "write" ? t.includes("whole file · 10 lines") && !t.includes("new file") : await card.locator(".bg-diff-add").count() > 0, `the card's change: ${t.slice(0, 200)}`);
+        await card.screenshot({ path: `${OUT}/${T}-approval-${kind}-card.png` });
+      });
+      // a path outside the project, long: wrapped in the card, its "~/" kept (it was cut from the left and read as inside)
+      await step(p, `${T}-approval-far`, async () => {
+        await p.evaluate(() => window.__STEPS__.ask("far")); await p.waitForTimeout(400);
+        const card = p.locator("[data-asking]"), path = card.locator("[title$='config.ts']").first();
+        await card.getByText("Allow this edit?").waitFor({ timeout: 4000 });
+        const t = await path.innerText(), cut = await path.evaluate((e) => e.scrollWidth > e.clientWidth + 1);
+        ok(t.replace(/\s/g, "") === "~/other-app/src/features/settings/components/forms/advanced/sections/billing/config.ts" && !cut, `the far path: ${t} (cut ${cut})`);
+        await card.screenshot({ path: `${OUT}/${T}-approval-far-card.png` });
+      });
+      // one minified line of 476 KB in the card: drawn plain, at once (it took 32 s)
+      await step(p, `${T}-approval-huge`, async () => {
+        const ms = await p.evaluate(async () => { const t0 = performance.now(); window.__STEPS__.ask("huge");
+          for (let i = 0; i < 400 && !document.querySelector("[data-asking] [title$='vendor.min.js']"); i++) await new Promise((r) => setTimeout(r, 5));
+          await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0))); return performance.now() - t0; });
+        const card = p.locator("[data-asking]");
+        ok(ms < 1500 && !(await card.locator("span[class*=tok-]").count()) && (await card.innerText()).includes("whole file · 1 line"), `the huge write took ${Math.round(ms)} ms`);
+        log.push(`${theme} a 476 KB one-line write in the card: ${Math.round(ms)} ms`);
+      });
+      // the review pane on the shared rows: its numbers, tints and marks as before, and a click on a line still comments
+      await step(p, `${T}-review-pane`, async () => {
+        await p.evaluate(() => window.__STEPS__.done()); await p.waitForTimeout(400);
+        await p.getByTitle(/Go through this turn/).first().click(); await p.waitForTimeout(600);
+        const pane = p.locator("section[aria-label='Review changes']");
+        ok(await pane.locator(".bg-diff-add").count() > 3 && await pane.locator("mark.bg-diff-add-word").count() > 0, "the review's rows lost their tints or marks");
+        const first = pane.locator("[role=button][aria-label^='Comment on line']").first();
+        ok(!/^\s*\d/.test(await copied(first)), "a copy of the review's line takes its number");
+        await first.click(); await p.waitForTimeout(200);
+        ok(await pane.locator("textarea").count() === 1, "a click on the review's line wrote no comment");
+        await p.screenshot({ path: `${OUT}/${T}-review-pane-comment.png` });
+        await pane.locator("textarea").press("Escape"); await p.waitForTimeout(150);
+      });
+      await ctx.close();
+    }
+    if (process.env.ONLY === "steps") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok"); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
   }
   const rows = [];
   for (const [mac, theme, w, h] of [true, false].flatMap((mac) => ["dark", "light"].flatMap((theme) => (mac ? [[1440, 900], [1280, 800], [960, 600], [760, 640]] : [[1440, 900], [960, 600]]).map(([w, h]) => [mac, theme, w, h])))) {

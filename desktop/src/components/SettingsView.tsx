@@ -7,7 +7,7 @@ import { safeMode } from "../lib/plugins";
 import { HOTKEY, core, defaultHotkey, type GalleryItem, type Hook, type Mcp, type Provider, type Settings, type SignIn } from "../lib/tazuna";
 import { matchesWords } from "../lib/types";
 import { dryRun, summary, widgets, type UserWidget } from "../lib/widgets";
-import { ACCENT, ACCENTS, NUMBERS, PROSE, STATS, TEXT_SIZES, THEME, ZOOM, accentNow, look } from "../lib/chrome";
+import { ACCENT, ACCENTS, LIVE, NUMBERS, PROSE, STATS, TEXT_SIZES, THEME, ZOOM, accentNow, look } from "../lib/chrome";
 import { Parts } from "./Sep";
 import { accentButton, Segmented, Swatches, dialogShell, quietButton } from "./Controls";
 import { ClaudeButtons, ClaudeNote, useClaude } from "./Setup";
@@ -39,7 +39,7 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
   const setTab = (t: string) => { localStorage.setItem(TAB, t); setTabNow(t); };
   // how the window looks (lib/chrome.ts keeps and applies it)
   const [looks, setLooks] = useState(() => ({ theme: localStorage.getItem(THEME) ?? "system", accent: accentNow(), zoom: localStorage.getItem(ZOOM) ?? "1", prose: localStorage.getItem(PROSE) ?? "serif",
-    stats: localStorage.getItem(STATS) === "rows" ? "rows" : "tiles", numbers: localStorage.getItem(NUMBERS) ?? "under" }));
+    stats: localStorage.getItem(STATS) === "rows" ? "rows" : "tiles", numbers: localStorage.getItem(NUMBERS) ?? "under", live: localStorage.getItem(LIVE) === "off" ? "off" : "on" }));
   const setLook = (key: string, name: keyof typeof looks, v: string) => { look(key, v); setLooks((l) => ({ ...l, [name]: v })); };
   // a provider's key field shows when asked for (seven open fields down the page read as a form to fill in)
   const [keyFor, setKeyFor] = useState<string | null>(focus ?? null);
@@ -241,6 +241,10 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
             <Row title="Conversation numbers">
               <Segmented label="Conversation numbers" value={looks.numbers} options={[["under", "Under the box"], ["above", "Above the box"], ["bar", "In the status bar"], ["off", "Off"]]}
                 onChange={(v) => setLook(NUMBERS, "numbers", v)} />
+            </Row>
+            {/* they and the Stats count every frame while a reply streams, or move as each model call ends */}
+            <Row title="Live stats">
+              <Segmented label="Live stats" value={looks.live} options={[["on", "On"], ["off", "Off"]]} onChange={(v) => setLook(LIVE, "live", v)} />
             </Row>
           </Section>
           {!st && tab !== "Appearance" && <div className="text-[12.5px] text-faint">Loading…</div>}

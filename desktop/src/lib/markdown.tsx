@@ -49,21 +49,56 @@ function inline(text: string): ReactNode[] {
 const KW = new Set(("fn let mut const var function return if else for while loop match in of import export from as use pub " +
   "struct enum impl trait type interface class def self this new await async try catch except finally raise throw " +
   "true false null None True False nil package func go defer break continue switch case default where with yield").split(" "));
+// more of them where the file's language is known (in a block without one, "is", "and" or "do" may well be words)
+const KW_MORE = new Set(("readonly extends implements typeof keyof instanceof undefined void static private protected public abstract satisfies " +
+  "declare namespace elif lambda pass not and or is then fi do done esac local mod crate super dyn unsafe range chan").split(" "));
+// SQL's, in any case
+const SQL = new Set("select from where join left right inner outer on insert into values update set delete create table index alter drop and or not null is in as order by group having limit offset distinct union all case when then else end primary key references default begin commit".split(" "));
 
-/** A code line in colours: comments, strings, numbers, keywords (also the review's diff lines). */
-export function code(line: string, key: number, newline = true): ReactNode {
-  const parts = line.split(/(\/\/.*$|#(?![\w[!]).*$|--\s.*$|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b\d[\d_.]*\b|\b[A-Za-z_]\w*\b)/);
-  return (
-    <span key={key}>
-      {parts.map((p, i) => !p ? null
-        : /^(\/\/|#|--\s)/.test(p) ? <span key={i} className="tok-comment">{p}</span>
-        : /^["'`]/.test(p) ? <span key={i} className="tok-string">{p}</span>
-        : /^\d/.test(p) ? <span key={i} className="tok-number">{p}</span>
-        : KW.has(p) ? <span key={i} className="tok-keyword">{p}</span>
-        : p)}
-      {newline && "\n"}
-    </span>
-  );
+// a file's language by its extension (or its name): the highlighter's comment marks follow it (lib/steps.ts reads a step's
+// file by it); none: plain text
+const EXT: Record<string, string> = {};
+for (const [lang, exts] of Object.entries({ ts: "ts tsx mts cts", js: "js jsx mjs cjs", json: "json jsonc json5", rs: "rs", go: "go", py: "py pyi",
+  rb: "rb rake", java: "java", kt: "kt kts", swift: "swift", c: "c h", cpp: "cpp cc cxx hpp hh", cs: "cs", php: "php", sh: "sh bash zsh fish env",
+  yaml: "yml yaml", toml: "toml ini cfg", sql: "sql", md: "md mdx markdown txt", css: "css", scss: "scss sass less", html: "html htm xml svg", vue: "vue",
+  svelte: "svelte", lua: "lua", dart: "dart", scala: "scala", r: "r" })) for (const e of exts.split(" ")) EXT[e] = lang;
+export function langOf(path?: string | null): string | null {
+  const name = (path ?? "").slice(Math.max((path ?? "").lastIndexOf("/"), (path ?? "").lastIndexOf("\\")) + 1);
+  if (/^(Dockerfile|Makefile|\.env(\..*)?|\.\w*rc)$/.test(name)) return "sh";
+  return name.includes(".") ? EXT[name.slice(name.lastIndexOf(".") + 1).toLowerCase()] ?? null : null;
+}
+
+// comment marks by language: // (not a URL's, after "(" or ":": `url(//cdn…)`) and /* */ in the C-likes, # after a space or
+// at the start in the shells, Python, YAML, TOML and Ruby (not ${#x}), -- in SQL and Lua, <!-- --> in markup; a block
+// without its language keeps the usual guess. A JSDoc line's leading * is read in code() (a line is coloured alone)
+const SLASH = String.raw`(?<![:(])\/\/.*$|\/\*.*?(?:\*\/|$)`, BLOCK = String.raw`\/\*.*?(?:\*\/|$)`, MARKUP = "<!--.*?(?:-->|$)";
+const COMMENTS: Record<string, string> = { any: String.raw`(?<![:(])\/\/.*$|#(?![\w[!]).*$|--\s.*$`, hash: String.raw`(?<!\S)#.*$`, dash: "--.*$", slash: SLASH, css: BLOCK, html: MARKUP, mixed: `${SLASH}|${MARKUP}` };
+// data and markup: only their literals read as keywords ("name: Build and test" has none)
+const DATA = new Set(["yaml", "toml", "json", "html", "css", "scss"]), LITERALS = new Set("true false null None True False nil".split(" "));
+const FAMILY: Record<string, string> = { py: "hash", rb: "hash", sh: "hash", yaml: "hash", toml: "hash", r: "hash", sql: "dash", lua: "dash", css: "css", html: "html", vue: "mixed", svelte: "mixed" };
+const TOKENS = String.raw`"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\`(?:\\.|[^\`\\])*\`|\b\d[\d_.]*\b|\b[A-Za-z_]\w*\b`;
+const SPLITS = new Map<string, RegExp>();
+
+/** A code line in colours: comments, strings, numbers, keywords (also the review's diff lines and a step's code). `lang`: the
+ * file's (`langOf`), for its comment marks; "md" and "text" stay plain; none: a guess that suits most. */
+export function code(line: string, key: number, newline = true, lang?: string | null): ReactNode {
+  if (lang === "md" || lang === "text") return <span key={key}>{line}{newline && "\n"}</span>;
+  const family = lang ? FAMILY[lang] ?? "slash" : "any";
+  // inside a /* */ block: a line that starts with * ("* @param x", "*/"), but not "* factor;", a product's next line
+  if (/^(slash|css|mixed)$/.test(family) && /^\s*\*(\/|\s|$)/.test(line) && !/;\s*$/.test(line)) return <span key={key}><span className="tok-comment">{line}</span>{newline && "\n"}</span>;
+  let split = SPLITS.get(family);
+  if (!split) SPLITS.set(family, (split = new RegExp(`(${COMMENTS[family]})|(${TOKENS})`)));
+  // the split keeps a comment at i + 1 and any other token at i + 2
+  const parts = line.split(split), out: ReactNode[] = [];
+  for (let i = 0; i < parts.length; i += 3) {
+    if (parts[i]) out.push(parts[i]);
+    const c = parts[i + 1], t = parts[i + 2];
+    if (c) out.push(<span key={i} className="tok-comment">{c}</span>);
+    else if (t) out.push(/^["'`]/.test(t) ? <span key={i} className="tok-string">{t}</span>
+      : /^\d/.test(t) ? <span key={i} className="tok-number">{t}</span>
+      : (lang && DATA.has(lang) ? LITERALS.has(t) : KW.has(t) || (lang && KW_MORE.has(t)) || (lang === "sql" && SQL.has(t.toLowerCase()))) ? <span key={i} className="tok-keyword">{t}</span> : t);
+  }
+  return <span key={key}>{out}{newline && "\n"}</span>;
 }
 
 const cells = (row: string) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
@@ -217,6 +252,15 @@ export async function demo() {
     ["| File | Lines |\n|---|--:|\n| `a/very/long/path/that/keeps/going/src/components/SomethingVeryLong.tsx` | +2 −1 |", (h) => h.includes('white-space:nowrap">+2 −1') && !h.includes('nowrap"><code')],
   ];
   for (const [t, ok] of cases) if (!ok(md(t))) throw new Error(`markdown: ${JSON.stringify(t)}\n${md(t)}`);
+  // a step's code by its file's language: each its own comment marks, SQL's keywords in any case, markdown plain
+  const hl = (line: string, lang: string) => renderToStaticMarkup(<>{code(line, 0, false, lang)}</>);
+  const marks: [string, string, boolean][] = [["x = 1  # note", "py", true], ["see https://a.b // no", "py", false], ["echo ${#arr[@]}", "sh", false], ["key: v # why", "yaml", true],
+    [" * the doc line", "ts", true], ["this.#count++", "ts", false], ["a /* b */ c", "css", true], ["// not css", "css", false], ["SELECT a -- the id", "sql", true], ["# Title", "md", false],
+    // review of review 14: a URL with no scheme, a product's next line, the end of a block
+    ["  background: url(//cdn.example.com/a.png);", "scss", false], ["a: url(http://x.y/z); // why", "scss", true], ["    * factor;", "ts", false], [" */", "ts", true], ["see http://x.y", "ts", false]];
+  for (const [line, lang, comment] of marks) if (hl(line, lang).includes("tok-comment") !== comment) throw new Error(`markdown: ${lang} ${JSON.stringify(line)}: ${hl(line, lang)}`);
+  if (hl("name: Build and test", "yaml").includes("tok-keyword") || !hl("on: true", "yaml").includes('tok-keyword">true') || hl("<p>for this</p>", "html").includes("tok-keyword")) throw new Error("markdown: keywords in data");
+  if (!hl("select id from t", "sql").includes('tok-keyword">select') || !hl("readonly x: string", "ts").includes('tok-keyword">readonly') || renderToStaticMarkup(<>{code("it is done and not or", 0)}</>).includes("tok-keyword")) throw new Error("markdown: keywords by language");
   for (const want of ["<h3>Why</h3>", "<em>now</em>", '<ol start="2"><li>second<ul><li>nested</li><li><strong>two</strong></li></ul></li><li>third</li></ol>',
     '<div class="code-head"><span>py</span>', "<pre>", "<blockquote>", 'style="text-align:right"', 'href="https://example.com"', 'href="https://tazuna.dev"',
     "tok-comment", "tok-string", "tok-keyword"]) {

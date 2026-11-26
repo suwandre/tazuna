@@ -2,6 +2,7 @@
 // stopped, with what to say about it. A state per account, not one score: 93% of a week and $12.40 left do not add up to
 // a number anyone can act on, and a total hides the account that is about to stop you (design review 6).
 import type { Accounts, ModelChoice } from "./tazuna";
+import { usd } from "./types";
 
 export type Level = "ok" | "low" | "out" | "unknown";
 /** One line of the card: a plan's window, a provider's credit, an OmniRoute window. */
@@ -90,15 +91,16 @@ export function items(acc: Accounts | null, fallback: { plan5h: number | null; p
   }
   const credits = acc?.credits ?? (fallback.balance != null ? [{ provider: "SubRouter", left: `$${fallback.balance.toFixed(2)} left`, page: "https://subrouter.ai" }] : []);
   for (const c of credits) {
-    const over = c.left?.match(/^\$([\d.]+) over/), left = c.left?.match(/^-?\$([\d.]+) left/);
-    const amount = over ? -Number(over[1]) : left ? Number(left[1]) * (c.left!.startsWith("-") ? -1 : 1) : null;
+    // the core's "$1234.50 left" (grouped or not: "$1,234.50")
+    const over = c.left?.match(/^\$([\d.,]+) over/), left = c.left?.match(/^-?\$([\d.,]+) left/), num = (t: string) => Number(t.replace(/,/g, ""));
+    const amount = over ? -num(over[1]) : left ? num(left[1]) * (c.left!.startsWith("-") ? -1 : 1) : null;
     const level: Level = amount == null ? "unknown" : amount <= 0 ? "out" : amount < 2 ? "low" : "ok";
     out.push({ key: `credit:${c.provider}`, provider: c.provider, name: c.provider, group: "Credit with each provider", label: c.provider, note: amount == null ? "no balance from its API" : undefined,
-      value: amount == null ? undefined : amount < 0 ? `$${(-amount).toFixed(2)} below zero` : `$${amount.toFixed(2)} left`, level, page: c.page,
-      advice: amount == null ? undefined : amount <= 0 ? `Your ${c.provider} credit is ${amount < 0 ? `$${(-amount).toFixed(2)} past zero` : "used up"}. Add credits, or runs on ${c.provider} will fail.`
-        : `${c.provider} has $${amount.toFixed(2)} left. Add credits soon, or runs on ${c.provider} will stop.`,
+      value: amount == null ? undefined : amount < 0 ? `${usd(-amount)} below zero` : `${usd(amount)} left`, level, page: c.page,
+      advice: amount == null ? undefined : amount <= 0 ? `Your ${c.provider} credit is ${amount < 0 ? `${usd(-amount)} past zero` : "used up"}. Add credits, or runs on ${c.provider} will fail.`
+        : `${c.provider} has ${usd(amount)} left. Add credits soon, or runs on ${c.provider} will stop.`,
       // "below zero", not "over": "OpenRouter $0.17 over" read as over a limit (design review 12)
-      short: amount == null ? c.provider : amount < 0 ? `${c.provider} $${(-amount).toFixed(2)} below zero` : `${c.provider} $${amount.toFixed(2)} left` });
+      short: amount == null ? c.provider : amount < 0 ? `${c.provider} ${usd(-amount)} below zero` : `${c.provider} ${usd(amount)} left` });
   }
   for (const a of acc?.omniroute ?? []) for (const w of a.windows) {
     if (w.unlimited || w.used == null) continue;
@@ -169,6 +171,9 @@ export function demo() {
   const r = [whenReset(t0 + 42 * 60_000, t0), whenReset(t0 + 134 * 60_000, t0), whenReset(new Date(2026, 10, 21, 3, 0).getTime(), t0), whenReset(new Date(2026, 10, 26, 17, 13).getTime(), t0),
     whenReset(parseReset("Nov 21 at 2:59am (Europe/Berlin)", t0), t0), whenReset(parseReset("5:29pm (Europe/Berlin)", t0), t0)];
   if (r.join("|") !== "in 42 min|in 2 h 14 min|Sat 3am|Nov 26|Sat 2:59am|in 2 h 29 min") throw new Error(`resets: ${r.join("|")}`);
+  // a balance past a thousand is grouped, read whether the core grouped it or not (review of review 14)
+  const big = items({ credits: [{ provider: "A", left: "$1234.5 left", page: "" }, { provider: "B", left: "$1,234.50 over its credit", page: "" }] } as Accounts, { plan5h: null, planWeek: null }, t0);
+  if (big.map((i) => i.value).join("|") !== "$1,234.50 left|$1,234.50 below zero") throw new Error(`credits: ${big.map((i) => i.value).join("|")}`);
   const lv = Object.fromEntries(all.map((i) => [i.key, i.level]));
   const ok = lv["claude:5 hours"] === "ok" && lv["claude:week"] === "out" && lv["credit:SubRouter"] === "ok" && lv["credit:OpenRouter"] === "out" && lv["credit:Mortera"] === "unknown"
     && mine(all, { provider: "SubRouter" } as ModelChoice, "deepseek-v4.1-flash")[0]?.key === "credit:SubRouter"

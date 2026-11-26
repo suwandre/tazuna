@@ -1,8 +1,9 @@
 import { ChevronLeft, MessageSquare, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { core, type Review } from "../lib/tazuna";
 import { numbered, parse, patchOf, patchOfFile, sideBySide, wordMarks, type FileDiff } from "../lib/unidiff";
-import { code } from "../lib/markdown";
+import { langOf } from "../lib/markdown";
+import { CodeRow } from "./DiffView";
 import { Counts, Parts, Sep } from "./Sep";
 import { keysOf } from "../lib/types";
 import { accentButton, Segmented, quietButton } from "./Controls";
@@ -73,27 +74,20 @@ export function ReviewView({ start, turns, onClose, onSend }: {
   const added = files.reduce((n, f) => n + f.added, 0), removed = files.reduce((n, f) => n + f.removed, 0);
   const textButton = "rounded px-2 py-0.5 text-[12px] hover:bg-hover";
 
-  /** One side of a line: its number, its sign, its code with the changed words marked; a click comments on it. */
-  const line = (f: FileDiff, i: number, marks: Map<number, [number, number]>, nums: ReturnType<typeof numbered>, num: "old" | "new" | "both") => {
+  /** One side of a line: its number, its sign, its code with the changed words marked (the shared CodeRow); a click
+   * comments on it. */
+  const line = (f: FileDiff, i: number, marks: Map<number, [number, number]>, nums: ReturnType<typeof numbered>, num: "old" | "new" | "both", width: number) => {
     const l = nums[i], kind = l.line[0], at = l.new ?? l.old ?? 0;
     const c = comments.find((x) => x.path === f.path && x.line === at && x.quote === l.line);
-    const text = l.line.slice(1), m = marks.get(i);
-    const body: ReactNode = m && m[1] > m[0]
-      ? <>{code(text.slice(0, m[0]), 0, false)}<mark className={`rounded-sm text-inherit ${kind === "+" ? "bg-ok/25" : "bg-bad/25"}`}>{code(text.slice(m[0], m[1]), 1, false)}</mark>{code(text.slice(m[1]), 2, false)}</>
-      : code(text, 0, false);
-    // a wrapped line hangs under its own indent, two columns in (design review 10: it went back to the code's first column)
-    const lead = (text.match(/^[ \t]*/)?.[0] ?? "").replace(/\t/g, "    ").length + 2;
     const comment = () => kind !== "\\" && setWriting({ path: f.path, line: at, quote: l.line, text: c?.text ?? "" });
     return (
-      <div onClick={comment} role="button" tabIndex={0} aria-label={`${c ? "Edit the comment on" : "Comment on"} line ${at}: ${l.line.slice(0, 80)}`}
+      <CodeRow text={l.line.slice(1)} kind={kind} mark={marks.get(i)} language={langOf(f.path)} width={width}
+        nums={num === "old" ? [l.old] : num === "new" ? [l.new] : [l.old, l.new]}
+        onClick={comment} role="button" tabIndex={0} aria-label={`${c ? "Edit the comment on" : "Comment on"} line ${at}: ${l.line.slice(0, 80)}`}
         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); comment(); } }}
-        className={`group flex min-w-0 cursor-pointer ${kind === "+" ? "bg-ok/10" : kind === "-" ? "bg-bad/10" : ""} hover:bg-hover`}>
-        {num !== "new" && <span className="w-10 flex-none select-none pr-2 text-right text-faint">{l.old ?? ""}</span>}
-        {num !== "old" && <span className="w-10 flex-none select-none pr-2 text-right text-faint">{l.new ?? ""}</span>}
-        <span className={`w-4 flex-none select-none ${kind === "+" ? "text-ok" : kind === "-" ? "text-bad" : "text-faint"}`}>{kind === " " ? "" : kind}</span>
-        <span className="min-w-0 flex-1 whitespace-pre-wrap pr-3 text-ink-2 [overflow-wrap:anywhere] [tab-size:4]" style={{ paddingLeft: `${lead}ch`, textIndent: `-${lead}ch` }}>{body}</span>
+        className="group cursor-pointer hover:bg-hover">
         <MessageSquare size={12} strokeWidth={1.5} className={`mr-2 mt-1 flex-none ${c ? "text-accent" : "invisible text-faint group-hover:visible group-focus-visible:visible"}`} />
-      </div>
+      </CodeRow>
     );
   };
   /** The comment kept on a line, or the editor while one is written, under that line. */
@@ -180,7 +174,8 @@ export function ReviewView({ start, turns, onClose, onSend }: {
               </div>
               {f.binary && <div className="px-3 py-2 text-[12.5px] text-faint">A binary file: no text to review.</div>}
               {f.pieces.map((p, k) => {
-                const nums = numbered(p), rows = sideBySide(p), marks = wordMarks(p);
+                // the numbers' column as wide as the piece's last number (4.5 digits at the least: the review's 40 px)
+                const nums = numbered(p), rows = sideBySide(p), marks = wordMarks(p), w = Math.max(4.5, String(Math.max(p.oldStart, p.newStart) + p.lines.length).length);
                 return (
                   <div key={`${k}:${p.header}`} className={k > 0 ? "border-t border-line" : ""}>
                     <div className="flex items-center gap-2 border-b border-line-soft bg-accent-soft/40 px-3 py-1">
@@ -193,13 +188,13 @@ export function ReviewView({ start, turns, onClose, onSend }: {
                         ? rows.map((r, n) => (
                           <div key={n}>
                             <div className="grid grid-cols-2 divide-x divide-line-soft">
-                              {r.left != null ? line(f, r.left, marks, nums, "old") : <span />}
-                              {r.right != null ? line(f, r.right, marks, nums, "new") : <span />}
+                              {r.left != null ? line(f, r.left, marks, nums, "old", w) : <span />}
+                              {r.right != null ? line(f, r.right, marks, nums, "new", w) : <span />}
                             </div>
                             {thread(f, nums, r.left)}{r.right !== r.left && thread(f, nums, r.right)}
                           </div>
                         ))
-                        : nums.map((_, i) => <div key={i}>{line(f, i, marks, nums, "both")}{thread(f, nums, i)}</div>)}
+                        : nums.map((_, i) => <div key={i}>{line(f, i, marks, nums, "both", w)}{thread(f, nums, i)}</div>)}
                     </div>
                   </div>
                 );

@@ -487,7 +487,7 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
   const price = (fresh, cached, out) => (fresh * 0.3 + cached * 0.007 + out * 1.2) / 1e6;
   // [in, cached, out, first token in s, t/s while writing]
   const call = (block, [inn, cached, out, first, tps]) => ({ block, fresh: inn - cached, cached, out, cost: price(inn - cached, cached, out), first_ms: Math.round(first * 1000), tps,
-    total_ms: Math.round((first + out / tps + 0.15) * 1000), model: VIBE.model, role: null, provider: "Mistral Vibe" });
+    total_ms: Math.round((first + out / tps + 0.15) * 1000), model: VIBE.model, role: null, provider: "Mistral Vibe", plan: true });
   const tool = (id, name, input) => ({ kind: "tool", id, name, input, result: "…", error: false, secs: name === "Bash" ? 2.4 : 0.1, running: false });
   const sum = (cs, f) => cs.reduce((a, c) => a + f(c), 0);
   const total = { i: 0, c: 0, o: 0, cost: 0 };
@@ -526,10 +526,19 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
   window.__PLAY__ = {
     start() { n = 0; show({ ...p6, activity: "Thinking", blocks: [...p6.blocks, { kind: "prompt", text: "Add a test for the skipped health checks" }] }); },
     // a call ends: its step, its numbers in the view, the conversation's cost and context with it
-    next() { const [i, c, o, fi, tp, name] = third[n++], at = live.blocks.length, k = call(at, [i, c, o, fi, tp]);
-      show({ ...live, activity: "Tool", cost: live.cost + k.cost, context: i, blocks: [...live.blocks, tool(`w${n}`, name, name === "Bash" ? { command: "npm test -- logger" } : f("logger.test.ts"))], calls: [...live.calls, k] }); },
-    end() { const cs = live.calls.slice(p6.calls.length);
-      show({ ...live, activity: "Done", blocks: [...live.blocks, { kind: "text", text: "Added `logger.test.ts`: health checks log nothing, other routes log their pattern and latency.", live: false }, done(cs)] }); },
+    next() { const [i, c, o, fi, tp, name] = third[n++], at = live.blocks.length, k = call(at, [i, c, o, fi, tp]), calls = this.timer ? live.calls.slice(0, -1) : live.calls;
+      clearInterval(this.timer); this.timer = 0;
+      show({ ...live, activity: "Tool", cost: live.cost + k.cost, context: i, blocks: [...live.blocks, tool(`w${n}`, name, name === "Bash" ? { command: "npm test -- logger" } : f("logger.test.ts"))], calls: [...calls, k], live: null }); },
+    // the next call streaming (the core's `live`, src/lib/live.ts): its row in `calls` at zeros until it ends, the estimate
+    // (4% over the exact count, which it settles to) in a view every 50 ms: 0.8 s to the first token, then `tps`; next() ends it
+    stream(tps = 200) { clearInterval(this.timer); const [i, c, o] = third[n], t0 = Date.now(), calls = live.calls;
+      const z = { ...call(live.blocks.length, [i, c, o, 0.8, tps]), fresh: 0, cached: 0, out: 0, cost: 0, first_ms: null, tps: null, total_ms: null };
+      const tick = () => { const ms = Date.now() - t0, out = ms < 800 ? 0 : Math.min(Math.round(o * 1.04), Math.round(((ms - 800) / 1000) * tps));
+        show({ ...live, activity: ms < 800 ? "Thinking" : "Writing", calls: [...calls, z], live: { started: t0, first: ms < 800 ? null : t0 + 800, out, deltas: Math.max(0, Math.floor((ms - 800) / 50)),
+          in: i, cached: c, in_cost: price(i - c, c, 0), out_m: 1.2, row: calls.length } }); };
+      tick(); this.timer = setInterval(tick, 50); },
+    end() { const cs = live.calls.slice(p6.calls.length); clearInterval(this.timer); this.timer = 0;
+      show({ ...live, activity: "Done", live: null, blocks: [...live.blocks, { kind: "text", text: "Added `logger.test.ts`: health checks log nothing, other routes log their pattern and latency.", live: false }, done(cs)] }); },
   };
   const vibeRows = [1, 2, 3].map((d) => [midnight - d * 86400 + 3600, VIBE.model, "0.1.226", true, 0.06 + d * 0.01, 1500, 0, 150000, 900, "completed", "claimed", null, "live", true, [], [], "Mistral Vibe"]);
   T.invoke = async (cmd, args) => {
@@ -543,6 +552,85 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
       { id: "p7", first: "Rename the config loader to loadSettings", last_at: now - 6 * 3600, messages: 2, model: "glm-5.3" });
     if (m?.type === "usage") m.rows = window.__REFLESS_ONLY__ ? [1, 2].map((d) => [midnight - d * 86400 + 3600, "glm-5.3", "0.1.226", true, 0, 9800, 0, 9800, 600, "completed", "claimed", null, "live", true, [], [], "Z.ai Coding Plan"])
       : [...m.rows, ...vibeRows];
+    return emit(event, payload);
+  };
+})();
+
+// a step's insides (review 14, steps): "Order the summary lines by their detail" in the api-gateway project, a reply whose
+// steps are each kind a step draws as code: a read of a .ts range with long lines (claude's numbered lines), `sed -n 1,40p` of
+// a .ts file after a cd into a folder of the project, a `grep -n` over one .ts file, an edit, a multi-edit, a new file, a
+// Python and a YAML read, and a command after a cd into the project itself. `window.__STEPS__.ask(kind)`: the same reply
+// waiting on an "edit", "multi", "write", "far" (a long path outside the project) or "huge" (a 476 KB line) approval; and a read of a deeply nested file (its folder cut in the title) (`.done()` puts it back).
+(() => { const T = window.__TAURI_INTERNALS__; if (!window.__SENT__) return;
+  const inv = T.invoke.bind(T), emit = T.emit.bind(T), now = Math.floor(Date.now() / 1000);
+  const P = "/Users/x/api-gateway", D = `${P}/src/routes/orders`;
+  const num = (from, text) => text.split("\n").map((l, i) => `${String(from + i).padStart(6)}→${l}`).join("\n");
+  const tool = (id, name, input, result, secs = 0.1) => ({ kind: "tool", id, name, input, result, error: false, secs, running: false });
+  const read = num(88, [
+    "  // A hold that expired while the cart was open is released here, before the totals are computed, so a customer never pays for stock that is no longer reserved for them; see the note on clearing holds.",
+    "  for (const hold of cart.holds) {",
+    "    if (hold.expiresAt <= now) await releaseHold(hold.id, { reason: \"expired\", notify: false, keepAudit: true, source: \"summary\" });",
+    "  }",
+    "  const lines = cart.items.map((item) => summaryLine(item, prices.get(item.sku) ?? fallbackPrice(item), { currency: cart.currency, rounding: 2 }));",
+    "  return { lines, total: sum(lines.map((l) => l.amount)), currency: cart.currency, heldUntil: null };",
+    "}", ""].join("\n"));
+  const unit = ["import { describe, expect, it } from 'vitest';", "import { planSummary } from './summary';", "import { cartWith, priceMap } from '../../test/fixtures';", "",
+    "describe('planSummary', () => {", "  it('lists every item once, with its price', () => {", "    const cart = cartWith([{ sku: 'TEE-01', qty: 2 }, { sku: 'CAP-07', qty: 1 }]);",
+    "    const summary = planSummary(cart, priceMap({ 'TEE-01': 1999, 'CAP-07': 1250 }));", "    expect(summary.lines).toHaveLength(2);",
+    "    expect(summary.total).toBe(5248); // 2 × 19.99 + 12.50, in cents", "  });", "", "  /* an empty cart has no lines and a zero total */",
+    "  it('handles an empty cart', () => {", "    expect(planSummary(cartWith([]), priceMap({})).total).toBe(0);", "  });", "});"].join("\n");
+  const grep = ["141:    const latestFetch = await fetchPrices(cart.items.map((item) => item.sku), { cache: \"no-store\", timeoutMs: 2500, retries: 2, signal: abort.signal });",
+    "156:    if (!latestFetch.ok) return staleSummary(cart, latestFetch.error ?? new Error(\"prices unavailable\"), { keepHolds: true }); // stale, never empty"].join("\n");
+  const rank = ["// where a line's detail goes in the summary: size first, then colour, then the rest by name", "export const ORDER = ['size', 'colour', 'material'] as const;", "",
+    "export type Detail = (typeof ORDER)[number] | string;", "", "/** A detail's place: its index in ORDER, or after all of them. */", "export function rank(detail: Detail): number {",
+    "  const at = ORDER.indexOf(detail as (typeof ORDER)[number]);", "  return at < 0 ? ORDER.length : at;", "}", ""].join("\n");
+  const py = num(1, ["#!/usr/bin/env python3", "\"\"\"Seed the local database with a few orders for the summary tests.\"\"\"", "import json", "from pathlib import Path", "",
+    "FIXTURES = Path(__file__).parent / \"fixtures\"  # next to this script", "", "def seed(db, count=12):", "    for i, order in enumerate(json.loads((FIXTURES / \"orders.json\").read_text())):",
+    "        if i >= count:", "            break", "        db.insert(\"orders\", {**order, \"status\": 'open'})  # every one starts open"].join("\n"));
+  const yml = num(1, ["# runs on every push and pull request", "name: ci", "on:", "  push:", "    branches: [main]", "  pull_request:", "jobs:", "  test:",
+    "    runs-on: ubuntu-latest", "    timeout-minutes: 15", "    steps:", "      - uses: actions/checkout@v4", "      - run: npm ci", "      - run: npm test -- --reporter=dot # quiet on CI"].join("\n"));
+  const multi = [
+    { old_string: "export function planSummary(cart: Cart, prices: PriceMap): Summary {\n  const lines = cart.items.map((item) => summaryLine(item, prices));\n  return { lines, total: sum(lines.map((l) => l.amount)) };",
+      new_string: "export function planSummary(cart: Cart, prices: PriceMap): Summary {\n  const lines = sortSummaryLines(cart.items.map((item) => summaryLine(item, prices)));\n  return { lines, total: sum(lines.map((l) => l.amount)) };" },
+    { old_string: "import { summaryLine } from './line';", new_string: "import { summaryLine, type SummaryLine } from './line';\nimport { rank } from './rank';\n\n/** The lines in the order their details are read: by rank, then by name. */\nexport const sortSummaryLines = (lines: SummaryLine[]) => [...lines].sort((a, b) => rank(a.detail) - rank(b.detail) || a.name.localeCompare(b.name));" }];
+  const edit = { file_path: `${D}/summary.unit.ts`, old_string: "import { planSummary } from './summary';", new_string: "import { planSummary, sortSummaryLines } from './summary';" };
+  const blocks = [{ kind: "prompt", text: "Order the summary lines by their detail: size, then colour, then the rest" },
+    tool("k1", "Read", { file_path: `${D}/summary.ts`, offset: 88, limit: 8 }, read),
+    tool("k2", "Bash", { command: `cd "${D}" && sed -n 1,40p summary.unit.ts` }, unit, 0.1),
+    tool("k3", "Bash", { command: "grep -n \"latestFetch\" src/routes/orders/summary.ts" }, grep, 0.1),
+    tool("k4", "Edit", edit, `The file ${D}/summary.unit.ts has been updated successfully.`, 0.2),
+    tool("k5", "MultiEdit", { file_path: `${D}/summary.ts`, edits: multi }, `Applied 2 edits to ${D}/summary.ts:\n1. Replaced "export function planSummary(…" with "export function planSummary(…"\n2. Replaced "import { summaryLine } from…" with "import { summaryLine, type Su…"`, 0.2),
+    tool("k6", "Write", { file_path: `${D}/rank.ts`, content: rank }, `File created successfully at: ${D}/rank.ts`, 0.1),
+    tool("k7", "Read", { file_path: `${P}/scripts/seed_orders.py`, limit: 12 }, py),
+    tool("k8", "Read", { file_path: `${P}/.github/workflows/ci.yml`, limit: 14 }, yml),
+    tool("k9", "Bash", { command: `cd "${P}" && npm test -- summary` }, " ✓ src/routes/orders/summary.unit.ts (3 tests) 41ms\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)", 3.1),
+    // a path deep enough that its folder is cut from the left in the step's title, its file name whole
+    tool("k10", "Read", { file_path: `${P}/packages/storefront/src/features/checkout/components/summary/lines/SummaryLineDetailBadge.tsx`, limit: 3 },
+      num(1, ["export function SummaryLineDetailBadge({ detail }: { detail: string }) {", "  return <span className=\"badge\">{detail}</span>;", "}"].join("\n"))),
+    { kind: "text", text: "The summary's lines now go by their detail: size, then colour, then material, and anything else after them by name (`sortSummaryLines` in `summary.ts`, the order in the new `rank.ts`). The tests pass.", live: false },
+    { kind: "done", ok: true, secs: 48, turns: 9, cost: 0.061, usage: { input: 3100, cache_write: 0, cache_read: 21800, output: 1900 }, stopped: false }];
+  const p9 = { type: "view", from: 0, model: "claude-opus-5-5", effort: "high", cwd: P, profile: "repo", mode: "ask", session_id: "p9", activity: "Done", turns: 9, cost: 0.061,
+    usage: { input: 3100, cache_write: 0, cache_read: 21800, output: 1900 }, context: 24900, context_window: 200000, edit_points: [], blocks,
+    changes: [{ turn: 0, at_block: blocks.length - 1, undone: false, can_undo: true, files: [{ path: "src/routes/orders/summary.ts", added: 4, removed: 1, status: "M" },
+      { path: "src/routes/orders/summary.unit.ts", added: 1, removed: 1, status: "M" }, { path: "src/routes/orders/rank.ts", added: 10, removed: 0, status: "A" }] }] };
+  let tid = null;
+  const asks = { edit: ["Edit", edit], multi: ["MultiEdit", { file_path: `${D}/summary.ts`, edits: multi }], write: ["Write", { file_path: `${D}/rank.ts`, content: rank }],
+    // a file outside the project behind a long path (the card wraps it, never cuts its "~/"), and one minified line of 476 KB
+    far: ["Edit", { file_path: "/Users/x/other-app/src/features/settings/components/forms/advanced/sections/billing/config.ts", old_string: "export const retries = 3;", new_string: "export const retries = 5;" }],
+    huge: ["Write", { file_path: `${D}/vendor.min.js`, content: "var a=1,b=\"x\";".repeat(34_000) }] };
+  window.__STEPS__ = {
+    ask(kind) { const [name, input] = asks[kind], b = blocks.slice(0, 4);
+      T.view(tid, { ...p9, activity: "Tool", changes: [], blocks: [...b, { kind: "tool", id: "ask", name, input, error: false, secs: 0, running: true }],
+        asking: { tool: name, what: input.file_path, note: "always = this tool", once: false, queued: 0 } }); },
+    done() { T.view(tid, p9); },
+  };
+  T.invoke = async (cmd, args) => {
+    if (cmd === "op" && args.msg.op === "resume" && args.msg.id === "p9") { tid = args.tid; setTimeout(() => T.view(args.tid, p9), 10); return null; }
+    return inv(cmd, args);
+  };
+  T.emit = (event, payload) => {
+    const m = payload?.msg, proj = m?.type === "sessions" && m.dirs.find((d) => d.dir === P);
+    if (proj && !proj.list.some((e) => e.id === "p9")) proj.list.push({ id: "p9", first: "Order the summary lines by their detail: size, then colour, then the rest", last_at: now - 8 * 3600, messages: 2, model: "claude-opus-5-5" });
     return emit(event, payload);
   };
 })();

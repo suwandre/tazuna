@@ -93,8 +93,9 @@ export function installExits() {
 
 /** How the window looks, chosen in Settings and kept on this machine: light or dark (or the system's), the accent, the text
  * size (the webview's own zoom, as a browser's), the type answers are set in, the work panel's Stats as tiles or rows, and
- * where the conversation's numbers stand (under the box, the default; above it; in the status bar; off). */
-export const THEME = "tazuna.theme", ACCENT = "tazuna.accent", ZOOM = "tazuna.zoom", PROSE = "tazuna.prose", STATS = "tazuna.stats", NUMBERS = "tazuna.numbers";
+ * where the conversation's numbers stand (under the box, the default; above it; in the status bar; off), and whether they and
+ * the Stats count live while a reply streams (on, the default; "off": as each model call ends). */
+export const THEME = "tazuna.theme", ACCENT = "tazuna.accent", ZOOM = "tazuna.zoom", PROSE = "tazuna.prose", STATS = "tazuna.stats", NUMBERS = "tazuna.numbers", LIVE = "tazuna.live-stats";
 /** The accents (design review 13, D2 of mockups/v10.html): Ai, styles.css's own tokens (the default since design review 14:
  * nothing kept, or none of these, is Ai; one picked by hand stays), or one drawn for both themes in styles.css
  * (`[data-accent=…]`). */

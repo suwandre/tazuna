@@ -20,6 +20,8 @@ export type ToolStep = {
   /** the call's id: a subagent's own conversation is asked for by it */
   id?: string;
   kind?: "tool" | "thinking" | "said"; name?: string; input?: Record<string, unknown> | null; result?: string; text?: string;
+  /** the conversation's folder (its view's cwd): the step's paths and commands are shown from it */
+  cwd?: string;
 };
 export type ChangedFile = { path: string; added: number | null; removed: number | null; status: string };
 /** What one turn changed (the core's git snapshots before and after it). */
@@ -192,7 +194,9 @@ export function linkName(u: string): string {
     if (host === "github.com" && p.length >= 2) return `${p[0]}/${p[1]}`;
     if (/(^|\.)claude\.ai$/.test(host) && p[0] === "artifact") return "Claude artifact";
     if (host.endsWith(".atlassian.net")) { const k = u.match(/\b([A-Z][A-Z0-9]*-\d+)\b/); if (k) return `Jira ${k[1]}`; }
-    return p.length ? `${host}/${decodeURIComponent(p[p.length - 1]).slice(0, 40)}` : host;
+    if (!p.length) return host;
+    const last = decodeURIComponent(p[p.length - 1]);
+    return `${host}/${last.length > 40 ? `${last.slice(0, 39)}…` : last}`;
   } catch { return u; }
 }
 
@@ -267,15 +271,27 @@ export function shortTitle(text?: string | null, named = false): string {
  * ledger, a slip's sums): $0 for nothing, "<$0.001" under a tenth of a cent, four decimals under a cent, three under a
  * dollar, then cents; zeros past the cents go ($0.005, $0.50). Until design review 14 two significant digits below a tenth
  * of a cent: "this chat $0.000060". A slip's own cells and tooltips keep the exact figure (`usdExact`). */
-export const usd = (n: number) => (n <= 0 ? "$0" : n < 0.001 ? "<$0.001" : `$${n.toFixed(n < 0.01 ? 4 : n < 1 ? 3 : 2).replace(/(\.\d\d\d*?)0+$/, "$1")}`);
+/** Thousands grouped from $1,000 up ("$1,234.46", design review 14: "$1234.46" read as one long number). */
+const big = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// the thousands are told from the rounded figure: $999.995 is "$1,000.00", never "$1000.00"
+export const usd = (n: number) => {
+  if (n <= 0) return "$0";
+  if (n < 0.001) return "<$0.001";
+  const t = n.toFixed(n < 0.01 ? 4 : n < 1 ? 3 : 2);
+  return Number(t) >= 1000 ? big(Number(t)) : `$${t.replace(/(\.\d\d\d*?)0+$/, "$1")}`;
+};
 /** Dollars as they are: cents from ten cents up ($0.41), three decimals below ($0.042), two significant digits below a
  * tenth of a cent ($0.000019) so a cheap call does not read as free; $0 for nothing. */
-export const usdExact = (n: number) => (n <= 0 ? "$0" : n < 0.001 ? `$${n.toPrecision(2)}` : n < 0.1 ? `$${n.toFixed(3)}` : `$${n.toFixed(2)}`);
+export const usdExact = (n: number) => (n <= 0 ? "$0" : n < 0.001 ? `$${n.toPrecision(2)}` : n < 0.1 ? `$${n.toFixed(3)}` : Number(n.toFixed(2)) >= 1000 ? big(n) : `$${n.toFixed(2)}`);
 /** Seconds to a tenth ("2.4 s"), "<0.1 s" under a tenth: a step, a call's time to first token, never "0.0 s". */
 export const tenths = (s: number) => (s < 0.1 ? "<0.1 s" : `${s.toFixed(1)} s`);
 export function demoNumbers() {
   const got = [0, 0.000019, 0.00006, 0.001, 0.0012, 0.005, 0.0099999, 0.042, 0.1, 0.5, 0.9996, 1, 10.127].map(usd).join(" ");
   if (got !== "$0 <$0.001 <$0.001 $0.001 $0.0012 $0.005 $0.01 $0.042 $0.10 $0.50 $1.00 $1.00 $10.13") throw new Error(`usd: ${got}`);
+  if (usd(1234.456) !== "$1,234.46" || usdExact(12345.6) !== "$12,345.60") throw new Error(`usd thousands: ${usd(1234.456)} ${usdExact(12345.6)}`);
+  // near a thousand: the rounded figure decides
+  const near = [usd(999.994), usd(999.995), usdExact(999.996), usdExact(999.994), usd(1000)].join(" ");
+  if (near !== "$999.99 $1,000.00 $1,000.00 $999.99 $1,000.00") throw new Error(`usd near 1000: ${near}`);
   if (usdExact(0.000019) !== "$0.000019" || [0, 0.04, 0.1, 2.345].map(tenths).join(" ") !== "<0.1 s <0.1 s 0.1 s 2.3 s") throw new Error("usdExact, tenths");
   console.log("numbers ok");
 }

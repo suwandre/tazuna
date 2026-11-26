@@ -1,30 +1,50 @@
 import { Activity, Coins, Database, Gauge } from "lucide-react";
-import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { STATS, useLook } from "../lib/chrome";
+import { useContext, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
+import { LIVE, STATS, useLook } from "../lib/chrome";
 import { costSaid, stats, usage, type Point } from "../lib/fromView";
+import { blend, lastSpeed, liveRow, outNow, settled, still, useFrame, useLive, type Live } from "../lib/live";
 import type { ModelChoice, View } from "../lib/tazuna";
 import { median, tenths, usd } from "../lib/types";
 import { Segmented } from "./Controls";
 import { WorkCtx } from "./Rail";
 import { dur, perSec, tok, type Turn } from "./Receipt";
+import { Sep } from "./Sep";
 import { ChatCost } from "./StatusBar";
 
 // The work panel's Stats (the user, 2026-11-25: "a real-time calculation and statistics section for all numerical
 // metrics… maybe smooth"; mockups/v11.html): this turn's or the whole conversation's tokens, cost, calls and speeds, a
 // sparkline for each number that varies by call, live while a reply runs. Real numbers only: what the view does not say is
 // left out ("–" only for a cost it cannot sum); a zero is quiet. Data marks are `live`, never the accent. As tiles (the
-// default) or as rows on the desk (Settings › Appearance › Stats; design review 14, S4 of mockups/v12.html).
-
-const still = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+// default) or as rows on the desk (Settings › Appearance › Stats; design review 14, S4 of mockups/v12.html). With Live stats
+// on, the call in flight's estimate moves them every frame while it streams (lib/live.ts), drawn in `muted` until exact.
 
 /** A number that moves to a new value in ~450 ms, easing out, while a reply runs (`live`); else, and under reduced motion,
- * it jumps (another conversation's numbers do not slide in). A change mid-way goes on from where it is. */
-function useTween(to: number, live: boolean) {
+ * it jumps (another conversation's numbers do not slide in). A change mid-way goes on from where it is. `follow`: it is the
+ * live estimate, drawn as it is, eased onto from where it stood when following begins (a call's start moves the context
+ * and the cost by its input), and eased from where it stood to the exact value when that comes. `count`: a count (tokens,
+ * money, time) never counts back down: an estimate that ran over its exact value settles there at once. */
+function useTween(to: number, live: boolean, follow = false, count = false) {
   const [at, setAt] = useState(to);
-  const now = useRef(to);
-  useEffect(() => {
-    if (!live || still()) { now.current = to; setAt(to); return; }
+  const [, kick] = useReducer((n: number) => n + 1, 0);
+  const now = useRef(to), began = useRef<{ from: number; t0: number } | null>(null), followed = useRef(false), ended = useRef(false);
+  if (follow !== followed.current) {
+    if (follow) began.current = live && !still() ? { from: now.current, t0: performance.now() } : null;
+    else ended.current = true;
+    followed.current = follow;
+  }
+  const b = follow ? began.current : null, ms = b ? performance.now() - b.t0 : 450;
+  const shown = follow ? (b ? blend(b.from, to, ms) : to) : at;
+  if (follow) now.current = shown;
+  // a frame each while it eases in (the live frames come only when a digit of the estimate moves)
+  useEffect(() => { if (ms >= 450) return; const r = requestAnimationFrame(kick); return () => cancelAnimationFrame(r); });
+  // before paint: the frame after `follow` ends starts where the estimate stood, not at a value from before it
+  useLayoutEffect(() => {
+    if (follow) return;
+    const settle = ended.current;
+    ended.current = false;
+    if (!live || still() || (count && settle && to < now.current)) { now.current = to; setAt(to); return; }
     const from = now.current, t0 = performance.now();
+    setAt(from);
     let raf = 0;
     const tick = (t: number) => {
       const p = Math.min(1, (t - t0) / 450);
@@ -34,8 +54,26 @@ function useTween(to: number, live: boolean) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [to, live]);
-  return at;
+  }, [to, live, follow]);
+  return shown;
+}
+
+/** A number that may change every frame: while `hold` (a reply runs) its box only grows, so nothing beside it moves as its
+ * digits change (tabular figures do the rest); it fits its text again when the reply ends. `est`: an estimate, in `muted`. */
+function Num({ hold, est, className = "", children }: { hold: boolean; est?: boolean; className?: string; children: ReactNode }) {
+  const el = useRef<HTMLSpanElement>(null), w = useRef(0), len = useRef(-1);
+  // measured only when its text's length changes (a measure every frame is a layout every frame)
+  useLayoutEffect(() => {
+    const e = el.current;
+    if (!e) return;
+    if (!hold) { if (w.current) { w.current = 0; e.style.minWidth = ""; } len.current = -1; return; }
+    const n = e.textContent?.length ?? 0;
+    if (n === len.current) return;
+    len.current = n;
+    const now = e.getBoundingClientRect().width;
+    if (now > w.current + 0.5) { w.current = now; e.style.minWidth = `${now}px`; }
+  });
+  return <span ref={el} className={`inline-block text-right ${est ? "text-muted" : ""} ${className}`}>{children}</span>;
 }
 
 const box = "min-w-0 rounded-[10px] border border-line-soft bg-main px-2.5";
@@ -45,11 +83,11 @@ const Bar = ({ pct }: { pct: number }) => (
 );
 
 /** A zero is quiet text, not a big number (design review 14), on the big one's line. */
-function Tile({ name, value, sub, zero, children }: { name: string; value: ReactNode; sub?: string; zero?: boolean; children?: ReactNode }) {
+function Tile({ name, value, sub, zero, est, children }: { name: string; value: ReactNode; sub?: string; zero?: boolean; est?: boolean; children?: ReactNode }) {
   return (
     <div className={`${box} py-[9px]`}>
       <div className={label}>{name}</div>
-      <div className={`truncate ${zero ? "text-[13.5px] leading-[25px] text-faint" : "text-[20px] font-semibold leading-tight tracking-[-0.02em] text-ink"}`}>{value}</div>
+      <div className={`truncate tabular-nums ${zero ? "text-[13.5px] leading-[25px] text-faint" : `text-[20px] font-semibold leading-tight tracking-[-0.02em] ${est ? "text-muted" : "text-ink"}`}`}>{value}</div>
       {sub && <div className="text-[11.5px] leading-snug text-muted">{sub}</div>}
       {children}
     </div>
@@ -59,10 +97,11 @@ function Tile({ name, value, sub, zero, children }: { name: string; value: React
 /** One line in the live colour, its last point marked, no axes. The pointer, or the arrows once it has the focus (the usage
  * page's bars' way), shows a call's value in a tip over it, and a screen reader hears it. While a reply runs the newest
  * point grows in from the one before. */
-function Spark({ points, fmt, name, max, live }: { points: Point[]; fmt: (v: number) => string; name: string; max?: number; live: boolean }) {
+function Spark({ points, fmt, name, max, live, follow }: { points: Point[]; fmt: (v: number) => string; name: string; max?: number; live: boolean; follow: boolean }) {
   const [at, setAt] = useState<number | null>(null);
   const n = points.length, ref = useRef<HTMLDivElement>(null);
-  const shown = useTween(n, live), hi = useTween(max ?? (Math.max(0, ...points.map((p) => p[1])) * 1.1 || 1), live);
+  // the call in flight's point moves with the live estimate (`follow`): the scale follows it
+  const shown = useTween(n, live), hi = useTween(max ?? (Math.max(0, ...points.map((p) => p[1])) * 1.1 || 1), live, follow);
   // the newest point's way in: those past `e` (a fractional index) sit at the line's head, between the two last
   const e = Math.max(0, Math.min(n - 1, shown - 1)), k = Math.floor(e), fr = e - k;
   const y = (v: number) => 100 - Math.min(100, (100 * v) / hi);
@@ -91,13 +130,13 @@ function Spark({ points, fmt, name, max, live }: { points: Point[]; fmt: (v: num
   );
 }
 
-function Metric({ name, value, sub, zero, children }: { name: string; value: string; sub?: string; zero?: boolean; children?: ReactNode }) {
+function Metric({ name, value, sub, zero, est, children }: { name: string; value: string; sub?: string; zero?: boolean; est?: boolean; children?: ReactNode }) {
   return (
     <div className={`${box} pb-[7px] pt-[9px]`}>
       {/* the value and its median go under the name where the row is too narrow for all three (over the conversation,
           "Writing speed 226 t/s median 219 t/s"), never cutting the name */}
       <div className="flex flex-wrap items-baseline justify-end gap-x-1.5"><span className={`${label} mr-auto`}>{name}</span>
-        <span className="flex items-baseline gap-1.5"><span className={`tabular-nums ${zero ? "text-[13.5px] text-faint" : "text-[15px] font-medium text-ink"}`}>{value}</span>{sub && <span className="text-[11.5px] text-muted">{sub}</span>}</span></div>
+        <span className="flex items-baseline gap-1.5"><span className={`tabular-nums ${zero ? "text-[13.5px] text-faint" : `text-[15px] font-medium ${est ? "text-muted" : "text-ink"}`}`}>{value}</span>{sub && <span className="text-[11.5px] text-muted">{sub}</span>}</span></div>
       {children}
     </div>
   );
@@ -149,12 +188,19 @@ export function StatsSection() {
   );
 }
 
-function Numbers({ view, scope, live, rows }: { view: View; scope: Scope; live: boolean; rows: boolean }) {
+function Numbers({ view: core, scope, live, rows }: { view: View; scope: Scope; live: boolean; rows: boolean }) {
+  // the call in flight drawn every frame while it streams (Live stats): its numbers estimates (`f`), in `muted`
+  const { view, streaming: f } = useLive(core, (lv) => { const s = stats(lv, scope), m = (p: Point[]) => median(p.map((x) => x[1])) ?? 0;
+    // what it shows that the call moves: a frame that changes none of it draws nothing
+    return [tok(s.input), share(s.hit ?? 0), tok(s.out), Math.round(s.tps ?? 0), usd(s.cost ?? 0), dur(s.secs), tok(lv.context), usage(lv).contextPct,
+      secs(last(s.ttft) ?? 0), secs(m(s.ttft)), Math.round(last(s.speed) ?? 0), Math.round(m(s.speed)), share(last(s.hits) ?? 0), s.ttft.length, s.speed.length].join(); });
   const s = stats(view, scope), u = usage(view);
-  // every number tweens while a reply runs
-  const t = { input: useTween(s.input, live), hit: useTween(s.hit ?? 0, live), out: useTween(s.out, live), tps: useTween(s.tps ?? 0, live),
-    cost: useTween(s.cost ?? 0, live), calls: useTween(s.calls, live), secs: useTween(s.secs, live), ctx: useTween(view.context, live),
-    ttft: useTween(last(s.ttft) ?? 0, live), speed: useTween(last(s.speed) ?? 0, live), hits: useTween(last(s.hits) ?? 0, live) };
+  // a sparkline's 3 points are finished calls': the one in flight (live) is no reason for its tile to come, then go at its end
+  const base = useMemo(() => stats(core, scope), [core, scope]);
+  // every number tweens while a reply runs, and follows the estimate while a call streams; the counts never count back
+  const t = { input: useTween(s.input, live, f, true), hit: useTween(s.hit ?? 0, live, f), out: useTween(s.out, live, f, true), tps: useTween(s.tps ?? 0, live, f),
+    cost: useTween(s.cost ?? 0, live, f, true), calls: useTween(s.calls, live), secs: useTween(s.secs, live, f, true), ctx: useTween(view.context, live, f, true),
+    ttft: useTween(last(s.ttft) ?? 0, live, f), speed: useTween(last(s.speed) ?? 0, live, f), hits: useTween(last(s.hits) ?? 0, live, f) };
   const ttftMed = median(s.ttft.map((p) => p[1])), speedMed = median(s.speed.map((p) => p[1]));
   // "about" where a call's price is at list prices, as the receipt says it
   const about = s.about && <span className="text-[13px] font-normal tracking-normal text-muted">about </span>;
@@ -179,7 +225,7 @@ function Numbers({ view, scope, live, rows }: { view: View; scope: Scope; live: 
           <div key={name} className="grid min-h-[29px] grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2.5 border-t border-line text-ink-2 first:border-t-0">
             <span className="min-w-0">{name}{q && <> <span className="ml-0.5 text-faint">{q}</span></>}</span>
             <span>{line || null}</span>
-            <span className={`whitespace-nowrap text-right tabular-nums ${raw === 0 ? "text-faint" : "text-ink"}`}>{value}</span>
+            <Num hold={live} className={`whitespace-nowrap tabular-nums ${raw === 0 ? "text-faint" : f && name !== "Calls" ? "text-muted" : "text-ink"}`}>{value}</Num>
           </div>
         ))}
       </div>
@@ -188,21 +234,22 @@ function Numbers({ view, scope, live, rows }: { view: View; scope: Scope; live: 
   return (
     <div className="pt-1">
       <div className="mb-2 grid grid-cols-2 gap-2">
-        <Tile name="In" value={tok(Math.round(t.input))} zero={!s.input} sub={s.hit == null ? undefined : `${share(t.hit)} from cache`}>{s.hit != null && <Bar pct={s.hit} />}</Tile>
-        <Tile name="Out" value={tok(Math.round(t.out))} zero={!s.out} sub={s.tps == null ? undefined : `${perSec(t.tps)} writing`} />
-        <Tile name="Cost" value={s.cost == null ? "–" : <>{about}{usd(t.cost)}</>} zero={s.cost === 0} sub={s.how} />
+        <Tile name="In" value={tok(Math.round(t.input))} zero={!s.input} est={f} sub={s.hit == null ? undefined : `${share(t.hit)} from cache`}>{s.hit != null && <Bar pct={s.hit} />}</Tile>
+        <Tile name="Out" value={tok(Math.round(t.out))} zero={!s.out} est={f} sub={s.tps == null ? undefined : `${perSec(t.tps)} writing`} />
+        <Tile name="Cost" value={s.cost == null ? "–" : <>{about}{usd(t.cost)}</>} zero={s.cost === 0} est={f} sub={s.how} />
         <Tile name="Calls" value={String(Math.round(t.calls))} zero={!s.calls} sub={s.secs ? `${dur(t.secs)} working` : undefined} />
       </div>
       <div className="flex flex-col gap-2">
         {/* a line of fewer than 3 points says nothing: its tile is left out, never an empty box with "–" (design review 14) */}
-        {s.ttft.length >= 3 && <Metric name="Time to first token" value={secs(t.ttft)} sub={ttftMed == null ? undefined : `median ${secs(ttftMed)}`}>
-          <Spark name="Time to first token" points={s.ttft} fmt={secs} live={live} /></Metric>}
-        {s.speed.length >= 3 && <Metric name="Writing speed" value={perSec(t.speed)} sub={speedMed == null ? undefined : `median ${perSec(speedMed)}`}>
-          <Spark name="Writing speed" points={s.speed} fmt={perSec} live={live} /></Metric>}
-        {s.hits.length >= 3 && <Metric name="Cache hit rate" value={share(t.hits)} sub={s.hit == null ? undefined : `${share(s.hit)} overall`}>
-          <Spark name="Cache hit rate" points={s.hits} fmt={share} max={100} live={live} /></Metric>}
-        {/* the last call's input against the model's window; a window the core does not know (a local model) has no bar */}
-        <Metric name="Context" value={tok(Math.round(t.ctx))} zero={!view.context} sub={u.contextMax ? `of ${u.contextMax}` : undefined}>
+        {base.ttft.length >= 3 && <Metric name="Time to first token" value={secs(t.ttft)} est={f} sub={ttftMed == null ? undefined : `median ${secs(ttftMed)}`}>
+          <Spark name="Time to first token" points={s.ttft} fmt={secs} live={live} follow={f} /></Metric>}
+        {base.speed.length >= 3 && <Metric name="Writing speed" value={perSec(t.speed)} est={f} sub={speedMed == null ? undefined : `median ${perSec(speedMed)}`}>
+          <Spark name="Writing speed" points={s.speed} fmt={perSec} live={live} follow={f} /></Metric>}
+        {base.hits.length >= 3 && <Metric name="Cache hit rate" value={share(t.hits)} est={f} sub={s.hit == null ? undefined : `${share(s.hit)} overall`}>
+          <Spark name="Cache hit rate" points={s.hits} fmt={share} max={100} live={live} follow={f} /></Metric>}
+        {/* the last call's input against the model's window (with the call in flight's output so far, live); a window the
+            core does not know (a local model) has no bar */}
+        <Metric name="Context" value={tok(Math.round(t.ctx))} zero={!view.context} est={f} sub={u.contextMax ? `of ${u.contextMax}` : undefined}>
           {u.contextMax && <Bar pct={u.contextPct} />}</Metric>
       </div>
     </div>
@@ -211,25 +258,46 @@ function Numbers({ view, scope, live, rows }: { view: View; scope: Scope; live: 
 
 /** The conversation's numbers in the composer's own strip, along its lower edge or its top (design review 14, M-A of
  * mockups/v13.html; Settings › Appearance › Conversation numbers): its context against the model's window, its cost
- * (`costSaid`), the cache's share, and the reply's speed while it runs, appended last so nothing moves when it comes. The
- * cost opens the conversation's receipt (as the status bar's "this chat" does), the speed Stats over this turn, the rest
- * Stats over the conversation. The Stats' and the status bar's own numbers: no sums of its own. A short row drops the
- * cache, then the cost's words, then "of 128k" (`data-drop`, styles.css); never wraps. */
-export function ConvNumbers({ view, choice, busy, turns, top }: { view: View; choice?: ModelChoice; busy: boolean; turns: Turn[]; top?: boolean }) {
+ * (`costSaid`), the cache's share, and a speed, appended last so nothing moves when it comes: while a call streams (Live
+ * stats) its time to first token, counting, then its writing speed; between calls the reply's; once it ended the last
+ * reply's average. The cost opens the conversation's receipt (as the status bar's "this chat" does), the speed Stats over
+ * this turn, the rest Stats over the conversation. The Stats' and the status bar's own numbers: no sums of its own. A
+ * short row drops the cache, then the cost's words, then "of 128k" (`data-drop`, styles.css); never wraps. With Live stats
+ * on the numbers follow the call in flight every frame, in `muted` while estimates, each in a box that only grows during
+ * the reply, and ease to the exact ones when the call ends. */
+export function ConvNumbers({ view: core, choice, busy, turns, top }: { view: View; choice?: ModelChoice; busy: boolean; turns: Turn[]; top?: boolean }) {
   const row = useRef<HTMLDivElement>(null);
-  const s = stats(view, "all"), u = usage(view), tps = busy ? stats(view, "turn").tps : null, paid = costSaid(s, choice, busy);
-  // [its name, the tooltip, what it shows]; the cache's part goes first where the row is short (tz-n1)
-  const parts: [string, string, ReactNode][] = [];
-  if (view.context > 0) parts.push(["context", `Context: ${tok(view.context)}${u.contextMax ? ` of the model's ${u.contextMax} window, ${u.contextPct}%` : ""}`, <>
-    <Gauge size={14} strokeWidth={1.5} className="text-faint" /><span className="font-medium text-ink">{tok(view.context)}</span>
+  const { view, streaming: est, on } = useLive(core, (lv) => { const s = stats(lv, "all"), c = liveRow(lv);
+    return [tok(lv.context), usage(lv).contextPct, usd(s.cost ?? s.done), c?.tps ? Math.round(c.tps) : secs((c?.first_ms ?? 0) / 1000)].join(); });
+  const settle = on && busy, ctx = Math.round(useTween(view.context, settle, est, true));
+  const s = stats(view, "all"), u = usage({ ...view, context: ctx }), n = useTween(s.cost ?? s.done, settle, est, true);
+  // while a reply runs the strip says "so far" (or, on a plan, at API prices): the cost or the finished turns' sum, eased as one number
+  const paid = costSaid(busy ? { ...s, cost: s.cost == null ? null : n, done: n } : s, choice, busy);
+  // the speed: the call's own once timed (eased onto from the one before), between calls the reply's, else the last reply's
+  // with a speed; eased between them (it jumped at each call's end)
+  const last = useMemo(() => lastSpeed(core), [core.blocks, core.calls]), c = est ? liveRow(view) : undefined;
+  const turnTps = busy ? stats(view, "turn").tps : null, target = c?.tps ?? turnTps ?? last?.tps ?? null;
+  const tps = Math.round(useTween(target ?? 0, settle, !!c?.tps));
+  const sp: [string, string, string] | null = c && !c.tps && c.first_ms != null ? [secs(c.first_ms / 1000), "", core.live?.first == null ? "Time to first token, counting" : "Time to first token"]
+    : target ? [String(tps), "t/s", c?.tps ? "This call's writing speed (live estimate)" : turnTps ? "The reply's writing speed"
+      : last?.last ? "Average writing speed of the last reply" : "Average writing speed of the last reply long enough to time"] : null;
+  // the tooltips say the core's figures, which change as a call ends, never every frame
+  const cu = usage(settled(core)), live = est ? " (live estimate)" : "";
+  // [its name, the tooltip, what it shows, its text: the row is fitted again when a text's length changes]
+  const parts: [string, string, ReactNode, string][] = [];
+  if (ctx > 0) parts.push(["context", `Context: ${tok(settled(core).context)}${cu.contextMax ? ` of the model's ${cu.contextMax} window, ${cu.contextPct}%` : ""}${live}`, <>
+    <Gauge size={14} strokeWidth={1.5} className="text-faint" /><Num hold={settle} est={est} className={`font-medium ${est ? "" : "text-ink"}`}>{tok(ctx)}</Num>
     {u.contextMax && <><span className="tz-n3 -ml-0.5">of {u.contextMax}</span><span className="h-[5px] w-10 flex-none overflow-hidden rounded-[3px] bg-line-strong">
-      <i className="block h-full rounded-[3px] bg-live" style={{ width: `${u.contextPct}%` }} /></span><span>{u.contextPct}%</span></>}</>]);
-  if (paid) parts.push(["cost", paid[2], <><Coins size={14} strokeWidth={1.5} className="text-faint" /><span className="font-medium text-ink">{paid[0]}</span>
-    {paid[1] && <span className="tz-n2 -ml-0.5">{paid[1]}</span>}</>]);
+      <i className="block h-full rounded-[3px] bg-live" style={{ width: `${u.contextPct}%` }} /></span><Num hold={settle}>{u.contextPct}%</Num></>}</>, `${tok(ctx)}${u.contextPct}`]);
+  if (paid) parts.push(["cost", paid[2] + live, <><Coins size={14} strokeWidth={1.5} className="text-faint" /><Num hold={settle} est={est} className={`font-medium ${est ? "" : "text-ink"}`}>{paid[0]}</Num>
+    {paid[1] && <span className="tz-n2 -ml-0.5">{paid[1]}</span>}</>, paid.join()]);
   if (u.cachedPct > 0) parts.push(["cache", "Input read from the provider's cache in this conversation", <>
-    <Database size={14} strokeWidth={1.5} className="text-faint" /><span className="font-medium text-ink">{u.cachedPct}%</span><span className="-ml-0.5">cached</span></>]);
-  if (tps) parts.push(["speed", "The reply's writing speed", <><Activity size={14} strokeWidth={1.5} className="text-live" /><span className="font-medium text-ink">{Math.round(tps)}</span><span className="-ml-0.5">t/s</span></>]);
-  useLayoutEffect(() => { fit(row.current); });
+    <Database size={14} strokeWidth={1.5} className="text-faint" /><span className="font-medium text-ink">{u.cachedPct}%</span><span className="-ml-0.5">cached</span></>, `${u.cachedPct}`]);
+  if (sp) parts.push(["speed", sp[2], <><Activity size={14} strokeWidth={1.5} className="text-live" /><Num hold={settle} est={est} className={`font-medium ${est ? "" : "text-ink"}`}>{sp[0]}</Num>
+    {sp[1] && <span className="-ml-0.5">{sp[1]}</span>}</>, sp.slice(0, 2).join()]);
+  // fitted when a part comes or goes or a text's length changes, not every frame
+  const shape = parts.map((p) => `${p[0]}${p[3].length}`).join();
+  useLayoutEffect(() => { fit(row.current); }, [shape]);
   useEffect(() => { const el = row.current; if (!el) return; const r = new ResizeObserver(() => fit(el)); r.observe(el); return () => r.disconnect(); }, [!parts.length]);
   if (!parts.length) return null;
   // tabIndex: WebKit's Tab skips buttons; data-panel: a press here is not "outside" a work panel open over the conversation
@@ -246,6 +314,16 @@ export function ConvNumbers({ view, choice, busy, turns, top }: { view: View; ch
       ))}
     </div>
   );
+}
+
+/** The running reply's output tokens on its Working row and work fold ("↓ 1.2k tokens", design review 13, D1): its finished
+ * calls' as each ends and, with Live stats on, the call in flight's estimate counting with it (eased to the exact figure
+ * when the call ends), in a box that only grows, so what follows on the line stays put. */
+export function Tokens({ out = 0, live }: { out?: number; live?: Live | null }) {
+  const on = useLook(LIVE) !== "off", streaming = on && !!live;
+  useFrame(streaming, () => tok(Math.round(out + outNow(live!))));
+  const n = Math.round(useTween(out + (streaming ? outNow(live!) : 0), on, streaming, true));
+  return n ? <><Sep /><Num hold={on} className="tabular-nums">↓ {tok(n)} tokens</Num></> : null;
 }
 /** Drops parts until the row fits: the cache, the cost's words, "of 128k" (scrollWidth counts what spills out). */
 const fit = (el: HTMLElement | null) => { if (!el) return; el.dataset.drop = "0"; for (let d = 1; d <= 3 && el.scrollWidth > el.clientWidth; d++) el.dataset.drop = String(d); };
