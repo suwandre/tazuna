@@ -4,7 +4,7 @@ import { LIVE, STATS, useLook } from "../lib/chrome";
 import { costSaid, stats, usage, type Point } from "../lib/fromView";
 import { blend, lastSpeed, liveRow, outNow, settled, still, useFrame, useLive, type Live } from "../lib/live";
 import type { ModelChoice, View } from "../lib/tazuna";
-import { median, tenths, usd } from "../lib/types";
+import { median, pctText, tenths, usd } from "../lib/types";
 import { Segmented } from "./Controls";
 import { WorkCtx } from "./Rail";
 import { dur, perSec, tok, type Turn } from "./Receipt";
@@ -143,8 +143,8 @@ function Metric({ name, value, sub, zero, est, children }: { name: string; value
 }
 
 const secs = tenths;
-// a share of the input that never rounds up to all of it (pct's rule)
-const share = (x: number) => `${x >= 100 ? 100 : Math.min(99, Math.round(x))}%`;
+// a share of the input that never rounds up to all of it (pct1's rule), to a tenth (the user, 2026-11-26)
+const share = (x: number) => `${pctText(x >= 100 ? 100 : Math.min(99.9, Math.round(x * 10) / 10))}%`;
 const last = (p: Point[]) => (p.length ? p[p.length - 1][1] : null);
 
 /** One small line in the live colour, no marks: a row's own (rows, from 8 calls). */
@@ -292,7 +292,7 @@ export function ConvNumbers({ view: core, choice, busy, turns, top }: { view: Vi
   if (paid) parts.push(["cost", paid[2] + live, <><Coins size={14} strokeWidth={1.5} className="text-faint" /><Num hold={settle} est={est} className={`font-medium ${est ? "" : "text-ink"}`}>{paid[0]}</Num>
     {paid[1] && <span className="tz-n2 -ml-0.5">{paid[1]}</span>}</>, paid.join()]);
   if (u.cachedPct > 0) parts.push(["cache", "Input read from the provider's cache in this conversation", <>
-    <Database size={14} strokeWidth={1.5} className="text-faint" /><span className="font-medium text-ink">{u.cachedPct}%</span><span className="-ml-0.5">cached</span></>, `${u.cachedPct}`]);
+    <Database size={14} strokeWidth={1.5} className="text-faint" /><span className="font-medium text-ink">{pctText(u.cachedPct)}%</span><span className="-ml-0.5">cached</span></>, `${u.cachedPct}`]);
   if (sp) parts.push(["speed", sp[2], <><Activity size={14} strokeWidth={1.5} className="text-live" /><Num hold={settle} est={est} className={`font-medium ${est ? "" : "text-ink"}`}>{sp[0]}</Num>
     {sp[1] && <span className="-ml-0.5">{sp[1]}</span>}</>, sp.slice(0, 2).join()]);
   // fitted when a part comes or goes or a text's length changes, not every frame

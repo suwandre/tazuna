@@ -3,7 +3,7 @@ import { isFree } from "./route";
 import { stripCd } from "./steps";
 import type { ModelChoice, View } from "./tazuna";
 import { planName } from "./usage";
-import { median, paidTo, pct, usd, writing, type Call, type Message, type ToolStep, type Usage } from "./types";
+import { median, paidTo, pct1, usd, writing, type Call, type Message, type ToolStep, type Usage } from "./types";
 
 /** Words before a later step that are an aside, not an answer: one short paragraph, no code block, table or list. */
 export const interim = (text: string) => { const t = text.trim(); return t.length <= 280 && !/\n\s*\n/.test(t) && !/^\s*(```|\||[-*+]\s|\d+[.)]\s|#)/m.test(t); };
@@ -216,7 +216,7 @@ export function messages(v: View, refused: ReadonlyMap<number, string> = new Map
       let n = 0;
       while (n < pending.length && pending[n].block <= k) n++;
       const mine = pending.splice(0, n).map(({ block: _, ...c }) => c), unknown = mine.filter((c) => c.cost == null).length;
-      current().meta = { cost: b.run_cost === undefined ? b.cost : b.run_cost, tokens: total, in: read, cached: u.cache_read, out: u.output, cachedPct: read ? pct(u.cache_read, read) : undefined, secs: b.secs,
+      current().meta = { cost: b.run_cost === undefined ? b.cost : b.run_cost, tokens: total, in: read, cached: u.cache_read, out: u.output, cachedPct: read ? pct1(u.cache_read, read) : undefined, secs: b.secs,
         calls: mine.length ? mine : undefined,
         // how the turn was paid comes from the turn itself or not at all (the conversation's model of now said "not billed"
         // under answers a provider had billed, design review 11); a `plan` not sent is not known, not false
@@ -296,6 +296,12 @@ export function demoView() {
     && m[1].cost === 0.1 && m[1].billing?.plan === false && m[1].uncounted === 2 && m[1].calls?.[0].cost === 0.1 && m[1].cached === 0
     && m[2].cost === 0.2 && m[2].billing === undefined;
   if (!ok) throw new Error(`view: ${JSON.stringify(m)}`);
+  // the cache's share to a tenth (the user, 2026-11-26): the receipt's line, the bar and the strip read the same figure
+  const cu = { input: 2, cache_write: 0, cache_read: 998, output: 10 };
+  const cdone = { kind: "done", ok: true, secs: 1, turns: 1, cost: 0, usage: cu, run_usage: cu, stopped: false };
+  const cached = messages({ ...v, usage: cu, calls: [], blocks: [{ kind: "prompt", text: "a" }, cdone] } as View)
+    .flatMap((x) => (x.role === "agent" && x.meta ? [x.meta.cachedPct] : []));
+  if (cached.join() !== "99.8" || usage({ ...v, usage: cu } as View).cachedPct !== 99.8) throw new Error(`cachedPct: ${JSON.stringify(cached)}`);
   // a plain chat: the agent's answer in the chat's place says why, the chat's own offers "Send to agent"
   const done = { kind: "done", ok: true, secs: 1, turns: 1, cost: 0, usage: u, stopped: false } as const;
   const chat = messages({ ...v, profile: "chat", calls: [], blocks: [{ kind: "prompt", text: "rain tomorrow?" }, { kind: "notice", text: "answered by the agent: needs live data or this computer", error: false },
@@ -466,7 +472,7 @@ export function usage(v: View): Usage {
   const u = v.usage, read = u.input + u.cache_write + u.cache_read;
   return { contextPct: win ? Math.min(100, Math.round((100 * v.context) / win)) : 0, contextUsed: k(v.context), contextMax: win ? k(win) : "",
     plan5h: v.limits ? Math.round(v.limits[0]) : null, plan5hReset: resetIn(v.limits_reset), planWeek: v.limits ? Math.round(v.limits[1]) : null,
-    threadCost: v.cost, threadTurns: v.turns, cachedPct: read ? pct(u.cache_read, read) : 0, saved: 0, today: v.cost, todayTurns: v.turns, todaySeries: [], balance: v.balance };
+    threadCost: v.cost, threadTurns: v.turns, cachedPct: read ? pct1(u.cache_read, read) : 0, saved: 0, today: v.cost, todayTurns: v.turns, todaySeries: [], balance: v.balance };
 }
 
 /** "in 2 h 14 min" until the plan's 5-hour window resets; empty when unknown or past. */

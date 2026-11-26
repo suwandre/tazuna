@@ -3,7 +3,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "
 import { core, type Accounts, type ClaudeSetup, type ModelChoice } from "../lib/tazuna";
 import { useDialog } from "../lib/dialog";
 import { RANGES, barName, fieldOf, floorTo, fromField, needOf, perUnit, planName, rangeWords, spanOf, summarize, used, type Bar, type Choice, type Row, type Unit } from "../lib/usage";
-import { modelLabel, usd } from "../lib/types";
+import { modelLabel, pct1, pctText, usd } from "../lib/types";
 import { exactly, parseReset, whenReset } from "../lib/health";
 import { Sep } from "./Sep";
 import { MenuRule, PopMenu, Segmented, dialogShell, menuItem, quietButton } from "./Controls";
@@ -181,7 +181,7 @@ export function UsageView({ onClose, limits, balance, choices = [], claude }: { 
                 {/* plans with no reference price run at $0: counted by their runs, "not billed", never "$0" (the review of 2026-11-25) */}
                 <Figure label={plans} value={!planRuns ? "–" : s.plan > 0 ? money(s.plan) : "not billed"} quiet={!planRuns} caption={s.plan > 0 ? "at API prices, not billed" : undefined}
                   more={[...(s.plans.length > 1 ? s.plans.map((p) => [p.cost > 0 ? money(p.cost) : "not billed", p.name] as [string, string]) : []), [`${planRuns}`, "runs"]]} />
-                <Figure label="From the cache" value={s.read ? `${Math.round((100 * s.cached) / s.read)}%` : "Nothing read yet"} quiet={!s.read} caption="of the input" more={[[big(s.cached), "tokens"]]} />
+                <Figure label="From the cache" value={s.read ? `${pctText(pct1(s.cached, s.read))}%` : "Nothing read yet"} quiet={!s.read} caption="of the input" more={[[big(s.cached), "tokens"]]} />
               </div>
               <Bars bars={s.bars} unit={page.sp.unit} plans={plans} within={words.within} />
               {s.byModel.length > 0 && (
@@ -190,7 +190,7 @@ export function UsageView({ onClose, limits, balance, choices = [], claude }: { 
                   <tbody>{(allModels ? s.byModel : s.byModel.slice(0, 8)).map((m) => (
                     <tr key={`${m.plan}${m.model}${m.provider}`}><td className={td} title={m.model}>{modelLabel(m.model)}</td>
                       <td className={`${td} text-muted`}>{m.plan ? planName(m.provider) : m.provider ?? providerOf(m.model) ?? <span className="text-faint" title="An API run from before tazuna 0.1.182, which did not record its provider; several providers serve this model">Not recorded</span>}</td>
-                      <td className={num}>{m.runs}</td><td className={num}>{m.plan && !m.cost ? "not billed" : money(m.cost)}</td><td className={num}>{m.cachePct}%</td></tr>
+                      <td className={num}>{m.runs}</td><td className={num}>{m.plan && !m.cost ? "not billed" : money(m.cost)}</td><td className={num}>{pctText(m.cachePct)}%</td></tr>
                   ))}</tbody>
                   {/* the eight most used, the rest on request: every model ever tried made a list of 40 (design review 5) */}
                   {/* a button that looks like one: it read as a line of text until hovered (design review 6) */}

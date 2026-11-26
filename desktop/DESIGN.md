@@ -197,7 +197,8 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   not billed", the plan named on hover; "not billed (Z.ai Coding Plan)" where the plan has no reference price; "free on
   this machine" on a local model, "free" on another free one; while a reply runs the Stats' "$0.54 so far" (on a plan,
   with every finished turn on it, "at API prices · not billed" as after it), the finished
-  turns' sum where its calls bring no price yet, so the part never goes and comes back), the cache's share ("95% cached", none where the provider reports
+  turns' sum where its calls bring no price yet, so the part never goes and comes back), the cache's share ("95.2% cached", to a tenth of a percent everywhere
+  it is said — the receipt, this strip, the status bar, Stats, the usage page and the start page's ledger; the user, 2026-11-26; none where the provider reports
   none) and a speed, last, so nothing moves: while a model call streams (Live stats) its time to first token counting
   ("0.8 s"), then its own speed ("188 t/s") once the core's rule can time it; between calls the reply's, eased; once a reply
   has ended the last reply's average writing speed ("210 t/s", "Average writing speed of the last reply"; `writing`; where
@@ -255,14 +256,14 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   signed in.
 - Scrolled up from the end of a conversation, a round button over the message box goes back down.
 - A new conversation before its first message is the start screen (prototype `mockups/v3.html`): the mark (40 px, so its pixels land on whole screen pixels), a serif
-  question, the day's ledger from the run log ("Today 14 runs | $0.41 paid | 94% from the cache"; a click opens the usage
+  question, the day's ledger from the run log ("Today 14 runs | $0.41 paid | 94.2% from the cache"; a click opens the usage
   page; a part with nothing to say is left out, and a day without a run shows the line that says what the box is for), the
   composer in the middle with a "where it runs" pill (a chat or a project), "Pick up where you left off" (the last three
   conversations) and, in a chat, "Start in a project", then the keys worth knowing. No $0.000 anywhere on it. A short
   window (720 px or less) takes less room around it and leaves the keys out; what does not fit scrolls under the
   transcript's fades. A bar under it (the trust bar) is in the flow, never over its content.
 - The receipt (design review 11, variant A of `mockups/v8.html`): under every answer one faint line, always there
-  ("$0.031 | 12.4k in (85% cached) | 640 out | 38 s", "<1 s" under a second; in a plain chat only under the last answer,
+  ("$0.031 | 12.4k in (85.4% cached) | 640 out | 38 s", "<1 s" under a second; in a plain chat only under the last answer,
   older ones show theirs on hover or focus, as their actions do: design review 13, D3; a hidden one takes no room, it lies
   in the gap under its answer, so the space over the next message is the same with or without one: design review 14; an agent's run, and a chat's
   answer by the agent, keep every line; Copy beside it on hover or focus; a turn
@@ -438,7 +439,10 @@ arrows; a row's line is 56 × 14 px with no mark), usage bar, status bar. Reuse 
   reduced motion they take the core's figures a few times a second with no easing (none while the window is hidden).
   Off: they move as each call ends, as before.
 - Rows move, they do not jump: a sidebar row that changes group slides there (200 ms, kept by the conversation's id); a
-  reply's steps unfold and fold in height (180 ms and 150 ms).
+  reply's steps unfold and fold in height (180 ms and 150 ms). The fold's close keeps its last frame until the body is
+  taken out (`fill: "forwards"`, `useFold`, Transcript.tsx): without it the finished animation let go for the frame
+  before that removal and the whole slip flashed back at full height on its way out (the user's recording, 2026-11-26);
+  a second press while it shuts starts nothing.
 - What closes fades out where it was (`tz-out`, 110 ms; lib/chrome.ts does it for every menu and dialog), and the work
   panel's column slides open and shut, the reading column gliding to the centre of what is left with it (design review
   14); over the conversation it opens as a popover does (`tz-pop`).

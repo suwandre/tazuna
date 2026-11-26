@@ -86,8 +86,32 @@ const log = [];
       await step(p, `${T}-receipt-wide`, async () => { await p.getByTitle(/^The receipt/).first().click(); await p.waitForTimeout(500);
         const r = await slip(p); log.push(`${T} receipt: ${r.width} px, ${r.cols} | ${r.total}`);
         must(r.cols === "Call,In,Cached,Out,TTFT,Speed,Time,Price" && r.over <= 0, `wide receipt: ${JSON.stringify(r)}`);
-        must(/^Total 1\.2M 1\.1M ?87% 8\.7k 0\.9 s ?med 225 t\/s 49 s \$0\.064$/.test(r.total), `totals row: ${r.total}`);
+        must(/^Total 1\.2M 1\.1M ?87\.1% 8\.7k 0\.9 s ?med 225 t\/s 49 s \$0\.064$/.test(r.total), `totals row: ${r.total}`);
         must(r.text.includes("Total at Mistral Vibe's API prices") && /On your Mistral Vibe plan\s+not billed/.test(r.text) && !r.text.includes("Paid"), `the plan's footer: ${r.text}`); });
+      // the receipt's close (the user's recording, 2026-11-26): the fold shrinks and fades to nothing, never flashing back
+      // at full height for a frame before it goes (the finished animation had let go of the body before React took it out)
+      await step(p, `${T}-receipt-close`, async () => {
+        const frames = await p.evaluate(async () => {
+          const out = [];
+          const t0 = performance.now();
+          document.querySelector("button[title^='The receipt']").click();
+          const sample = () => {
+            const e = document.querySelector(".scroll-mb-10");
+            out.push(e ? { h: e.getBoundingClientRect().height, op: Number(getComputedStyle(e).opacity) } : null);
+            if (performance.now() - t0 < 400) requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+          await new Promise((r) => setTimeout(r, 450));
+          return out;
+        });
+        const gone = frames.findIndex((f) => f === null), before = frames.slice(0, gone).filter(Boolean);
+        log.push(`${T} close: ${before.map((f) => `${Math.round(f.h)}@${f.op.toFixed(2)}`).join(" ")} then gone`);
+        must(gone > 3, `the fold never went: ${JSON.stringify(frames)}`);
+        // once small and faint it stays small and faint: no frame back at full height or opacity on the way out
+        const small = before.findIndex((f) => f.h < 40);
+        must(small >= 0 && before.slice(small).every((f) => f.h < 40 && f.op < 0.2), `the close flashed back: ${JSON.stringify(before)}`);
+        await p.getByTitle(/^The receipt/).first().click(); await p.waitForTimeout(400); // open again for what follows
+      });
       // the Stats beside the conversation (1440): this turn, then the conversation
       await step(p, `${T}-turn`, async () => { await p.getByTitle(/^Open the work panel/).click(); await p.waitForTimeout(700);
         const s = await stats(p); log.push(`${T} turn: ${JSON.stringify(s)}`);
@@ -183,7 +207,7 @@ const log = [];
         await step(q, `${T}-receipt-${w}`, async () => { await q.getByRole("button", { name: "Conversations", exact: true }).click(); await open(q, VIBE);
           await q.getByTitle(/^The receipt/).first().click(); await q.waitForTimeout(500);
           const s = await slip(q); log.push(`${T} receipt at ${w}: ${s.width} px, ${s.cols} | ${s.total}`);
-          must(s.cols === cols && s.over <= 0 && /87%/.test(s.total), `narrow ${w}: ${JSON.stringify(s)}`); });
+          must(s.cols === cols && s.over <= 0 && /87\.1%/.test(s.total), `narrow ${w}: ${JSON.stringify(s)}`); });
         await c4.close();
       }
     }

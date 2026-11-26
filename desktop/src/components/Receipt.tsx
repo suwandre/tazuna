@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { median, modelLabel, paidTo, pct, tenths, usd, usdExact, writing, type Billing, type Meta, type ToolStep } from "../lib/types";
+import { median, modelLabel, paidTo, pct1, pctText, tenths, usd, usdExact, writing, type Billing, type Meta, type ToolStep } from "../lib/types";
 import { Mark } from "./Mark";
 
 /** A row number's column, as wide as the largest number and a gap: a fixed 16-20 px ran "111" into the title (the user,
@@ -106,8 +106,8 @@ const tot = "whitespace-nowrap border-t border-line pl-3 pt-[5px] text-right";
 const speed = "@max-[500px]:hidden", ttft = "@max-[430px]:hidden";
 /** "219 t/s": the user's way, never "/s" or "tok/s" (2026-11-25) */
 export const perSec = (tps: number) => `${Math.round(tps)} t/s`;
-/** The cache's share beside a cached count, small and faint: "99%" ("–" with no input). */
-const Share = ({ part, whole }: { part: number; whole: number }) => <span className="ml-1 text-[11px] font-normal text-faint">{whole ? `${pct(part, whole)}%` : "–"}</span>;
+/** The cache's share beside a cached count, small and faint: "99.8%" ("–" with no input). */
+const Share = ({ part, whole }: { part: number; whole: number }) => <span className="ml-1 text-[11px] font-normal text-faint">{whole ? `${pctText(pct1(part, whole))}%` : "–"}</span>;
 
 /** The slip itself: its title beside the mark, a word on the right, the rows, the sums under a dashed rule. `float`: over
  * the window (the conversation's, from the status bar), on the popover's fill with its shadow. */

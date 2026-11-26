@@ -2,7 +2,7 @@
 // run since the asked second, the last 90 days unless asked). Runs on a plan (the claude CLI on its login, or the own loop on a plan's key: Mistral Vibe, a sign-in;
 // the row's `plan`) are counted at API prices, not billed; the rest ran on the own loop against a provider's API: billed.
 import { clock } from "./health";
-import { pct } from "./types";
+import { pct1 } from "./types";
 
 /** [ts, model, version, plan, cost, input, cache write, cache read, output, stop, verify, cache ttl, mode, real use, strong
  * signals, soft signals, provider] (src/main.rs usage_rows; the signals from src/realuse.rs; the provider of an API run
@@ -118,7 +118,7 @@ export function summarize(all: Run[], sp: Span) {
   }
   const byModel: ByModel[] = [...group(runs, (r) => `${r.plan}|${r.model}|${r.provider ?? ""}`).values()].map((rs) => {
     const read = sum(rs, (r) => r.read);
-    return { model: rs[0].model, plan: rs[0].plan, provider: rs[0].provider, runs: rs.length, cost: sum(rs, (r) => r.cost), cachePct: read ? Math.round((100 * sum(rs, (r) => r.cached)) / read) : 0 };
+    return { model: rs[0].model, plan: rs[0].plan, provider: rs[0].provider, runs: rs.length, cost: sum(rs, (r) => r.cost), cachePct: read ? pct1(sum(rs, (r) => r.cached), read) : 0 };
   }).sort((a, b) => b.cost - a.cost);
   // real use only (your own work, src/realuse.rs): how often a run missed (strong signals) or met pushback (soft only)
   const mine = runs.filter((r) => r.real);
@@ -179,7 +179,7 @@ export function today(rows: Row[] | null, now = Date.now() / 1000): { runs: numb
   if (!runs.length) return null;
   // a share that says nothing (no input read, or none of it from the cache) is null: the line leaves it out
   const read = runs.reduce((a, r) => a + r.read, 0), cached = runs.reduce((a, r) => a + r.cached, 0);
-  return { runs: runs.length, paid: runs.reduce((a, r) => a + (r.plan ? 0 : r.cost), 0), cachePct: cached ? pct(cached, read) || null : null };
+  return { runs: runs.length, paid: runs.reduce((a, r) => a + (r.plan ? 0 : r.cost), 0), cachePct: cached ? pct1(cached, read) || null : null };
 }
 
 /** A check of the grouping: `npx tsx -e 'import("./src/lib/usage.ts").then(m => m.demo())'`. */
@@ -205,7 +205,7 @@ export function demo() {
   if (!ok) throw new Error(`usage: ${JSON.stringify(s)}`);
   // the ledger: today's three runs (the empty one is no run), the paid ones' cost, the cache's share; none the day after
   const t = today(rows, now);
-  if (!t || t.runs !== 3 || !near(t.paid, 0.03) || t.cachePct !== 99 || today(rows, now + 86400) !== null || today(rows.slice(1, 3), now)!.cachePct !== null) throw new Error(`today: ${JSON.stringify(t)}`);
+  if (!t || t.runs !== 3 || !near(t.paid, 0.03) || t.cachePct !== 99.8 || today(rows, now + 86400) !== null || today(rows.slice(1, 3), now)!.cachePct !== null) throw new Error(`today: ${JSON.stringify(t)}`);
   // a claude run on an API key: the run log says it is not the plan (core, design review 12), so it is paid, to Anthropic
   const keyed: Row = [now - 150, "claude-opus-5-5", "0.1.193", false, 0.42, 2000, 0, 0, 500, "completed", "claimed", "5m", "live", true, [], [], "Anthropic API"];
   const k = today([...rows, keyed], now), byKey = sum([...rows, keyed]).byModel.find((m) => m.provider === "Anthropic API");

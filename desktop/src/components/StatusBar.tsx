@@ -1,6 +1,6 @@
 import { ArrowUpCircle, Check, LoaderCircle, RefreshCw } from "lucide-react";
 import { openUsage } from "./Rail";
-import { usd, usdExact, type Usage, keysOf } from "../lib/types";
+import { pctText, usd, usdExact, type Usage, keysOf } from "../lib/types";
 import { useEffect, useRef, useState } from "react";
 import { ChatSlip, priceSaid, type Turn } from "./Receipt";
 import { exactly, untilShort, whenReset, worst, type Item, type Level } from "../lib/health";
@@ -195,7 +195,7 @@ export function StatusBar({ usage: u, version, idle, numbers = true, accounts = 
       <span className="flex-1" />
       {/* a zero says nothing yet (a conversation before its first reply, a provider that reports no cache): not shown */}
       {numbers && !idle && u.contextPct > 0 && <span className={`${item} max-[900px]:hidden`} title="This conversation's context">context <span className={b}>{u.contextPct}%</span> of {u.contextMax}</span>}
-      {numbers && !idle && u.cachedPct > 0 && <span className={`${item} max-[1100px]:hidden`} title="Input read from the cache in this conversation">cache <span className={b}>{u.cachedPct}%</span></span>}
+      {numbers && !idle && u.cachedPct > 0 && <span className={`${item} max-[1100px]:hidden`} title="Input read from the cache in this conversation">cache <span className={b}>{pctText(u.cachedPct)}%</span></span>}
       {numbers && u.threadCost > 0 && (turns.length ? <ChatCost cost={u.threadCost} turns={turns} busy={busy} className={button}>this chat <span className={b}>{priceSaid(u.threadCost, turns.some((t) => t.estimate))}</span></ChatCost>
         : <button onClick={openUsage} title={`This conversation's cost${usd(u.threadCost) !== usdExact(u.threadCost) ? `, ${usdExact(u.threadCost)}` : ""} · Usage`} className={button}>this chat <span className={b}>{usd(u.threadCost)}</span></button>)}
       {version && <Version version={version} />}

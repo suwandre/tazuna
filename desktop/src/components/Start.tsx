@@ -2,7 +2,7 @@ import { CircleAlert, FolderOpen, MessageSquare, Plus, RotateCcw } from "lucide-
 import type { ReactNode } from "react";
 import { age } from "./Sidebar";
 import { Sep } from "./Sep";
-import { keysOf, usd } from "../lib/types";
+import { keysOf, pctText, usd } from "../lib/types";
 import { Mark } from "./Mark";
 import { accentButton, quietButton } from "./Controls";
 
@@ -66,7 +66,7 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
           <span className="mr-2.5 text-faint">Today</span>
           <b className="mr-1 font-medium text-ink">{today.runs}</b>{today.runs === 1 ? "run" : "runs"}
           {today.paid > 0 && <><Sep /><b className="mr-1 font-medium text-ink">{usd(today.paid)}</b>paid</>}
-          {today.cachePct != null && <><Sep /><b className="mr-1 font-medium text-ink">{today.cachePct}%</b>from the cache</>}
+          {today.cachePct != null && <><Sep /><b className="mr-1 font-medium text-ink">{pctText(today.cachePct)}%</b>from the cache</>}
         </button>
       ) : <div className="mb-3 py-0.5 text-center text-[12.5px] text-muted">{place ? "A change in this project, or a question about it." : "A question for a chat, or a change in one of your projects."}</div>}
       <div className="w-full max-w-[756px]">{composer}</div>

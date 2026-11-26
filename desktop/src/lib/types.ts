@@ -53,6 +53,11 @@ export type Meta = { cost: number | null; tokens: number; in?: number; cached?: 
   estimate?: boolean; uncounted?: number; unknownCalls?: number };
 /** A share as a whole percent that never rounds up to all of it: 99.6% of the input cached is "99%", only all of it "100%". */
 export const pct = (part: number, whole: number) => (part >= whole ? 100 : Math.min(99, Math.round((100 * part) / whole)));
+/** The cache's share to a tenth of a percent (the user, 2026-11-26: the receipt, the usage bar and the sidebar said "99%"
+ * for anything from 98.5 to 99.9): "99.8%", only all of it "100%", never rounded up to it ("99.9%" at most short of all). */
+export const pct1 = (part: number, whole: number) => (part >= whole ? 100 : Math.min(99.9, Math.round((1000 * part) / whole) / 10));
+/** A share as written: always one decimal ("86.0", beside "85.3" a bare "86" read as never changed), only none and all whole ("0", "100"). */
+export const pctText = (n: number) => (n <= 0 ? "0" : n >= 100 ? "100" : n.toFixed(1));
 /** The middle value (of two, their mean); null for none. */
 export const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b), m = s.length >> 1; return !s.length ? null : s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 /** Output tokens a second while writing, over several calls: their output over their time after the first token (each
@@ -293,6 +298,10 @@ export function demoNumbers() {
   const near = [usd(999.994), usd(999.995), usdExact(999.996), usdExact(999.994), usd(1000)].join(" ");
   if (near !== "$999.99 $1,000.00 $1,000.00 $999.99 $1,000.00") throw new Error(`usd near 1000: ${near}`);
   if (usdExact(0.000019) !== "$0.000019" || [0, 0.04, 0.1, 2.345].map(tenths).join(" ") !== "<0.1 s <0.1 s 0.1 s 2.3 s") throw new Error("usdExact, tenths");
+  // the cache's share to a tenth: 99.96% of the input is "99.9%", never "100%" short of all of it; a whole share keeps no ".0"
+  const shares = [pct1(0, 100), pct1(1, 3), pct1(998, 1000), pct1(9996, 10000), pct1(100, 100), pct1(101, 100)].join(" ");
+  if (shares !== "0 33.3 99.8 99.9 100 100") throw new Error(`pct1: ${shares}`);
+  if ([0, 86, 85.3, 99.9, 100].map(pctText).join(" ") !== "0 86.0 85.3 99.9 100") throw new Error("pctText");
   console.log("numbers ok");
 }
 

@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState
 import { createPortal } from "react-dom";
 import { Slot } from "../lib/slots";
 import { readableError } from "../lib/fromView";
-import { attachments, IMAGE_FILE, usd, usdExact, type Change, type Message, type ToolStep } from "../lib/types";
+import { attachments, IMAGE_FILE, pctText, usd, usdExact, type Change, type Message, type ToolStep } from "../lib/types";
 import { AnswerSlip, dur, priceSaid, refless, tok } from "./Receipt";
 import { Parts, Sep } from "./Sep";
 import { quietButton } from "./Controls";
@@ -243,7 +243,7 @@ export function workSummary(tools: ToolStep[]): string {
  * the click. The steps had it first (design review 10: they appeared and went at once); the receipt opens the same way. */
 const still = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 function useFold(shown: boolean, set: (open: boolean) => void) {
-  const body = useRef<HTMLDivElement>(null), clicked = useRef(false);
+  const body = useRef<HTMLDivElement>(null), clicked = useRef(false), folding = useRef<Animation | null>(null);
   useLayoutEffect(() => {
     const el = body.current;
     if (!el || !clicked.current || still()) return;
@@ -254,7 +254,19 @@ function useFold(shown: boolean, set: (open: boolean) => void) {
   }, [shown]);
   const toggle = () => {
     const el = body.current;
-    if (shown && el && !still()) { el.style.overflow = "hidden"; el.animate([{ height: `${el.scrollHeight}px` }, { height: "0px", opacity: 0 }], { duration: 150, easing: "cubic-bezier(0.2, 0, 0, 1)" }).onfinish = () => set(false); return; }
+    if (shown && el && !still()) {
+      // one fold at a time: a second press while it shuts starts nothing (the first fold's end takes the body out; two
+      // animations raced, and the loser's end removed the body mid-flash — the flicker on a quick close, 2026-11-26)
+      if (folding.current?.playState === "running") return;
+      el.style.overflow = "hidden";
+      // fill forwards: the body keeps the last frame (height 0, opacity 0) until React takes it out. Without it the
+      // finished animation let go of the body for the frame before that removal, and the whole slip flashed back at
+      // full height and opacity on its way out (the user's recording, 2026-11-26)
+      const a = el.animate([{ height: `${el.scrollHeight}px`, opacity: 1 }, { height: "0px", opacity: 0 }], { duration: 150, easing: "cubic-bezier(0.2, 0, 0, 1)", fill: "forwards" });
+      folding.current = a;
+      a.onfinish = () => { folding.current = null; set(false); };
+      return;
+    }
     clicked.current = !shown;
     set(!shown);
   };
@@ -527,7 +539,7 @@ export function MessageMeta({ message: m, index }: { message: Message; index?: n
           <ChevronRight size={12} strokeWidth={1.5} aria-hidden="true" className={`mr-1.5 flex-none transition-transform duration-150 ${open ? "rotate-90" : ""}`} />
           {/* a plan without a reference price: no "$0" (the user, 2026-11-25) */}
           <span className="font-medium text-muted">{refless(a.billing) ? "not billed" : priceSaid(a.cost, a.estimate)}</span>
-          {a.in ? <><Sep />{tok(a.in)} in{a.cachedPct != null && <span className="ml-1">({a.cachedPct}% cached)</span>}<Sep />{tok(a.out ?? 0)} out</> : null}
+          {a.in ? <><Sep />{tok(a.in)} in{a.cachedPct != null && <span className="ml-1">({pctText(a.cachedPct)}% cached)</span>}<Sep />{tok(a.out ?? 0)} out</> : null}
           <Sep />{dur(a.secs)}
         </button>
         <span className="flex-1" />
