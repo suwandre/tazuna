@@ -25,6 +25,13 @@ export function shortPath(path: string, cwd?: string | null): { dir: string; nam
   return { dir: p.slice(0, cut), name: p.slice(cut) };
 }
 
+/** A path from the project's folder as git names it ("src/a.ts", a relative path as it is); null outside the folder. */
+export function projectPath(path: string, cwd?: string | null): string | null {
+  const root = trim(cwd).replace(/\\/g, "/"), p = path.replace(/\\/g, "/");
+  if (!/^([/~]|[A-Za-z]:)/.test(p)) return p.replace(/^\.\//, "");
+  return root && p.startsWith(`${root}/`) ? p.slice(root.length + 1) : null;
+}
+
 const CD = /^\s*cd\s+(?:"([^"]*)"|'([^']*)'|([^\s;&|]+))\s*&&\s*/;
 /** A command without a leading `cd <dir> &&` into the project's folder or a folder in it; `dir`: that folder from the
  * project's ("" for the folder itself), null where the command has no such cd (one elsewhere stays in it). */
@@ -186,6 +193,32 @@ export function editStart(result: string | undefined, after: string): number | n
   return i < 0 ? null : rows[i].n! - k;
 }
 
+type Call = { name?: string; input?: Record<string, unknown> | null };
+type EditPiece = { old_string?: string; new_string?: string; old?: string; new?: string; replace_all?: boolean };
+/** An edit's pieces as the tool was given them (claude's names and the own loop's); [] for anything else. */
+const piecesOf = (c: Call): EditPiece[] => {
+  const n = bare(c.name ?? ""), i = c.input ?? {};
+  return /^(Edit|edit)$/.test(n) ? [i as EditPiece] : /^(MultiEdit|multi_edit)$/.test(n) && Array.isArray(i.edits) ? i.edits as EditPiece[] : [];
+};
+/** A text's lines that say something (a word in them: "}" and blank lines are in every edit), trimmed. */
+const worded = (t = "") => linesOf(t).map((l) => l.trim()).filter((l) => /\w/.test(l));
+
+/** Which of an edit's pieces (an edit: one) may not be where the turn's diff has them: replace_all (every place the text
+ * was), or rewritten later in the turn: a later piece of the same multi-edit or a later edit of the same file whose old
+ * text shares a line with its new text (one line holding the other: an edit inside a line too), any later write of the
+ * file. The diff then no longer has its lines, and an identical change elsewhere would be found in their place (review of
+ * N1): those get no numbers. `later`: the steps after it in its turn that may have changed files. */
+export function rewritten(step: Call, later: Call[], cwd?: string | null): boolean[] {
+  const fileOf = (c: Call) => { const p = c.input?.file_path ?? c.input?.path; return typeof p === "string" ? projectPath(p, cwd) ?? p : null; };
+  const file = fileOf(step), mine = piecesOf(step), same = later.filter((c) => fileOf(c) === file);
+  const written = same.some((c) => /^(Write|write)$/.test(bare(c.name ?? "")));
+  const after = (k: number) => [...mine.slice(k + 1), ...same.flatMap(piecesOf)];
+  return mine.map((p, k) => {
+    const lines = worded(p.new_string ?? p.new);
+    return p.replace_all === true || written || after(k).some((q) => worded(q.old_string ?? q.old).some((y) => lines.some((x) => x.includes(y) || y.includes(x))));
+  });
+}
+
 /** A check: `npx tsx -e 'import("./src/lib/steps.ts").then(m => m.demo())'`. */
 export function demo() {
   const eq = (got: unknown, want: unknown, what: string) => { if (JSON.stringify(got) !== JSON.stringify(want)) throw new Error(`steps: ${what}: ${JSON.stringify(got)}`); };
@@ -206,6 +239,7 @@ export function demo() {
   // paths from the project, ~ outside it, the home folder's chat with ~
   eq(shortPath(`${P}/src/routes/a.ts`, P), { dir: "src/routes/", name: "a.ts" }, "in the project");
   eq(shortPath("/Users/x/other/b.py", P), { dir: "~/other/", name: "b.py" }, "outside it");
+  eq([projectPath(`${P}/src/a.ts`, P), projectPath("./src/a.ts", P), projectPath("/Users/x/other/b.py", P), projectPath("C:\\w\\app\\src\\a.rs", "C:\\w\\app\\")], ["src/a.ts", "src/a.ts", null, "src/a.rs"], "projectPath");
   eq([shortPath("/Users/x/notes/c.md", "/Users/x").dir, shortPath("/etc/hosts", P).dir, shortPath("src/a.ts", P).dir, shortPath(`${P}/a.ts`, P).dir], ["~/notes/", "/etc/", "src/", ""], "home, root, relative");
   // a read's and a search's numbers into the gutter
   eq(numberedRows("   988→  // clearing holds.\n   989→}\n\n<system-reminder>x</system-reminder>"), [{ n: 988, code: "  // clearing holds." }, { n: 989, code: "}" }, { n: null, code: "", plain: true }, { n: null, code: "<system-reminder>x</system-reminder>", plain: true }], "Read's numbers");
@@ -239,5 +273,18 @@ export function demo() {
     saysDone("Applied 2 edits to /a.ts:\n1. Replaced \"a\" with \"b\"\n2. Replaced \"c\" with \"d\""), saysDone("Applied 1 edit to /a.ts:\n1. Replaced \"a\" with \"b\"\nwarning: hook"),
     saysDone("The file a.ts has been updated. Here's the result of running `cat -n` on a snippet of the edited file:\n    40→}\n    41→x"), saysDone("File created successfully at: /a\nbut the formatter failed")],
     [false, false, true, false, true, false], "saysDone with more words");
+  // review of N1: an edit rewritten later in its turn, or replace_all, has no numbers (an identical change elsewhere would
+  // be found in its place); an edit elsewhere, or of another file, leaves it numbered
+  const ed = (old_string: string, new_string: string, file = `${P}/a.ts`, more = {}) => ({ name: "Edit", input: { file_path: file, old_string, new_string, ...more } });
+  eq(rewritten(ed("foo();", "bar();"), [ed("baz();", "qux();")], P), [false], "a later edit elsewhere");
+  eq(rewritten(ed("foo();", "bar();"), [ed("  bar();\n  next();", "  baz();\n  next();")], P), [true], "a later edit of its new line");
+  eq(rewritten(ed("x = foo(1);", "x = foo(2);"), [ed("foo(2)", "foo(3)")], P), [true], "a later edit inside its line");
+  eq(rewritten(ed("foo();", "bar();"), [ed("bar();", "baz();", `${P}/b.ts`)], P), [false], "a later edit of another file");
+  eq(rewritten(ed("foo();", "bar();"), [{ name: "Write", input: { file_path: `${P}/a.ts`, content: "" } }], P), [true], "a later write of the file");
+  eq(rewritten(ed("foo();", "bar();"), [{ name: "edit", input: { path: "a.ts", old: "bar();", new: "x" } }], P), [true], "the own loop's relative path is the same file");
+  eq(rewritten(ed("foo", "bar", `${P}/a.ts`, { replace_all: true }), [], P), [true], "replace_all");
+  eq(rewritten({ name: "MultiEdit", input: { file_path: `${P}/a.ts`, edits: [{ old_string: "a1", new_string: "b1" }, { old_string: "b1", new_string: "c1" }, { old_string: "z9", new_string: "y9" }] } }, [], P),
+    [true, false, false], "a later piece of the same multi-edit");
+  eq(rewritten(ed("}", "  x();\n}"), [ed("}\n", "}\n\n")], P), [false], "a line with no word in it is in every edit");
   console.log("steps ok");
 }

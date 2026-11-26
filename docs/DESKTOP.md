@@ -761,6 +761,15 @@ Claude, plus an anti-AI-slop round; the visual proposals wait in mockups/v12.htm
 - The conversation's receipt no longer runs a three-digit turn number into its title, says "1 h 39 min" and "$1,234.46",
   and keeps its numbers inside the slip; the work panel's Checks show their whole command.
 
+0.1.132 (with tazuna 0.1.231):
+- The work panel resizes: drag its inner edge (260 px up to 45% of the window or what leaves the text 580 px), arrows on
+  the edge, double-click or Enter for 300 px; remembered, the reading column centred in the rest while dragging.
+- An edit's diff in a reply's steps carries its file's line numbers from the turn's own diff, only where the edit is
+  found in exactly one place and nothing later in the turn rewrote it (never a wrong number).
+- Provider balances from more APIs (the core's 0.1.231): the status bar and the usage page go by each row's state, plan
+  windows as meters; "$0.17 below zero" everywhere; OpenRouter's free requests come back tomorrow; stopped accounts lead.
+- No flash when a receipt or the steps fold (Qwen's fix, reviewed); the cache's share to one decimal everywhere.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

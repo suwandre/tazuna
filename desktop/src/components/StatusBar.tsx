@@ -3,7 +3,7 @@ import { openUsage } from "./Rail";
 import { pctText, usd, usdExact, type Usage, keysOf } from "../lib/types";
 import { useEffect, useRef, useState } from "react";
 import { ChatSlip, priceSaid, type Turn } from "./Receipt";
-import { exactly, untilShort, whenReset, worst, type Item, type Level } from "../lib/health";
+import { exactly, untilShort, urgent, whenReset, worst, type Item, type Level } from "../lib/health";
 import { Sep } from "./Sep";
 import { checkUpdate, useUpdate } from "../lib/update";
 
@@ -148,8 +148,8 @@ export function StatusBar({ usage: u, version, idle, numbers = true, accounts = 
   const item = "flex flex-none items-center gap-1.5";
   const button = `${item} rounded px-1 -mx-1 hover:bg-hover hover:text-ink`;
   const b = "font-medium text-ink-2";
-  // the other accounts that need you, the stopped ones first: the badge names the first and counts the rest
-  const others = accounts.filter((i) => !here.includes(i) && (i.level === "low" || i.level === "out")).sort((a, b) => Number(b.level === "out") - Number(a.level === "out"));
+  // the other accounts that need you, the stopped ones first (health.ts urgent): the badge names the first, counts the rest
+  const others = accounts.filter((i) => !here.includes(i) && (i.level === "low" || i.level === "out")).sort(urgent);
   // the countdown moves on by itself
   const [, tick] = useState(0);
   useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 30_000); return () => clearInterval(t); }, []);

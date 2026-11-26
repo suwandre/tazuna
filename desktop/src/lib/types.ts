@@ -22,10 +22,17 @@ export type ToolStep = {
   kind?: "tool" | "thinking" | "said"; name?: string; input?: Record<string, unknown> | null; result?: string; text?: string;
   /** the conversation's folder (its view's cwd): the step's paths and commands are shown from it */
   cwd?: string;
+  /** what its turn changed (its change card), once the turn is over: an edit's lines are numbered from the turn's diff
+   * (a done edit's alone: not one that failed, was declined or stopped) */
+  change?: Change;
+  /** an edit's pieces that get no numbers: replace_all's, or rewritten later in the turn (lib/steps.ts `rewritten`) */
+  unsure?: boolean[];
 };
 export type ChangedFile = { path: string; added: number | null; removed: number | null; status: string };
 /** What one turn changed (the core's git snapshots before and after it). */
-export type Change = { turn: number; files: ChangedFile[]; undone: boolean; canUndo: boolean };
+export type Change = { turn: number; files: ChangedFile[]; undone: boolean; canUndo: boolean;
+  /** the turn as its card is (where, what it lists): its diff is kept under it for a step's line numbers */
+  key?: string };
 /** One model call of a reply: what it called (tool verbs, or empty for the answer alone), its tokens, timing and cost. */
 /** `model`, `role`: the call's own, where the core sends them; only then is `cost` the call's price as charged (else an
  * estimate at the conversation's prices of now: not shown). `cost` null: not known (no usage reported, or cut off by a stop) */
@@ -328,17 +335,26 @@ export function demoKeys() {
  * Closing it by hand is no choice: it goes back to its tab (`panelChoice`).
  * Open, it lies on the desk beside the sheet, and the reading column is centred in what is left (`left`: from the sheet's
  * edge to the column's 756 px box, its 28 px sides included), gliding there with the panel's slide (styles.css .tz-col;
- * design review 14: kept at its left edge, design review 12's B3, the text sat skewed right). Where the sheet beside it
- * would be under 816 px (a window under 1372 px with the sidebar, any without it), the panel floats over the conversation
- * instead, under its tab, and nothing moves (`over`; design review 12, B2 of mockups/v9.html). */
-export function panelState(a: { project: boolean; width: number; choice?: boolean; pane?: boolean }): { open: boolean; tab: boolean; over: boolean; left: number } {
+ * design review 14: kept at its left edge, design review 12's B3, the text sat skewed right). Where the sheet beside a
+ * panel of 300 px would be under 816 px (a window under 1372 px with the sidebar, any without it), the panel floats over the
+ * conversation instead, under its tab, and nothing moves (`over`; design review 12, B2 of mockups/v9.html).
+ * Its width (`w`) is the user's (`panel`, dragged by its edge; 300 at first), one for the window, held to 260 px at the
+ * least and at the most (`max`) to 45% of the window and, beside the sheet, to what leaves the reading column 580 px of
+ * text (a 636 px box, and the scrollbar's width where scrollbars always show: `sbw`, `--tz-sbw`): a smaller window holds it
+ * narrower, a wider one gives it back. Over the conversation nothing beside
+ * it needs room: 45% alone. Beside or over is the window's choice, not the width's: a width that decided it would flip the
+ * panel onto the conversation in the middle of a drag. */
+export const PANEL = { min: 260, base: 300 };
+export function panelState(a: { project: boolean; width: number; choice?: boolean; pane?: boolean; panel?: number; sbw?: number }): { open: boolean; tab: boolean; over: boolean; left: number; w: number; max: number } {
   const sheet = a.width - (a.width < 1000 ? 16 : 256);   // the sheet with the panel shut: 8 px from the window's edges, the sidebar's 248 px
-  const over = sheet - 300 < 816;                          // the panel takes 300 px from the sheet's right
+  const over = sheet - PANEL.base < 816;                   // a panel of 300 px would leave the sheet under 816 px
   const tab = a.project && a.width >= 1280, open = !!a.choice && !a.pane;
-  const left = Math.max(0, ((open && !over ? sheet - 300 : sheet) - 756) / 2);
-  if (a.pane) return { open: false, tab: false, over, left };
-  if (a.choice) return { open: true, tab: tab && over, over, left };
-  return { open: false, tab, over, left };
+  const max = Math.max(PANEL.min, Math.floor(Math.min(a.width * 0.45, over ? Infinity : sheet - 636 - (a.sbw ?? 0))));
+  const w = Math.round(Math.min(max, Math.max(PANEL.min, Number.isFinite(a.panel) ? a.panel! : PANEL.base)));
+  const left = Math.max(0, ((open && !over ? sheet - w : sheet) - 756) / 2);
+  if (a.pane) return { open: false, tab: false, over, left, w, max };
+  if (a.choice) return { open: true, tab: tab && over, over, left, w, max };
+  return { open: false, tab, over, left, w, max };
 }
 /** The choice a click leaves for a conversation: open, or none (shut: its tab, where it has one). */
 export const panelChoice = (open: boolean): boolean | undefined => (open ? undefined : true);
@@ -348,6 +364,7 @@ export const panelChoice = (open: boolean): boolean | undefined => (open ? undef
 export const escFor = (a: { menu: boolean; over: boolean }): "menu" | "panel" | "box" => (a.menu ? "menu" : a.over ? "panel" : "box");
 export function demoPanel() {
   const st = (a: Parameters<typeof panelState>[0]) => { const s = panelState(a); return `${s.open ? "open" : "shut"}${s.tab ? "+tab" : ""}${s.open ? (s.over ? "+over" : `@${s.left}`) : ""}`; };
+  const wd = (width: number, panel: number) => { const s = panelState({ project: true, width, choice: true, panel }); return s.over ? "over" : `${s.w}@${s.left}`; };
   const P = { project: true, width: 1280 }, by: Record<string, boolean | undefined> = {};
   // the tab opened in one conversation, then another opened: the choice is the first one's only
   by.a = panelChoice(false);
@@ -373,6 +390,22 @@ export function demoPanel() {
     ["1000 px: the sheet (744) is narrower than the column, left 0", `${panelState({ project: true, width: 1000 }).left}`, "0"],
     ["1011 px: still 0", `${panelState({ project: true, width: 1011 }).left}`, "0"],
     ["1014 px: 1", `${panelState({ project: true, width: 1014 }).left}`, "1"],
+    // the width dragged (`w@left`): the column centred in what is left, its text 700 px down to a 756 px sheet, then less
+    ["1440 px at 300: 64 px each side of the column's box", wd(1440, 300), "300@64"],
+    ["1440 px at 420: a 764 px sheet, 4 px", wd(1440, 420), "420@4"],
+    ["1440 px at 560: held to 548, a 636 px sheet (580 px of text)", wd(1440, 560), "548@0"],
+    ["1440 px, the most: 548", `${panelState({ project: true, width: 1440 }).max}`, "548"],
+    ["1600 px at 420", wd(1600, 420), "420@84"],
+    ["1600 px at 560", wd(1600, 560), "560@14"],
+    ["1600 px, the most: 708 (sheet less 636 under 45%: 720)", wd(1600, 9999), "708@0"],
+    ["1920 px, the most: 45% of the window, 864", wd(1920, 9999), "864@22"],
+    ["the least: 260", wd(1440, 100), "260@84"],
+    ["1372 px, the most: 480", wd(1372, 9999), "480@0"],
+    ["1440 px where scrollbars always show (15 px): the most 533, still 580 px of text", `${panelState({ project: true, width: 1440, sbw: 15 }).max}`, "533"],
+    ["nothing kept (or not a number): 300", `${panelState({ project: true, width: 1440, panel: NaN }).w}`, "300"],
+    ["1280 px at 560: over, 45% of the window holds it to 560 (576)", st({ project: true, width: 1280, choice: true, panel: 560 }) + panelState({ project: true, width: 1280, panel: 560 }).w, "open+tab+over560"],
+    ["900 px at 560: over, held to 405", `${panelState({ project: true, width: 900, panel: 560 }).w}`, "405"],
+    ["500 px: never under 260", `${panelState({ project: true, width: 500, panel: 560 }).w}`, "260"],
     ["Esc with a menu open over the panel: the menu", escFor({ menu: true, over: true }), "menu"],
     ["then Esc: the panel", escFor({ menu: false, over: true }), "panel"],
     ["then Esc: the box (Stop while a reply runs)", escFor({ menu: false, over: false }), "box"],

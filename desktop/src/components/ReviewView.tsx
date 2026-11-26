@@ -37,7 +37,8 @@ export function ReviewView({ start, turns, onClose, onSend }: {
   writingNow.current = writing;
   const load = () => core.review(scope.scope, scope.turn).catch(() => {});
   useEffect(() => {
-    const off = core.onReview(setReview);
+    // its own scope's answer alone, every file (a step asks for one file's in a turn with the same op, for its line numbers)
+    const off = core.onReview((r) => { if (r.scope === scope.scope && (r.turn ?? undefined) === scope.turn && !r.path) setReview(r); });
     load();
     pane.current?.focus();
     // Esc goes back to the conversation; while a comment is written it drops the comment instead (the editor's own)

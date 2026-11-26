@@ -611,8 +611,17 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
     { kind: "done", ok: true, secs: 48, turns: 9, cost: 0.061, usage: { input: 3100, cache_write: 0, cache_read: 21800, output: 1900 }, stopped: false }];
   const p9 = { type: "view", from: 0, model: "claude-opus-5-5", effort: "high", cwd: P, profile: "repo", mode: "ask", session_id: "p9", activity: "Done", turns: 9, cost: 0.061,
     usage: { input: 3100, cache_write: 0, cache_read: 21800, output: 1900 }, context: 24900, context_window: 200000, edit_points: [], blocks,
-    changes: [{ turn: 0, at_block: blocks.length - 1, undone: false, can_undo: true, files: [{ path: "src/routes/orders/summary.ts", added: 4, removed: 1, status: "M" },
+    changes: [{ turn: 0, at_block: blocks.length - 1, undone: false, can_undo: true, files: [{ path: "src/routes/orders/summary.ts", added: 6, removed: 2, status: "M" },
       { path: "src/routes/orders/summary.unit.ts", added: 1, removed: 1, status: "M" }, { path: "src/routes/orders/rank.ts", added: 10, removed: 0, status: "A" }] }] };
+  // the turn's diff as git gives it (the review's op): the edit's and the multi-edit's lines in it, so their steps are numbered
+  const head = (f, made) => `diff --git a/src/routes/orders/${f} b/src/routes/orders/${f}\n${made ? "new file mode 100644\n--- /dev/null" : `--- a/src/routes/orders/${f}`}\n+++ b/src/routes/orders/${f}\n`;
+  const files = [head("summary.ts"), "@@ -1,5 +1,9 @@\n import type { Cart, PriceMap, Summary } from './types';\n", ...multi[1].old_string.split("\n").map((l) => `-${l}\n`), ...multi[1].new_string.split("\n").map((l) => `+${l}\n`),
+    " import { sum } from '../../lib/money';\n \n const fallbackPrice = (item: CartItem) => item.listPrice;\n@@ -172,7 +176,7 @@ export async function summarise(cart: Cart, now: number) {\n }\n \n",
+    ` ${multi[0].old_string.split("\n")[0]}\n-${multi[0].old_string.split("\n")[1]}\n+${multi[0].new_string.split("\n")[1]}\n ${multi[0].old_string.split("\n")[2]}\n }\n \n`,
+    head("summary.unit.ts"), `@@ -1,5 +1,5 @@\n ${unit.split("\n")[0]}\n-${edit.old_string}\n+${edit.new_string}\n ${unit.split("\n").slice(2, 5).join("\n ")}\n`,
+    head("rank.ts", true), "@@ -0,0 +1,10 @@\n", ...rank.split("\n").slice(0, 10).map((l) => `+${l}\n`)].join("");
+  // with `path` (a step's numbers) that file alone, as the core answers, with the project's folder in the repository ("")
+  const fileOf = (path) => files.split(/(?=^diff --git )/m).find((f) => f.startsWith(`diff --git a/${path} `)) ?? "";
   let tid = null;
   const asks = { edit: ["Edit", edit], multi: ["MultiEdit", { file_path: `${D}/summary.ts`, edits: multi }], write: ["Write", { file_path: `${D}/rank.ts`, content: rank }],
     // a file outside the project behind a long path (the card wraps it, never cuts its "~/"), and one minified line of 476 KB
@@ -626,6 +635,8 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
   };
   T.invoke = async (cmd, args) => {
     if (cmd === "op" && args.msg.op === "resume" && args.msg.id === "p9") { tid = args.tid; setTimeout(() => T.view(args.tid, p9), 10); return null; }
+    if (cmd === "op" && args.msg.op === "review" && args.tid === tid && args.msg.scope === "turn") { const path = args.msg.path ?? null;
+      setTimeout(() => emit("tazuna-view", { tid, msg: { type: "review", scope: "turn", turn: args.msg.turn, path, prefix: "", base: null, text: path ? fileOf(path) : files } }), 20); return null; }
     return inv(cmd, args);
   };
   T.emit = (event, payload) => {

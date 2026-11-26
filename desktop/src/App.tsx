@@ -19,10 +19,10 @@ import { prChip, type Pr } from "./lib/pr";
 import { checkUpdate, watchUpdates } from "./lib/update";
 import { routeLine } from "./lib/route";
 import { lastDays, today as todayOf, type Row } from "./lib/usage";
-import { capital, filesApp, usd, type ChangedFile, type Message, escFor, keysOf, panelChoice, panelState } from "./lib/types";
+import { PANEL, capital, filesApp, usd, type ChangedFile, type Message, escFor, keysOf, panelChoice, panelState } from "./lib/types";
 import { Sep } from "./components/Sep";
 import type { Turn } from "./components/Receipt";
-import { Rail, UserPanel, WorkCtx, openUsage, type Work } from "./components/Rail";
+import { PanelEdge, Rail, UserPanel, WorkCtx, openUsage, type Work } from "./components/Rail";
 import { Slot, slots } from "./lib/slots";
 import { FOCUSABLE } from "./lib/dialog";
 import { Sidebar, macOverlay } from "./components/Sidebar";
@@ -41,6 +41,8 @@ import { Parts } from "./components/Sep";
  * popovers (`tz-pop`; a closed one's fading copy is `tz-out`), the completion menu, dialogs. */
 const MENUS = ".tz-pop:not([data-panel]):not(.tz-out), [role=menu], [role=listbox], [role=dialog]:not(.tz-out), dialog[open]";
 
+// the work panel's width, dragged by its edge (lib/types.ts `panelState`)
+const PANEL_W = "tazuna.panel-width";
 // the route line under the box ("→ DeepSeek V4.1 Flash on DeepSeek, paid, about $0.005 a message") is hidden for now (design
 // review 14: the user is unsure); `localStorage["tazuna.route-line"] = "on"` brings it back. What shares its line stays: the
 // plan running low, Claude signed out, a model not restored
@@ -594,7 +596,12 @@ export default function App() {
   // in a project it stays folded, a small tab on the sheet's edge that counts the files changed so far, and it never opens
   // or closes by itself: opening at a turn's end moved the reading column under the reader, and Undo moved it back (design
   // review 12; review 11 had it open by itself at the first change)
-  const col = panelState({ project: !!folder, width, choice: panelBy[active] });
+  // its width, dragged by its edge (PanelEdge): one for the window, kept like the theme; the window holds it (`col.w`)
+  const [panelW, setPanelW] = useState(() => Number(localStorage.getItem(PANEL_W)) || PANEL.base);
+  const sizePanel = (w: number) => { setPanelW(w); localStorage.setItem(PANEL_W, String(w)); };
+  // where scrollbars always show the transcript's takes its width from the text (lib/chrome.ts measures it)
+  const col = panelState({ project: !!folder, width, choice: panelBy[active], panel: panelW, sbw: parseFloat(document.documentElement.style.getPropertyValue("--tz-sbw")) || 0 });
+  useLayoutEffect(() => { document.documentElement.style.setProperty("--tz-panel", `${col.w}px`); }, [col.w]);
   const panelOpen = col.open;
   // the control pressed (the tab, the header's button), where focus goes back when the panel over the conversation shuts:
   // WebKit does not focus a button on a click, so what had focus then was the page
@@ -1043,7 +1050,7 @@ export default function App() {
     <div className="flex h-screen flex-col overflow-hidden bg-desk">
     <div data-tauri-drag-region className="grid min-h-0 flex-1 overflow-hidden"
       // the right column is always a track (0 px when shut), so it slides: a track that came and went was a jump cut
-      style={{ gridTemplateColumns: [narrow ? null : "248px", "minmax(0, 1fr)", reviewing ? "0px" : agentHere ? "440px" : side ? "380px" : panelOpen && !col.over ? "300px" : "0px"].filter(Boolean).join(" "), transition: "grid-template-columns .18s cubic-bezier(.2, 0, 0, 1)" }}>
+      style={{ gridTemplateColumns: [narrow ? null : "248px", "minmax(0, 1fr)", reviewing ? "0px" : agentHere ? "440px" : side ? "380px" : panelOpen && !col.over ? "var(--tz-panel)" : "0px"].filter(Boolean).join(" "), transition: "grid-template-columns .18s cubic-bezier(.2, 0, 0, 1)" }}>
       {narrow ? <dialog ref={navDialog} id="conversation-drawer" aria-label="Conversations"
         onCancel={(e) => { e.preventDefault(); setNavOpen(false); }}
         onClick={(e) => { if (e.target === e.currentTarget) setNavOpen(false); }}
@@ -1184,11 +1191,14 @@ export default function App() {
           onStop={agentTask ? () => { core.taskStopIn(agentHere.tid, agentTask.id).catch(() => {}); } : undefined} /></div>
         : side ? <SideChat key={side.tid} view={side.view} onClose={() => closeSide(active)} onStop={() => core.interruptIn(side.tid)}
           onSend={(text) => core.sendIn(side.tid, text).catch(() => {})} onAnswer={(allow, always) => core.opIn(side.tid, { op: "answer", allow, always })} />
-        : panelOpen && !col.over && <div className="flex min-h-0 justify-end overflow-hidden"><WorkCtx.Provider value={work}><Rail usage={usage} data={data} messages={messages} /></WorkCtx.Provider></div>}
-      {/* the panel over the conversation, under its tab (design review 12, B2 of mockups/v9.html): where beside it the text
-          would be under 580 px; nothing under it moves */}
-      {floating && <div ref={popRef} data-panel tabIndex={-1} aria-label="The work panel" className="tz-pop fixed right-5 top-[calc(48*var(--tz-pt)+47px)] z-30 flex max-h-[calc(100vh-48*var(--tz-pt)-88px)] w-[300px] flex-col overflow-hidden rounded-xl border border-line-strong outline-none">
-        <WorkCtx.Provider value={work}><Rail usage={usage} data={data} messages={messages} over /></WorkCtx.Provider></div>}
+        : panelOpen && !col.over && <div className="relative flex min-h-0"><div className="flex min-h-0 min-w-0 flex-1 justify-end overflow-hidden"><WorkCtx.Provider value={work}><Rail usage={usage} data={data} messages={messages} /></WorkCtx.Provider></div>
+          {/* its edge over the desk between it and the sheet (a near miss there moved the window) */}
+          {!reviewing && <PanelEdge w={col.w} max={col.max} onSize={sizePanel} className="-left-2 w-3 before:left-[3.5px]" />}</div>}
+      {/* the panel over the conversation, under its tab (design review 12, B2 of mockups/v9.html): where the sheet beside a
+          300 px panel would be under 816 px; as wide as the panel beside (to 45% of the window); nothing under it moves */}
+      {floating && <div ref={popRef} data-panel tabIndex={-1} aria-label="The work panel" className="tz-pop fixed right-5 top-[calc(48*var(--tz-pt)+47px)] z-30 flex max-h-[calc(100vh-48*var(--tz-pt)-88px)] w-[var(--tz-panel,300px)] flex-col overflow-hidden rounded-xl border border-line-strong outline-none">
+        <WorkCtx.Provider value={work}><Rail usage={usage} data={data} messages={messages} over /></WorkCtx.Provider>
+        <PanelEdge w={col.w} max={col.max} onSize={sizePanel} className="left-0 w-1.5 before:left-0" /></div>}
       <Slot name="overlay" props={{ data }} />
       {overlay === "palette" && <Palette actions={actions()} query={paletteQ} onClose={() => setOverlay(null)} />}
       {overlay === "shortcuts" && <Shortcuts readOnly={!inTauri} onClose={() => setOverlay(null)} />}

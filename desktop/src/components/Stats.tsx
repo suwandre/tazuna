@@ -175,9 +175,10 @@ export function StatsSection() {
   return (
     <section aria-label="Stats" className="border-b border-line pb-3.5 last:border-b-0">
       {/* the heading on the window's top row, as every first section's: the switch takes no more height than the words. The
-          rows have no live dot: their numbers moving say it */}
-      <div className="flex items-center gap-2 py-1 font-medium text-ink">
-        <span className="flex flex-1 items-center gap-2">Stats{live && !rows && <span className="inline-flex items-center gap-1.5 text-[11.5px] font-normal text-live-ink">
+          rows have no live dot: their numbers moving say it. In a narrow panel (260 px) the switch goes under the words; the
+          dot keeps its room while nothing runs, so the switch does not move between replies */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-2.5 py-1 font-medium text-ink">
+        <span className="flex flex-1 items-center gap-2">Stats{!rows && <span className={`inline-flex items-center gap-1.5 text-[11.5px] font-normal text-live-ink ${live ? "" : "invisible"}`}>
           <i className="size-1.5 rounded-full bg-live shadow-[0_0_0_3px_var(--live-soft)]" />live</span>}</span>
         <span className="-my-1 font-normal"><Segmented label="Stats for" value={scope} options={[["turn", "This turn"], ["all", "Conversation"]]} onChange={setScope} /></span>
       </div>

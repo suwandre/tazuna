@@ -143,7 +143,8 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   `/* */`, `--`, `<!-- -->`; markdown and unknown files plain); an answer's block keeps the guess that suits most.
 - Diffs (a step's, an approval's, the review's) tint a whole row: `diff-add` and `diff-del`, the result colours at 9%
   (10% in dark, where 9% hardly showed). They sit on `card`, under a hairline, where every coloured text on a row keeps
-  4.5:1 (the lowest: a comment, 5.1:1 light, 4.7:1 dark; on `field` faint fell to 4.3:1). The changed words are marked on
+  4.5:1 (the lowest: a line's number, 5.0:1 light, 4.7:1 dark, then a comment, 5.1:1 and 4.7:1; on `field` faint fell to
+  4.3:1). The changed words are marked on
   top of the row (`diff-add-word`, `diff-del-word`, 20%, 18% in dark) and set in `ink`, without syntax colours: over the
   row a mark is 27% of the colour (26% in dark), where strings and comments fell to 3.0-4.3:1 and ink reads 10.4:1
   (7.2:1 dark). The tints are the result colours', whatever the accent. The +/− has a narrow column of its own in the
@@ -168,7 +169,7 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - Fonts are bundled with the app (Source Serif 4, Geist Mono; no network fonts); the UI face is the system's.
 
 ## Layout
-- Three columns: sidebar 248 px, main (header, transcript, composer), the work panel 300 px. The work panel never opens
+- Three columns: sidebar 248 px, main (header, transcript, composer), the work panel (300 px at first). The work panel never opens
   or closes by itself: opening at a turn's end moved the reading column under the reader, and Undo moved it back (design
   review 12). In a project it stays folded, a small tab on the sheet's right edge that counts the files changed so far,
   live while a reply edits ("Changes 2"; "Changes" alone at none, never "Changes 0"); the tab, ⌘\ and the header's button open it, for the conversation they are
@@ -177,14 +178,29 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   gliding there with the panel's slide (its place and the sheet's width move together, the grid's 180 ms; under reduced
   motion it snaps), and back when it shuts: kept at its left edge (design review 12, B3 of `mockups/v9.html`) the text sat
   skewed right, about 340 px of sheet on its left and 40 on its right (design review 14). At 1440 the text keeps its 700 px, 92 px
-  of sheet each side of it. Where the sheet beside the panel would be under 816 px (a window under 1372 px with the
-  sidebar, any without it) the panel opens over the conversation instead, on a sheet of its own under its tab (the `pop`
+  of sheet each side of it at 300. Where the sheet beside a 300 px panel would be under 816 px (a window under 1372 px with
+  the sidebar, any without it) the panel opens over the conversation instead, on a sheet of its own under its tab (the `pop`
   elevation; Esc, a click outside, the tab, its button or ⌘\ shut it; focus goes into it and back to what opened it) and
-  nothing under it moves (design review 12, B2 of `mockups/v9.html`). A reply being followed is still followed while the
-  column moves. Esc shuts the innermost thing first: a menu or dialog, then the panel over the
-  conversation, then it is Stop (`escFor`). Where scrollbars always show, the text and the box keep the same edges. The
-  rules are one function with its check (`panelState`, `demoPanel`, lib/types.ts; the column's CSS is `.tz-col`). (Design
-  reviews of 2026-11-18, prototype `mockups/v2.html`, 11, 12 and 14.)
+  nothing under it moves (design review 12, B2 of `mockups/v9.html`). Beside or over is the window's choice, never the
+  width's: a width that decided it would throw the panel onto the conversation in the middle of a drag. A reply being
+  followed is still followed while the column moves. Esc shuts the innermost thing first: a menu or dialog, then the panel
+  over the conversation, then it is Stop (`escFor`). Where scrollbars always show, the text and the box keep the same
+  edges. The rules are one function with its check (`panelState`, `demoPanel`, lib/types.ts; the column's CSS is
+  `.tz-col`). (Design reviews of 2026-11-18, prototype `mockups/v2.html`, 11, 12 and 14.)
+- The work panel is as wide as the user drags it (the user, 2026-11-26: the Checks command and long paths were cut): its
+  inner edge is a 12 px handle over the desk between it and the sheet (a near miss there moved the window), the resize
+  cursor, a hairline in `line-strong` on hover, `faint` while dragged, the focus ring's `accent` (2 px) from the keyboard;
+  no tooltip (it came up mid-drag). From 260 px to the smaller of 45% of the window and, beside the sheet, what leaves the
+  reading column 580 px of text (a 636 px sheet, and the scrollbar where scrollbars always show; at 1440 that is 548 px, at 1600 708, at 1920 45% is the smaller, 864);
+  over the conversation 45% alone, the same width otherwise. A drag ends where its release went missing (the window left,
+  a move with the button up), and a second pointer starts nothing. A double click, or Enter, puts back 300. It is a separator
+  (`PanelEdge`, Rail.tsx): a Tab stop that a press does not focus (typing goes on in the box), the arrows 16 px (Shift 64; left is wider), Home and End the least and the most.
+  One width for the window, kept like the theme (`tazuna.panel-width`); a smaller window holds it narrower, and a wider
+  one gives the kept width back. The text stays centred in what is left at every width (700 px down to a 756 px sheet,
+  then narrower, its two gaps equal), and so do the box, what stands over it and the way back down; what the panel holds
+  wraps (the Checks command) or is cut with the whole on hover (a branch, a path; Stats' switch goes under its heading at
+  260), and nothing in it runs past its edge at 260. The width's rules are `panelState`'s too (`w`, `max`; the sweep's
+  `ONLY=resize` measures the gaps at each width).
 - The status bar names an account this conversation does not run on, when it needs you, quietly: a dot in its colour and faint
   words ("OpenRouter $0.17 below zero and 2 more"), the advice on hover. A balance its API does not tell is no news: the
   account's name alone.
@@ -345,7 +361,21 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   Copy), so an answer followed by a to-do step is not folded away. A declined step says its plain verb ("Edit main.rs | declined"). A change of
   model that goes on in a new session is a quiet divider ("continued on Mock Coder 7B"); the conversation above it stays.
 - A step unfolded draws its code as code (review 14, steps; components/Step.tsx, lib/steps.ts): an edit as a diff (the
-  lines the old and new text share as context, the rest removed then added; a multi-edit's pieces under a thin rule); a
+  lines the old and new text share as context, the rest removed then added; a multi-edit's pieces under a thin rule),
+  numbered as the review numbers the same lines: old numbers on removed and unchanged lines, new on added and unchanged
+  ones, the review's two columns (`placeEdit`, lib/unidiff.ts). They come from the turn's real diff of that file (the
+  review's op with its path, which also says the project's folder in the repository, so a project opened at a subfolder
+  is numbered too; asked when the step unfolds, never while folded, kept per conversation, turn and file, the newest 64,
+  asked anew after Undo, a rewind, Retry or another conversation), where the edit's lines are one run of the diff's,
+  each of its kind and text (an edit that begins or ends inside a line: the rest of that line the same before and after
+  it; an unchanged line past git's three of context counted, not compared), in exactly one place; in a file the turn
+  made, its new text found once in the file's text, new numbers alone. Anything less certain has no numbers, never wrong
+  ones and no error, and none while the diff comes: the same change in two places, replace_all, a piece a later step of
+  the turn may have rewritten (a later edit of the file whose old text shares a worded line with its new text, a later
+  piece of the same multi-edit, any later write of it: lib/steps.ts `rewritten`), an edit that failed, was declined or
+  stopped, an undone turn, a snapshot gone (a conversation opened again), a file outside git or the project; a
+  multi-edit's pieces each on their own, in one gutter's width (one without numbers keeps an empty gutter). Claude's
+  older Edit that numbered a snippet in its result is numbered from it only where its turn has no change card; a
   write as its text with its line numbers under a faint "whole file · 10 lines" ("new file" only where its result says it
   made one: before it, or after the own loop's "ok", it may write over a file); replace_all under a faint "all
   occurrences"; a read's lines with claude's numbers moved into the gutter (the own loop's numbered from its offset as the
@@ -365,7 +395,8 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   src/routes" before the `$`; a cd elsewhere stays ("cd /tmp && rm -rf build"); the whole command is on hover and in the
   box's Copy.
 - An approval asks in its title ("Allow a shell command?", "Allow this edit?", else "Allow <tool>?"). One of an edit or a
-  write shows what would change (the step's own diff rendering, in a scroll of its own under the file's name, which is
+  write shows what would change (the step's own diff rendering, an edit's without numbers: the window does not know the
+  file's text before the turn ends; in a scroll of its own under the file's name, which is
   the core's own made-safe path); a command shows as itself.
 - A message answered by the router as a chat carries an `answered as a chat · send to agent` tag. One the agent answered in
   a chat's place (the chat said it needs live data or this computer, or you sent it there)
@@ -401,7 +432,7 @@ in it, lib/chrome.ts, only after the pointer really moves onto its element: a ro
 none); answer copy; error card (the provider's message in words, with a capital, its error codes left to the raw reply, said once even when the answer repeats it; Retry runs
 the last failed turn again without a second message, on the last reply only; its raw reply on request); code
 block with its language and copy; code row (components/DiffView.tsx `CodeRow`: a diff's or a file's line, its gutter, sign,
-colours, marks and hanging indent; the review's and every step's) and path label (`PathLabel`, Step.tsx); work panel section (Stats, Changes, Checks, Pull request), sparkline, stat tile and
+colours, marks and hanging indent; the review's and every step's) and path label (`PathLabel`, Step.tsx); work panel section (Stats, Changes, Checks, Pull request), the panel's edge (`PanelEdge`, Rail.tsx), sparkline, stat tile and
 stat row (components/Stats.tsx: a sparkline is one 2 px line, its last point marked, a tip "call N · value" on hover or the
 arrows; a row's line is 56 × 14 px with no mark), usage bar, status bar. Reuse these before adding new ones; add new ones here when they are made.
 
@@ -445,7 +476,9 @@ arrows; a row's line is 56 × 14 px with no mark), usage bar, status bar. Reuse 
   a second press while it shuts starts nothing.
 - What closes fades out where it was (`tz-out`, 110 ms; lib/chrome.ts does it for every menu and dialog), and the work
   panel's column slides open and shut, the reading column gliding to the centre of what is left with it (design review
-  14); over the conversation it opens as a popover does (`tz-pop`).
+  14); over the conversation it opens as a popover does (`tz-pop`). While its edge is dragged nothing transitions
+  (`tz-sizing`, styles.css): the width moves once a frame and the column follows the pointer; the keyboard's steps and a
+  double click glide (the grid's 180 ms).
 - Selected text is the accent at 30%, not the system's blue.
 - Honour `prefers-reduced-motion`: the working mark stands drawn whole and the shimmers are plain words (a spinner
   elsewhere still turns, slower).

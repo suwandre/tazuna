@@ -4,7 +4,7 @@ import { Slot } from "../lib/slots";
 import { tokens, widgetUrl, type UserWidget } from "../lib/widgets";
 import { OPEN_PR, checksOf, type Pr } from "../lib/pr";
 import type { View } from "../lib/tazuna";
-import { tenths, type ChangedFile, type Message, type Usage } from "../lib/types";
+import { PANEL, tenths, type ChangedFile, type Message, type Usage } from "../lib/types";
 import { Counts, Sep } from "./Sep";
 import { quietButton } from "./Controls";
 
@@ -72,7 +72,7 @@ export function ChangesSection() {
     <Section icon={<GitBranch size={14} strokeWidth={1.5} className={ico} />} title="Changes"
       // a side with nothing is left out: never "+3 −0" (design review 12)
       right={added || removed ? <Counts added={added} removed={removed} /> : undefined}>
-      {w.branch && <div className="mb-1 truncate font-mono text-[12px] text-muted">{w.branch}{w.base ? ` → ${w.base}` : ""}</div>}
+      {w.branch && <div className="mb-1 truncate font-mono text-[12px] text-muted" title={`${w.branch}${w.base ? ` → ${w.base}` : ""}`} data-tip-clip>{w.branch}{w.base ? ` → ${w.base}` : ""}</div>}
       {w.files.length === 0 ? <div className="py-0.5 text-[12.5px] text-muted">Nothing changed in this conversation yet.</div> : <>
         {shown.map((f) => {
           const [file, dir] = name(f.path);
@@ -186,11 +186,67 @@ export function UserPanel({ w, data, onEdit, onRemove }: { w: UserWidget; data: 
 /** The right column: the `rail` spot (tazuna's cards and the user's panels and plugins). */
 export function Rail({ usage, data, messages, over }: { usage: Usage; data?: unknown; messages: Message[]; over?: boolean }) {
   return (
-    // 300 px wide whatever its column is: the column slides open and shut (App's grid), the cards do not reflow in it.
-    // With no card (a plain chat) it says so, not a blank column. Its first heading on the window's top row (design review
-    // 12); `over`: on its own sheet over the conversation (B2), even sides
-    <aside aria-label="The work" className={`tz-enter flex min-h-0 flex-col gap-3.5 overflow-y-auto pb-4 ${over ? "pt-3.5" : "pt-[calc(28*var(--tz-pt)-14px)]"} ${over ? "w-full px-4" : "w-[300px] pl-2.5 pr-4"} empty:after:text-[12.5px] empty:after:leading-relaxed empty:after:text-faint empty:after:content-['Nothing_here_for_a_plain_chat._In_a_project_this_shows_its_changes,_checks_and_pull_request.']`}>
+    // the panel's width (`--tz-panel`, its edge: `PanelEdge`) whatever its column is: the column slides open and shut (App's
+    // grid), the cards do not reflow in it. With no card (a plain chat) it says so, not a blank column. Its first heading on
+    // the window's top row (design review 12); `over`: on its own sheet over the conversation (B2), even sides
+    <aside aria-label="The work" className={`tz-enter flex min-h-0 flex-col gap-3.5 overflow-y-auto pb-4 ${over ? "pt-3.5" : "pt-[calc(28*var(--tz-pt)-14px)]"} ${over ? "w-full px-4" : "w-[var(--tz-panel,300px)] flex-none pl-2.5 pr-4"} empty:after:text-[12.5px] empty:after:leading-relaxed empty:after:text-faint empty:after:content-['Nothing_here_for_a_plain_chat._In_a_project_this_shows_its_changes,_checks_and_pull_request.']`}>
       <Slot name="rail" props={{ usage, data, messages }} />
     </aside>
+  );
+}
+
+/** The work panel's inner edge: dragged, it sets the panel's width (260 px to `max`, panelState); the arrows by 16 px
+ * (Shift: 64), Home and End to the least and the most, Enter or a double click back to 300. While it is dragged the width
+ * is a CSS variable on the root (`--tz-panel`, App sets it from `w` otherwise), moved once a frame and given to `onSize`
+ * when the pointer lets go: the transcript does not draw again for each move; `tz-sizing` holds the cursor and takes the
+ * transitions off (styles.css), so the column follows the pointer and only opening and shutting slide. */
+export function PanelEdge({ w, max, onSize, className }: { w: number; max: number; onSize: (w: number) => void; className: string }) {
+  const me = useRef<HTMLDivElement>(null), drag = useRef<{ x: number; w: number; at: number; frame: number } | null>(null);
+  const fit = (v: number) => Math.round(Math.max(PANEL.min, Math.min(max, v)));
+  const put = (v: number) => { document.documentElement.style.setProperty("--tz-panel", `${v}px`); me.current?.setAttribute("aria-valuenow", String(v)); };
+  // the panel lies at the window's right: the pointer going left makes it wider
+  const now = (d: NonNullable<typeof drag.current>) => fit(d.w + d.x - d.at);
+  const end = () => {
+    const d = drag.current; if (!d) return;
+    drag.current = null; cancelAnimationFrame(d.frame);
+    // the last width is laid out before the transitions come back, or the grid would slide the last frame's step
+    const v = now(d); put(v); void document.documentElement.offsetWidth;
+    document.documentElement.classList.remove("tz-sizing");
+    // a press that did not move keeps the width kept (a smaller window's hold is not the user's choice)
+    if (d.at !== d.x) onSize(v);
+  };
+  // taken away mid-drag (⌘\, another conversation), or the window left (⌘Tab, Mission Control: the pointer's release never
+  // comes): the drag ends as if let go, never leaving the cursor, the width or a panel that follows the mouse behind
+  const ending = useRef(end);
+  ending.current = end;
+  useEffect(() => { const off = () => ending.current(); window.addEventListener("blur", off); return () => { window.removeEventListener("blur", off); off(); }; }, []);
+  return (
+    <div ref={me} role="separator" aria-orientation="vertical" aria-label="Width of the work panel" aria-valuenow={w} aria-valuemin={PANEL.min} aria-valuemax={max} tabIndex={0}
+      // a press neither focuses it nor selects (focus stays in the box: typed text went nowhere and Enter reset the width);
+      // it is a Tab stop for the keyboard. A second pointer while one drags starts nothing
+      onMouseDown={(e) => e.preventDefault()}
+      onPointerDown={(e) => {
+        if (e.button !== 0 || drag.current) return;
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        drag.current = { x: e.clientX, w, at: e.clientX, frame: 0 };
+        document.documentElement.classList.add("tz-sizing");
+      }}
+      onPointerMove={(e) => {
+        const d = drag.current; if (!d) return;
+        // a move with the button up: its release went elsewhere
+        if (!(e.buttons & 1)) return end();
+        d.at = e.clientX;
+        if (!d.frame) d.frame = requestAnimationFrame(() => { d.frame = 0; if (drag.current === d) put(now(d)); });
+      }}
+      onPointerUp={end} onPointerCancel={end} onLostPointerCapture={end}
+      onDoubleClick={() => onSize(fit(PANEL.base))}
+      onKeyDown={(e) => {
+        const by = e.shiftKey ? 64 : 16;
+        const v = { ArrowLeft: w + by, ArrowRight: w - by, Home: PANEL.min, End: max, Enter: PANEL.base }[e.key];
+        if (v == null) return;
+        e.preventDefault(); onSize(fit(v));
+      }}
+      className={`absolute inset-y-0 z-10 cursor-col-resize outline-none before:pointer-events-none before:absolute before:inset-y-0 before:w-px hover:before:bg-line-strong [.tz-sizing_&]:before:bg-faint focus-visible:before:w-0.5 focus-visible:before:bg-accent ${className}`} />
   );
 }

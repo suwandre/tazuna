@@ -4,7 +4,7 @@ import { core, type Accounts, type ClaudeSetup, type ModelChoice } from "../lib/
 import { useDialog } from "../lib/dialog";
 import { RANGES, barName, fieldOf, floorTo, fromField, needOf, perUnit, planName, rangeWords, spanOf, summarize, used, type Bar, type Choice, type Row, type Unit } from "../lib/usage";
 import { modelLabel, pct1, pctText, usd } from "../lib/types";
-import { exactly, parseReset, whenReset } from "../lib/health";
+import { creditLevel, exactly, fallbackCredit, parseReset, whenReset, type Credit } from "../lib/health";
 import { Sep } from "./Sep";
 import { MenuRule, PopMenu, Segmented, dialogShell, menuItem, quietButton } from "./Controls";
 
@@ -248,7 +248,7 @@ function RightNow({ acc, limits, balance, claude }: { acc: Accounts | null | und
   if (acc === undefined) return <div className="px-3.5 py-2.5 text-[12.5px] text-faint">Asking your accounts…</div>;
   // no reading from claude's /usage: the plan as the last reply's rate limits said it, if any
   const plan = acc?.plan ?? (limits ? [{ label: "Current session", used: limits[0], resets: "" }, { label: "Current week (all models)", used: limits[1], resets: "" }] : []);
-  const credits = acc?.credits ?? (balance != null ? [{ provider: "SubRouter", left: `$${balance.toFixed(2)} left`, page: "https://subrouter.ai" }] : []);
+  const credits: Credit[] = acc?.credits ?? (balance != null ? [fallbackCredit(balance)] : []);
   // an OmniRoute account with nothing used in any window (and a valid login) folds away; so do providers with no balance
   const idle = (a: Accounts["omniroute"][number]) => a.status === "valid" && a.windows.length > 0 && a.windows.every((w) => !w.unlimited && (w.used ?? 0) === 0);
   const busy = acc?.omniroute.filter((a) => !idle(a)) ?? [], quiet = acc?.omniroute.filter(idle) ?? [];
@@ -305,15 +305,23 @@ function Fold({ label, note, right, children }: { label: string; note?: string; 
   );
 }
 
-/** One provider's credit: what is left, or, where its API does not tell, its page. */
-function credit(c: { provider: string; left?: string | null; page: string }) {
+/** One provider's credit: what is left, in its level's colour as the status bar has it (health.ts creditLevel: red past
+ * zero, used up or a window at 90%, amber low, a window at 75% or a key that may not read it), a plan's windows as meters
+ * under it (its line without their summary: "(experimental)", "108 of 135 requests left"); where its API does not tell,
+ * its page. */
+function credit(c: Credit) {
+  const tone = { out: "text-bad", low: "text-warn", ok: "", unknown: "" }[creditLevel(c)];
+  const left = c.windows?.length ? c.left?.replace(/^(?:[\w -]+? \d+%, )*[\w -]+? \d+% used,? ?/, "") : c.left;
   return (
-      <div key={c.provider} className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]">
+    <div key={c.provider}>
+      <div className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]">
         <span className="w-[200px] flex-none text-ink">{c.provider}</span>
-        {c.left ? <><span className="flex-1" /><span className={`tabular-nums ${/ over /.test(c.left) || c.left.startsWith("-") ? "text-bad" : "text-muted"}`}><span className="font-medium text-ink">{c.left.replace(/ (left|over).*/, "")}</span>{c.left.match(/ (left|over).*/)?.[0]}</span></>
+        {c.left ? <><span className="flex-1" /><span className={`tabular-nums ${tone || "text-muted"}`}><span className={`font-medium ${tone || "text-ink"}`}>{left?.replace(/ (left|over).*/, "")}</span>{left?.match(/ (left|over).*/)?.[0]}</span></>
           : <><span className="flex-1" />{/* why is on the fold these rows sit under */}
             <button onClick={() => core.openLink(c.page).catch(() => {})} className={`flex items-center gap-1 ${quietButton}`}>{/* OpenAI's wording for its usage page */}{c.provider === "ChatGPT" ? "Manage usage" : "Open its page"}<ExternalLink size={12} strokeWidth={1.5} /></button></>}
       </div>
+      {c.windows?.map((w, i) => <Meter key={i} name={w.window || "Quota"} used={w.used} at={w.resets ? Date.parse(w.resets) : undefined} />)}
+    </div>
   );
 }
 

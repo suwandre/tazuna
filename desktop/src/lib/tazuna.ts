@@ -119,7 +119,9 @@ export type McpStatus = { name: string; ok?: boolean; text: string };
 export type GalleryItem = { file: string; id: string; kind: "panel" | "plugin"; title: string; about: string; author: string };
 export type Hook = { cwd: string; after_turn: string | null; note: string };
 export type WorktreeMade = { ask_setup?: boolean; script?: string; id?: string; setup_skipped?: string; error?: string; path?: string; branch?: string; port?: number; copied?: string[]; setup?: { ok: boolean; tail: string } | null };
-export type Review = { scope: string; turn?: number | null; base?: string | null; text: string };
+/** `path`: the one file asked for (a step's line numbers), `prefix`: the project's folder in the repository ("pkg/"; the
+ * diff's paths are the repository's), both for a turn (newer cores) */
+export type Review = { scope: string; turn?: number | null; base?: string | null; text: string; path?: string | null; prefix?: string | null };
 export type Diff = { turn: number; path: string; text: string };
 export type SessionRow = { id: string; first: string; last_at: number; messages: number;
   /** its latest run's model (core 0.1.178 on; empty for an older core) */
@@ -149,6 +151,13 @@ export type Models = { choices: ModelChoice[]; rebuild: string | null;
  * started and continued it (a step's id), `secs` how long it took once ended. */
 export type Task = { id: string; kind: string; agent: string; description: string; status: string; running: boolean; doing: string; tokens: number; tools: number; calls: string[]; secs: number | null };
 
+/** A turn's diff of one file and the project's folder in the repository ("" at its root). */
+export type TurnFile = { text: string; prefix: string };
+// what core.turnDiff asked, newest last (64 at most): `done` once answered, null where nothing came
+const turnDiffs = new Map<string, Promise<TurnFile | null> & { done?: TurnFile | null }>();
+/** A thread's turns are not what they were (closed, undone, rewound, run again, another conversation in it): asked anew. */
+const forgetDiffs = (tid: string) => { for (const k of [...turnDiffs.keys()]) if (k.startsWith(`${tid}\n`)) turnDiffs.delete(k); };
+
 export const core = {
   /** Commands from now on go to thread `tid`. */
   use: (tid: string) => { current = tid; },
@@ -156,9 +165,9 @@ export const core = {
   start: (tid: string, cwd?: string, profile?: string, savedModel?: Pick<ModelChoice, "model" | "url" | "key_env"> | null) =>
     invoke<string>("start", { tid, cwd, profile, savedModel }),
   /** Ends thread `tid`'s core. */
-  stop: (tid: string) => invoke("stop", { tid }),
+  stop: (tid: string) => (forgetDiffs(tid), invoke("stop", { tid })),
   /** Resumes a conversation in thread `tid` (right after its start, before it is the current one). */
-  resumeIn: (tid: string, id: string) => invoke("op", { tid, msg: { op: "resume", id } }),
+  resumeIn: (tid: string, id: string) => (forgetDiffs(tid), invoke("op", { tid, msg: { op: "resume", id } })),
   /** A message to thread `tid` whether or not it is on screen (creator mode's first message). */
   sendIn: (tid: string, text: string, agent = true) => invoke("send", { tid, text, agent }),
   modeIn: (tid: string, mode: string) => invoke("op", { tid, msg: { op: "mode", mode } }),
@@ -170,15 +179,38 @@ export const core = {
   setMode: (mode: string) => to("op", { msg: { op: "mode", mode } }),
   answer: (allow: boolean, always = false) => to("op", { msg: { op: "answer", allow, always } }),
   diff: (turn: number, path: string) => to("op", { msg: { op: "diff", turn, path } }),
-  undo: (turn: number) => to("op", { msg: { op: "undo", turn } }),
+  undo: (turn: number) => (forgetDiffs(current), to("op", { msg: { op: "undo", turn } })),
   /** the conversation back to before checkpoint `cp` (and with `files`, what tazuna changed since) */
-  rewind: (cp: number, files: boolean) => to("op", { msg: { op: "rewind", cp, files } }),
+  rewind: (cp: number, files: boolean) => (forgetDiffs(current), to("op", { msg: { op: "rewind", cp, files } })),
   /** a diff to review: "uncommitted", "branch", or one "turn" */
   review: (scope: string, turn?: number) => to("op", { msg: { op: "review", scope, turn } }),
   /** one piece (a file's header and one hunk) reverted in the work tree, or staged */
   piece: (patch: string, stage: boolean) => to("op", { msg: { op: "piece", patch, stage } }),
   onReview: (cb: (r: Review) => void) => on<Review>("review", cb),
   onDiff: (cb: (d: Diff) => void) => on<Diff>("diff", cb),
+  /** One file's diff in a turn, for a step's line numbers: the review's op with `path` (from the project's folder), its
+   * answer from this thread alone (the `diff` op would open App's dialog, and say a gone snapshot as an error); null where
+   * none came (outside the app, no answer in 15 s: asked again on the next unfold). Asked once per thread, turn (`key`: its
+   * card as the view has it) and path; `done` once answered. */
+  turnDiff: (turn: number, key: string, path: string) => {
+    const tid = current, id = `${tid}\n${key}\n${path}`, had = turnDiffs.get(id);
+    if (had) { turnDiffs.delete(id); turnDiffs.set(id, had); return had; }
+    const got: Promise<TurnFile | null> & { done?: TurnFile | null } = new Promise<TurnFile | null>((resolve) => {
+      if (!inTauri) return resolve(null);
+      // a core before `path` answers with every file and no path: that has this one too
+      const off = on<Review>("review", (r, from) => { if (from === tid && r.scope === "turn" && r.turn === turn && (r.path ?? path) === path) end({ text: r.text, prefix: r.prefix ?? "" }); });
+      const end = (f: TurnFile | null) => {
+        clearTimeout(late); off.then((u) => u(), () => {});
+        if (!f && turnDiffs.get(id) === got) turnDiffs.delete(id);
+        resolve((got.done = f));
+      };
+      const late = setTimeout(() => end(null), 15_000);
+      off.then(() => invoke("op", { tid, msg: { op: "review", scope: "turn", turn, path } })).catch(() => end(null));
+    });
+    turnDiffs.set(id, got);
+    if (turnDiffs.size > 64) turnDiffs.delete(turnDiffs.keys().next().value!);
+    return got;
+  },
   settings: () => to("op", { msg: { op: "settings" } }),
   login: (provider: string, key: string) => to("op", { msg: { op: "login", provider, key } }),
   /** a sign-in (the core opens the browser and waits for it); `confirm`: the user confirmed the provider's warning */
@@ -228,7 +260,7 @@ export const core = {
   setup: () => to("op", { msg: { op: "setup" } }),
   onSetup: (cb: (s: ClaudeSetup) => void) => on<ClaudeSetup>("setup", cb),
   /** the last failed turn again, without a second message of yours: its error is replaced by the new reply (core C11) */
-  retry: () => to("op", { msg: { op: "retry" } }),
+  retry: () => (forgetDiffs(current), to("op", { msg: { op: "retry" } })),
   openKeyPage: (url: string) => invoke("open_key_page", { url }),
   /** a system notification */
   notify: async (title: string, body: string) => {
@@ -245,7 +277,7 @@ export const core = {
   rename: (id: string, title: string) => to("op", { msg: { op: "rename", id, title } }),
   hide: (id: string) => to("op", { msg: { op: "hide", id } }),
   sessions: (dirs: string[]) => to("op", { msg: { op: "sessions", dirs } }),
-  resume: (id: string) => to("op", { msg: { op: "resume", id } }),
+  resume: (id: string) => (forgetDiffs(current), to("op", { msg: { op: "resume", id } })),
   onSessions: (cb: (s: Sessions) => void) => on<Sessions>("sessions", cb),
   /** the run log since `since` (seconds; 0 the whole log), the last 90 days without one, for the usage page (src/lib/usage.ts
    * reads the rows; the signals read the recordings, for How the runs went); the reply says its `since` and `signals` back */
@@ -283,7 +315,7 @@ export const core = {
   onDrop: (cb: (paths: string[]) => void) => import("@tauri-apps/api/webview").then(({ getCurrentWebview }) =>
     getCurrentWebview().onDragDropEvent((e) => { if (e.payload.type === "drop") cb(e.payload.paths); })),
   interrupt: () => to("interrupt"),
-  newChat: () => to("new_chat"),
+  newChat: () => (forgetDiffs(current), to("new_chat")),
   setProfile: (name: string) => to("set_profile", { name }),
   models: () => to("op", { msg: { op: "models" } }),
   refreshModelList: (provider: string) => to("op", { msg: { op: "refresh_model_list", provider } }),

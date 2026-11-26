@@ -309,3 +309,7 @@ button.tz-pill:not(.tz-mode-full, .tz-mode-plan):not(:disabled):hover, button.tz
    with its words plain (design review 13: its seconds still count); a shimmer stopped half-way read as two colours */
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } .animate-spin { animation: spin 1.6s linear infinite !important; }
   .tz-live, .tz-shimmer { background: none; color: inherit; } }
+/* the work panel's edge while it is dragged (PanelEdge, Rail.tsx): the cursor stays a resize one wherever the pointer goes,
+   nothing is selected, and nothing transitions, so the reading column follows the width each frame (the open and shut slide
+   is the grid's transition, App) */
+.tz-sizing, .tz-sizing * { cursor: col-resize !important; -webkit-user-select: none !important; user-select: none !important; transition: none !important; }

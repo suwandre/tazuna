@@ -1,6 +1,6 @@
 // The core's view (Session::view) turned into what the window draws.
 import { isFree } from "./route";
-import { stripCd } from "./steps";
+import { rewritten, stripCd } from "./steps";
 import type { ModelChoice, View } from "./tazuna";
 import { planName } from "./usage";
 import { median, paidTo, pct1, usd, writing, type Call, type Message, type ToolStep, type Usage } from "./types";
@@ -237,7 +237,17 @@ export function messages(v: View, refused: ReadonlyMap<number, string> = new Map
       if (b.ok && !b.stopped && !a.prose.length && said >= 0) a.prose.push(a.tools!.splice(said, 1)[0].text!);
       delete current().retrying; delete current().retryAt; delete current().tries;
       const c = changeAt.get(k);
-      if (c) current().change = { turn: c.turn, files: c.files, undone: c.undone, canUndo: c.can_undo };
+      if (c) {
+        const change = current().change = { turn: c.turn, files: c.files, undone: c.undone, canUndo: c.can_undo, key: `${c.at_block}:${c.turn}:${JSON.stringify(c.files)}` };
+        // its done steps know it too: an edit's lines are numbered from the turn's diff (components/Step.tsx), not a piece a
+        // later step may have rewritten (one failed or declined changed nothing; a stopped one may have)
+        const tools = current().tools ?? [], changed = (t: ToolStep) => t.kind === "tool" && !t.declined && (t.ok || !!t.stopped);
+        tools.forEach((t, i) => {
+          if (t.kind !== "tool" || !t.ok || t.declined || t.stopped) return;
+          t.change = change;
+          t.unsure = rewritten({ name: t.name, input: t.input }, tools.slice(i + 1).filter(changed).map((l) => ({ name: l.name, input: l.input })), v.cwd);
+        });
+      }
       agent = null;
       open = false;
       const next = queue.shift();
@@ -410,6 +420,13 @@ export function demoView() {
   const off = cases.filter(([, s, w]) => said(s) !== JSON.stringify(w));
   if (off.length) throw new Error(`view: stats\n${off.map(([n, s, w]) => `${n}: ${said(s)}, wanted ${JSON.stringify(w)}`).join("\n")}`);
   if (median([3, 1, 2]) !== 2 || median([4, 1, 2, 3]) !== 2.5 || median([]) !== null || writing([{ out: 10, tps: null }]) !== null) throw new Error("view: median, writing");
+  // the turn's card on its done edits alone (not failed, declined, stopped), and a piece a later step rewrote marked unsure
+  const edit = (id: string, old_string: string, new_string: string, more = {}) => ({ kind: "tool", id, name: "Edit", input: { file_path: "/p/a.ts", old_string, new_string }, result: "ok", error: false, running: false, ...more });
+  const ev = { ...v, cwd: "/p", calls: [], blocks: [{ kind: "prompt", text: "x" }, edit("a", "foo", "bar"), edit("b", "q", "r", { error: true }), edit("c", "q", "r", { declined: true }),
+    edit("d", "q", "r", { stopped: true }), edit("e", "bar", "baz"), { kind: "done", ok: true, secs: 1, turns: 1, cost: 0, usage: u, stopped: false }],
+    changes: [{ turn: 0, at_block: 6, undone: false, can_undo: true, files: [{ path: "a.ts", added: 1, removed: 1, status: "M" }] }] } as View;
+  const marked = messages(ev).flatMap((x) => (x.role === "agent" ? x.tools ?? [] : [])).map((t) => [t.id, !!t.change, t.unsure ?? null]);
+  if (JSON.stringify(marked) !== JSON.stringify([["a", true, [true]], ["b", false, null], ["c", false, null], ["d", false, null], ["e", true, [false]]])) throw new Error(`view: edits' turn ${JSON.stringify(marked)}`);
   console.log("view ok");
 }
 

@@ -1,9 +1,10 @@
 import { Brain, Check, ChevronRight, Copy, LoaderCircle, Square, X } from "lucide-react";
 import { langOf, Markdown } from "../lib/markdown";
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
-import { tenths, type ToolStep } from "../lib/types";
-import { editPiece, numbered, wordMarks, type Piece } from "../lib/unidiff";
-import { editStart, linesOf, readRange, resultCode, saysDone, shortPath, stripCd, type Row } from "../lib/steps";
+import { tenths, type Change, type ToolStep } from "../lib/types";
+import { editPiece, numbered, parse, placeEdit, wordMarks, type FileDiff, type Piece } from "../lib/unidiff";
+import { editStart, linesOf, projectPath, readRange, resultCode, saysDone, shortPath, stripCd, type Row } from "../lib/steps";
+import { core } from "../lib/tazuna";
 import { CodeRow, MAX_ROWS, More } from "./DiffView";
 import { Sep } from "./Sep";
 
@@ -35,14 +36,53 @@ const budget = (): Budget => ({ rows: MAX_ROWS, chars: 60_000 });
 const tint = (b: Budget, text: string, lang: string) => ((b.chars -= text.length) >= 0 ? lang : "text");
 
 /** An edit's piece as diff rows: + and − rows tinted whole, the changed words marked, coloured by the file's language;
- * numbers only where they are known (`numbers`), never made up. A plain function, not a component: it spends the box's
- * budget once per drawing. */
-function diffRows(piece: Piece, lang: string, numbers: boolean, b: Budget): ReactNode {
-  const nums = numbered(piece), marks = wordMarks(piece), w = String(piece.newStart + piece.lines.length).length;
-  const shown = nums.slice(0, Math.max(0, b.rows));
+ * each line's old and new number where they are known (`nums`, the review's two columns), never made up. A plain
+ * function, not a component: it spends the box's budget once per drawing. */
+function diffRows(piece: Piece, lang: string, nums: (number | null)[][] | null, b: Budget, w = digits(nums)): ReactNode {
+  const marks = wordMarks(piece);
+  const shown = piece.lines.slice(0, Math.max(0, b.rows));
   b.rows -= shown.length;
-  return <>{shown.map((l, i) => <CodeRow key={i} text={l.line.slice(1)} kind={l.line[0]} mark={marks.get(i)} language={tint(b, l.line, lang)} nums={numbers ? [l.new ?? l.old] : undefined} width={w} className="pl-1.5" />)}
-    <More n={nums.length - shown.length} /></>;
+  return <>{shown.map((l, i) => <CodeRow key={i} text={l.slice(1)} kind={l[0]} mark={marks.get(i)} language={tint(b, l, lang)} nums={nums?.[i]} width={w} className="pl-1.5" />)}
+    <More n={piece.lines.length - shown.length} /></>;
+}
+
+/** How wide a box's numbers are: its largest's digits. */
+const digits = (nums: (number | null)[][] | null) => String(Math.max(0, ...(nums ?? []).flat().map((n) => n ?? 0))).length;
+
+/** An edit's numbers: where its lines are in the turn's diff of its file (exactly, else none; none while it comes), when
+ * the step's turn has a card (`card`); only without one where its result says (claude's older Edit's snippet: the file
+ * then, so old and new from the same line). None for a piece that may have been rewritten later (`unsure`). */
+function editNums(piece: Piece, diff: FileDiff | null, card: boolean, unsure: boolean, start: number | null): (number | null)[][] | null {
+  if (unsure) return null;
+  if (card) return diff && placeEdit(piece, diff);
+  return start == null ? null : numbered({ ...piece, oldStart: start, newStart: start }).map((l) => [l.old, l.new]);
+}
+
+// a file's diff in a turn, parsed once per answer (core.turnDiff keeps the answer)
+const parsedTurns = new WeakMap<object, FileDiff[]>();
+
+/** The turn's real diff of an edit's file, where it can be had: the step's turn has a card (`card`), not undone, listing
+ * the file (none outside the project or git). Its paths are the repository's: a project opened at a subfolder has them
+ * under its prefix, which the answer says. Asked when the step unfolds (Given is drawn only then), once per mount (a
+ * failed ask is asked again on the next unfold, never on a render), and not for a step none of whose pieces can be
+ * numbered (`need`); null while it comes and where none came (a snapshot gone): no numbers, no error. */
+function useTurnFile(change: Change | undefined, path: string | null, cwd: string | null | undefined, need: boolean): { card: boolean; diff: FileDiff | null } {
+  const rel = path && change && !change.undone && need ? projectPath(path, cwd) : null;
+  const listed = rel != null && change!.files.some((f) => f.path === rel || f.path.endsWith(`/${rel}`));
+  const key = change?.key ?? String(change?.turn);
+  const asked = useMemo(() => (listed ? core.turnDiff(change!.turn, key, rel!) : null), [listed, key, rel]);
+  const [, redraw] = useState(0);
+  useEffect(() => {
+    if (!asked || asked.done !== undefined) return;
+    let on = true;
+    asked.then(() => on && redraw((n) => n + 1));
+    return () => { on = false; };
+  }, [asked]);
+  const got = asked?.done;
+  if (!got) return { card: !!change, diff: null };
+  const files = parsedTurns.get(got) ?? parse(got.text);
+  parsedTurns.set(got, files);
+  return { card: true, diff: files.find((f) => f.path === got.prefix + rel) ?? null };
 }
 
 /** A file's lines (a read, a printed file, a search): their numbers in the gutter where the result gave them, a search over
@@ -88,12 +128,19 @@ const drawsChange = (name: string, input?: Record<string, unknown> | null) => wr
  * content: each view of a reply brings new objects with the same text (a 6000-line write cost 170 ms a view). */
 export function Given(props: { name: string; input: Record<string, unknown>;
   /** the box's height class where it is lower (the approval's): it takes the focus then, so the keyboard scrolls it */
-  cap?: string; cwd?: string | null; result?: string }) {
-  const { name, input, cap, cwd, result } = props;
-  return useMemo(() => given(props), [name, cap, cwd, result, JSON.stringify(input)]);
+  cap?: string; cwd?: string | null; result?: string;
+  /** the step's turn, once it is over: an edit's lines numbered from its diff (none in an approval: the file's text then is
+   * not known to the window) */
+  change?: Change;
+  /** an edit's pieces that get no numbers (replace_all's, rewritten later in the turn) */
+  unsure?: boolean[] }) {
+  const { name, input, cap, cwd, result, change, unsure } = props;
+  const path = typeof (input.file_path ?? input.path) === "string" ? (input.file_path ?? input.path) as string : null;
+  const { card, diff } = useTurnFile(/^(Edit|edit|MultiEdit|multi_edit)$/.test(bare(name)) ? change : undefined, path, cwd, !unsure?.every(Boolean));
+  return useMemo(() => given(props, card, diff), [name, cap, cwd, result, JSON.stringify(input), JSON.stringify(unsure), card, diff]);
 }
 
-function given({ name, input, cap, cwd, result }: Parameters<typeof Given>[0]): ReactNode {
+function given({ name, input, cap, cwd, result, unsure }: Parameters<typeof Given>[0], card: boolean, diff: FileDiff | null): ReactNode {
   const str = (k: string) => (typeof input[k] === "string" ? (input[k] as string) : null);
   const n = bare(name), file = str("file_path") ?? str("path"), lang = langOf(file) ?? "text";
   const frame = cap ? codeBox.replace("max-h-72", cap) : codeBox;
@@ -101,14 +148,19 @@ function given({ name, input, cap, cwd, result }: Parameters<typeof Given>[0]): 
   const before = str("old_string") ?? str("old"), after = str("new_string") ?? str("new");
   const scroll = cap ? { tabIndex: 0, role: "region", "aria-label": "What would change" } : {};
   if (/^(Edit|edit)$/.test(n) && before != null) {
-    const start = editStart(result, after ?? "");
-    // replace_all changes every place the text is; the diff shows the text once
-    return <div {...scroll} className={frame}>{input.replace_all === true && boxNote("all occurrences")}{diffRows(editPiece(before, after ?? "", start ?? 1), lang, start != null, budget())}</div>;
+    const piece = editPiece(before, after ?? "");
+    // replace_all changes every place the text is; the diff shows the text once (numbered where there was only one)
+    return <div {...scroll} className={frame}>{input.replace_all === true && boxNote("all occurrences")}{diffRows(piece, lang, editNums(piece, diff, card, !!unsure?.[0], editStart(result, after ?? "")), budget())}</div>;
   }
   if (/^(MultiEdit|multi_edit)$/.test(n) && Array.isArray(input.edits)) {
     const edits = input.edits as { old_string?: string; new_string?: string; old?: string; new?: string; replace_all?: boolean }[], b = budget();
+    // each piece numbered on its own, in one gutter's width (their code in one column; one without numbers gets an empty
+    // gutter where another has them)
+    const pieces = edits.map((e) => editPiece(e.old_string ?? e.old ?? "", e.new_string ?? e.new ?? ""));
+    const placed = pieces.map((p, i) => editNums(p, diff, card, !!unsure?.[i], null)), any = placed.some(Boolean);
+    const nums = placed.map((n, i) => n ?? (any ? pieces[i].lines.map(() => [null, null]) : null)), w = digits(nums.flatMap((n) => n ?? []));
     return <div {...scroll} className={frame}>{edits.map((e, i) => <div key={i} className={i ? "mt-1 border-t border-line-soft pt-1" : ""}>
-      {e.replace_all === true && boxNote("all occurrences")}{diffRows(editPiece(e.old_string ?? e.old ?? "", e.new_string ?? e.new ?? ""), lang, false, b)}</div>)}</div>;
+      {e.replace_all === true && boxNote("all occurrences")}{diffRows(pieces[i], lang, nums[i], b, w)}</div>)}</div>;
   }
   if (/^(Write|write)$/.test(n) && str("content") != null) {
     const lines = linesOf(str("content")!), w = String(lines.length).length, b = budget(), shown = lines.slice(0, b.rows);
@@ -245,7 +297,7 @@ export function Step({ t }: { t: ToolStep }) {
         className="flex-none rounded px-1.5 py-px text-[12px] text-accent-ink">{t.running ? "Watch" : "Open"}</button>}
       </div>
       {open && (thinking ? <div className={`${box} font-serif`}>{t.text}</div> : <>
-        {t.input && Object.keys(t.input).length > 0 && <Given name={t.name ?? ""} input={t.input} cwd={t.cwd} result={t.result} />}
+        {t.input && Object.keys(t.input).length > 0 && <Given name={t.name ?? ""} input={t.input} cwd={t.cwd} result={t.result} change={t.change} unsure={t.unsure} />}
         {/* an edit's or a write's "updated successfully" says nothing its diff does not */}
         {t.result && !(t.ok && drawsChange(t.name ?? "", t.input) && saysDone(t.result)) && <Result name={t.name ?? ""} text={t.result} ok={t.ok} input={t.input} cwd={t.cwd} />}
       </>)}
@@ -278,5 +330,17 @@ export async function demo() {
   // replace_all said; the own loop's range offset in the read's line
   must(html(<Given name="Edit" input={{ file_path: "/p/a.ts", old_string: "a", new_string: "b", replace_all: true }} />).includes("all occurrences"), "replace_all");
   must(html(<Given name="read" input={{ path: "/p/a.ts", offset: "100,140" }} cwd="/p" />).includes("lines 100–140"), "a range offset");
+  // review of N1: numbers from the turn's diff once it came, none while it comes; the old snippet's only without a card
+  const snippet = "The file /p/a.ts has been updated. Here's the result of running `cat -n` on a snippet of the edited file:\n    40→x\n    41→B";
+  const ed = { file_path: "/p/a.ts", old_string: "x\nb", new_string: "x\nB" }, d = parse("diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,2 +1,2 @@\n x\n-b\n+B\n")[0];
+  const nums = (h: string) => (h.match(/data-n="\d+"/g) ?? []).map((m) => m.slice(8, -1)).join(",");
+  const draw = (props: Parameters<typeof Given>[0], card: boolean, diff: FileDiff | null) => html(<>{given(props, card, diff)}</>);
+  must(nums(draw({ name: "Edit", input: ed, result: snippet }, true, null)) === "", "numbers while the diff comes");
+  must(nums(draw({ name: "Edit", input: ed, result: snippet }, false, null)) === "40,40,41,41", "the snippet's numbers without a card");
+  must(nums(draw({ name: "Edit", input: ed, result: snippet }, true, d)) === "1,1,2,2", "the diff's numbers");
+  must(nums(draw({ name: "Edit", input: ed, unsure: [true] }, true, d)) === "", "a piece rewritten later numbered");
+  // a multi-edit's piece without numbers has an empty gutter beside a numbered one (their code in one column)
+  const multi = draw({ name: "MultiEdit", input: { file_path: "/p/a.ts", edits: [{ old_string: "b", new_string: "B" }, { old_string: "zz", new_string: "yy" }] } }, true, d);
+  must(nums(multi) === "2,2" && (multi.match(/class="tz-gut/g) ?? []).length === 12, "a multi-edit's gutters do not line up");
   console.log(`step ok (${Math.round(ms)} ms)`);
 }

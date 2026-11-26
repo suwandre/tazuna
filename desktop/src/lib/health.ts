@@ -13,6 +13,9 @@ export type Item = { key: string; provider: string; name: string; note?: string;
   over?: boolean;
   /** what it means and what to do, for an account running low or stopped (the badge's tooltip) */
   advice?: string;
+  /** it stops runs now (a credit used up or past zero, a login gone, a window full), where "out" also covers a window at
+   * 90%: the badge names these first (`urgent`) */
+  stopped?: boolean;
   /** the account it belongs to, written out whole ("Claude plan", "OmniRoute agy, someone@…, Ultra", "Credit"), and its
    * own name under that heading ("week", "Gemini", "OpenRouter"): the card groups them as the usage page does */
   group: string; label: string };
@@ -60,9 +63,41 @@ export function whenReset(at: number | undefined, now = Date.now()): string | un
 /** The exact time, for a hover: "Thursday, November 21, 3:00 AM". */
 export const exactly = (at?: number) => (at == null ? undefined : new Date(at).toLocaleString("en-US", { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" }));
 
-// a window from 75% is running low, from 90% about to stop you (the meters' amber and red); credit under $2 is low
-// ponytail: a fixed $2, a threshold from your own daily spend when that matters
+// a window from 75% is running low, from 90% about to stop you (the meters' amber and red); credit under $2 is low (the
+// core decides that one: src/accounts.rs `row`)
 const byPct = (p: number): Level => (p >= 90 ? "out" : p >= 75 ? "low" : "ok");
+
+/** A provider's row as the core sends it (src/accounts.rs `row`): the line to show (`left`), a short one, its plan's
+ * windows, and the numbers and state the core decided, which the levels go by, not the words: parsing "$… left" read
+ * rupiah, yuan, a plan's windows and a key without its scope as no balance at all (review of the balances, 2026-11-26). */
+export type Credit = Accounts["credits"][number] & { short?: string | null; usd_left?: number | null; max_used_pct?: number | null; key_limit?: boolean;
+  free_requests?: boolean; state?: "ok" | "low" | "out" | "over" | "needs_scope" | "unknown"; windows?: Accounts["omniroute"][number]["windows"] };
+
+/** Dollars the way the status bar says them: "$12.40 left", "$0.17 below zero". */
+const said = (d: number) => (d < 0 ? `${usd(-d)} below zero` : `${usd(d)} left`);
+
+/** A row's state and dollars: the core's; from a core before them (TAZUNA_BIN, an older tazuna on PATH), read from its
+ * words ("$1,234.50 left", "$0.17 over its credit") as until desktop 0.1.131, with the core's thresholds. */
+export function creditState(c: Credit): { state: NonNullable<Credit["state"]>; usd?: number } {
+  const num = (t: string) => Number(t.replace(/,/g, "")), over = c.left?.match(/^\$([\d.,]+) over/), left = c.left?.match(/^(-?)\$([\d.,]+) left/);
+  const dollars = c.usd_left ?? (c.state ? undefined : over ? -num(over[1]) : left ? num(left[2]) * (left[1] ? -1 : 1) : undefined);
+  return { state: c.state ?? (dollars == null ? "unknown" : dollars < 0 ? "over" : dollars < 0.01 ? "out" : dollars < 2 ? "low" : "ok"), usd: dollars };
+}
+
+/** A row's level: a plan's windows by their fullest (byPct, as every meter), the rest by its state. The usage page's row
+ * and the status bar take it from here: the row went amber by the core's limits while its meter went red (review). */
+export function creditLevel(c: Credit): Level {
+  const st = creditState(c).state;
+  return c.max_used_pct != null ? byPct(c.max_used_pct) : st === "over" || st === "out" ? "out" : st === "low" || st === "needs_scope" ? "low" : st === "ok" ? "ok" : "unknown";
+}
+
+/** SubRouter's balance a conversation carries until the first accounts reading, as a row the core would send. */
+export const fallbackCredit = (b: number): Credit => ({ provider: "SubRouter", left: said(b), short: said(b), usd_left: b, page: "https://subrouter.ai" });
+
+/** The order the badge names accounts in: stopped first, then about to stop (a window at 90%), then low. By level alone a
+ * plan at 90% named the badge ahead of an account that had stopped (review of the balances). */
+export const urgent = (a: Item, b: Item) => rank(b) - rank(a);
+const rank = (i: Item) => (i.stopped ? 2 : i.level === "out" ? 1 : 0);
 
 /** What to say for the plan's window `label` ("Current week (Fable)" is "week, Fable"). */
 const windowOf = (label: string) => { const l = label.replace(/^Current /, ""); if (l === "session") return "5 hours"; const m = l.match(/^week \((.*)\)$/); return m ? (m[1] === "all models" ? "week" : `week, ${m[1]}`) : l; };
@@ -84,23 +119,30 @@ export function items(acc: Accounts | null, fallback: { plan5h: number | null; p
     const over = resetsAt != null && resetsAt <= now, used = over ? 0 : r.used;
     out.push({ key: `claude:${w}`, provider: "Claude", name: `Claude plan, ${w}`, group: "Claude plan", label: w.charAt(0).toUpperCase() + w.slice(1), over,
       note: over ? "over: a new one starts with your next message" : resetsAt ? `resets ${whenReset(resetsAt, now)}` : undefined, pct: used, value: `${Math.round(used)}%`,
-      level: byPct(used), short: `Claude ${w} ${Math.round(used)}%`, resetsAt,
+      level: byPct(used), short: `Claude ${w} ${Math.round(used)}%`, resetsAt, stopped: used >= 100,
       // past 100% Claude stops, or bills extra usage where it is turned on (it went on silently into extra usage, 2026-11)
       advice: used >= 90 ? `Your Claude ${w} is at ${Math.round(used)}%. Once it is full Claude stops, or bills extra usage if you turned that on.${until(resetsAt)}`
         : `Your Claude ${w} is at ${Math.round(used)}%.${until(resetsAt)}` });
   }
-  const credits = acc?.credits ?? (fallback.balance != null ? [{ provider: "SubRouter", left: `$${fallback.balance.toFixed(2)} left`, page: "https://subrouter.ai" }] : []);
+  const credits: Credit[] = acc?.credits ?? (fallback.balance != null ? [fallbackCredit(fallback.balance)] : []);
   for (const c of credits) {
-    // the core's "$1234.50 left" (grouped or not: "$1,234.50")
-    const over = c.left?.match(/^\$([\d.,]+) over/), left = c.left?.match(/^-?\$([\d.,]+) left/), num = (t: string) => Number(t.replace(/,/g, ""));
-    const amount = over ? -num(over[1]) : left ? num(left[1]) * (c.left!.startsWith("-") ? -1 : 1) : null;
-    const level: Level = amount == null ? "unknown" : amount <= 0 ? "out" : amount < 2 ? "low" : "ok";
-    out.push({ key: `credit:${c.provider}`, provider: c.provider, name: c.provider, group: "Credit with each provider", label: c.provider, note: amount == null ? "no balance from its API" : undefined,
-      value: amount == null ? undefined : amount < 0 ? `${usd(-amount)} below zero` : `${usd(amount)} left`, level, page: c.page,
-      advice: amount == null ? undefined : amount <= 0 ? `Your ${c.provider} credit is ${amount < 0 ? `${usd(-amount)} past zero` : "used up"}. Add credits, or runs on ${c.provider} will fail.`
-        : `${c.provider} has ${usd(amount)} left. Add credits soon, or runs on ${c.provider} will stop.`,
-      // "below zero", not "over": "OpenRouter $0.17 over" read as over a limit (design review 12)
-      short: amount == null ? c.provider : amount < 0 ? `${c.provider} ${usd(-amount)} below zero` : `${c.provider} ${usd(amount)} left` });
+    const pct = c.max_used_pct ?? undefined, p = c.provider, { state: st, usd: dollars } = creditState(c), level = creditLevel(c);
+    // the core's short line; from a core before it, the dollars said the way the desktop says them
+    const value = pct != null ? `${Math.round(pct)}%` : c.short ?? (dollars != null ? said(dollars) : c.left ?? undefined);
+    const top = c.windows?.filter((w) => w.used != null).sort((a, b) => b.used! - a.used!)[0], at = top?.resets ? Date.parse(top.resets) : NaN;
+    const resetsAt = Number.isNaN(at) ? undefined : at;
+    out.push({ key: `credit:${p}`, provider: p, name: p, group: "Credit with each provider", label: p, note: !c.left ? "no balance from its API" : c.left !== value ? c.left : undefined,
+      value, level, page: c.page, pct, resetsAt, stopped: pct != null ? pct >= 100 : st === "over" || st === "out",
+      advice: !value ? undefined
+        : st === "needs_scope" ? `${p} can't tell this key's balance: ${c.left}.`
+        : pct != null ? `${p} is at ${Math.round(pct)}% of its plan${top?.window ? ` (${top.window})` : ""}. Runs on it stop once it is full.${until(resetsAt)}`
+        : c.free_requests ? (level === "out" ? `Your ${p} free requests for today are used up. They come back tomorrow; credit lifts the limit.` : `${p}: ${c.left}.`)
+        : c.key_limit ? (level === "out" ? `Your ${p} key has used up its own limit. Raise the key's limit on ${p}, or runs on it will fail.`
+          : `Your ${p} key limit has ${usd(dollars ?? 0)} left. Raise it soon, or runs on ${p} will stop.`)
+        : level === "out" ? `Your ${p} credit is ${st === "over" ? value : "used up"}. Add credits, or runs on ${p} will fail.`
+        : `${p} has ${value}. Add credits soon, or runs on ${p} will stop.`,
+      // "Z.ai 90% used": a bare "90%" beside a provider's name read as what is left
+      short: pct != null ? `${p} ${Math.round(pct)}% used` : value ? `${p} ${value}` : p });
   }
   for (const a of acc?.omniroute ?? []) for (const w of a.windows) {
     if (w.unlimited || w.used == null) continue;
@@ -112,7 +154,7 @@ export function items(acc: Accounts | null, fallback: { plan5h: number | null; p
     out.push({ key: `omni:${a.provider}:${a.name}:${w.group}:${w.window}`, provider: "OmniRoute", name: `OmniRoute ${who}, ${what}`, resetsAt: Number.isNaN(resetsAt) ? undefined : resetsAt,
       group: ["OmniRoute", who, a.name, a.plan].filter(Boolean).join(", "), label: what === "quota" ? "Quota" : what,
       note: login ? `login ${a.status}` : resetsAt && !Number.isNaN(resetsAt) ? `resets ${whenReset(resetsAt, now)}` : w.window && w.window.toLowerCase() !== what.toLowerCase() ? w.window : undefined,
-      pct: w.used, value: `${Math.round(w.used)}%`, level: login ? "out" : byPct(w.used), short: login ? `OmniRoute ${a.provider} login ${a.status}` : `OmniRoute ${what} ${Math.round(w.used)}%`,
+      pct: w.used, value: `${Math.round(w.used)}%`, level: login ? "out" : byPct(w.used), stopped: login || w.used >= 100, short: login ? `OmniRoute ${a.provider} login ${a.status}` : `OmniRoute ${what} ${Math.round(w.used)}%`,
       advice: login ? `Your OmniRoute ${who} login${acct ? ` (${acct})` : ""} is ${a.status}. Log in again in OmniRoute, or runs on it will fail.`
         : `OmniRoute ${who} ${what}${acct ? ` (${acct})` : ""} is at ${Math.round(w.used)}%. Runs on it stop once it is full.${until(Number.isNaN(resetsAt) ? undefined : resetsAt)}` });
   }
@@ -149,7 +191,8 @@ export const worst = (xs: Item[]): Level => (xs.some((i) => i.level === "out") ?
 /** A check: `npx tsx -e 'import("./src/lib/health.ts").then(m => m.demo())'`. */
 export function demo() {
   const acc: Accounts = { plan: [{ label: "Current session", used: 34, resets: "in 4 h" }, { label: "Current week (all models)", used: 93, resets: "Nov 21 at 3am (Europe/Berlin)" }], plan_notes: [],
-    credits: [{ provider: "SubRouter", left: "$12.40 left", page: "" }, { provider: "OpenRouter", left: "$0.17 over its credit", page: "" }, { provider: "Mortera", left: null, page: "" }],
+    credits: [{ provider: "SubRouter", left: "$12.40 left", short: "$12.40 left", usd_left: 12.4, state: "ok", page: "" }, { provider: "OpenRouter", left: "$0.17 over its credit", short: "$0.17 below zero", usd_left: -0.17, state: "over", page: "" },
+      { provider: "Mortera", left: null, short: null, state: "unknown", page: "" }] as Credit[],
     omniroute: [{ provider: "agy", name: "a", plan: "Ultra", status: "valid", windows: [{ group: "Gemini Models", window: "weekly", used: 12, resets: null, unlimited: false }] }] };
   // at a fixed time: the week's reset (Nov 21) was over once that day had passed, and the check failed by the calendar
   const all = items(acc, { plan5h: null, planWeek: null }, new Date(2026, 10, 19, 15, 0).getTime());
@@ -171,9 +214,31 @@ export function demo() {
   const r = [whenReset(t0 + 42 * 60_000, t0), whenReset(t0 + 134 * 60_000, t0), whenReset(new Date(2026, 10, 21, 3, 0).getTime(), t0), whenReset(new Date(2026, 10, 26, 17, 13).getTime(), t0),
     whenReset(parseReset("Nov 21 at 2:59am (Europe/Berlin)", t0), t0), whenReset(parseReset("5:29pm (Europe/Berlin)", t0), t0)];
   if (r.join("|") !== "in 42 min|in 2 h 14 min|Sat 3am|Nov 26|Sat 2:59am|in 2 h 29 min") throw new Error(`resets: ${r.join("|")}`);
-  // a balance past a thousand is grouped, read whether the core grouped it or not (review of review 14)
-  const big = items({ credits: [{ provider: "A", left: "$1234.5 left", page: "" }, { provider: "B", left: "$1,234.50 over its credit", page: "" }] } as Accounts, { plan5h: null, planWeek: null }, t0);
-  if (big.map((i) => i.value).join("|") !== "$1,234.50 left|$1,234.50 below zero") throw new Error(`credits: ${big.map((i) => i.value).join("|")}`);
+  // the levels by the core's numbers and state, not its words: rupiah low, a plan's fullest window, a key without its
+  // scope, spending that is not a balance, a key's own limit (review of the balances)
+  const rows = items({ credits: [{ provider: "Mortera", left: "Rp 797 left (about $0.05)", short: "Rp 797 left", usd_left: 0.05, state: "low", page: "" },
+    { provider: "Z.ai Coding Plan", left: "5-hour 12%, weekly 95% used (experimental)", short: "95% used", max_used_pct: 95, state: "low", page: "",
+      windows: [{ group: "", window: "5-hour", used: 12, resets: null, unlimited: false }, { group: "", window: "weekly", used: 95, resets: "2026-11-21T02:00:00Z", unlimited: false }] },
+    { provider: "Cheaper Inference", left: "turn on account:read for this key", short: "needs account:read", state: "needs_scope", page: "" },
+    { provider: "OpenRouter", left: "$1.25 used this month", short: "$1.25 this month", state: "unknown", page: "" },
+    { provider: "Venice", left: "$25.40 left ($0.40 + $25.00 bundled)", short: "$25.40 left", usd_left: 25.4, state: "ok", page: "" },
+    { provider: "K", left: "$0.40 over its key limit", short: "key limit used up", usd_left: -0.4, state: "over", key_limit: true, page: "" }] as Credit[] } as Accounts, { plan5h: null, planWeek: null }, t0);
+  const got = rows.map((i) => `${i.level} ${i.value}`).join("|");
+  if (got !== "low Rp 797 left|out 95%|low needs account:read|unknown $1.25 this month|ok $25.40 left|out key limit used up"
+    || rows[1].resetsAt !== Date.parse("2026-11-21T02:00:00Z") || rows[0].note !== "Rp 797 left (about $0.05)" || !/Raise the key's limit/.test(rows[5].advice ?? "")) throw new Error(`credits: ${got}`);
+  // a conversation's SubRouter balance before the first reading, past zero said as the status bar says it
+  const fb = items(null, { plan5h: null, planWeek: null, balance: -0.17 }, t0)[0];
+  if (items(null, { plan5h: null, planWeek: null, balance: 1.5 }, t0)[0].level !== "low" || fb.level !== "out" || fb.value !== "$0.17 below zero" || fallbackCredit(-0.17).left !== "$0.17 below zero") throw new Error(`fallback balance: ${fb.value}`);
+  // a core before the numbers: its words read as before, so its alerts stay
+  const old = items({ credits: [{ provider: "OpenRouter", left: "$0.17 over its credit", page: "" }, { provider: "SubRouter", left: "$1,234.50 left", page: "" }] } as Accounts, { plan5h: null, planWeek: null }, t0);
+  if (old.map((i) => `${i.level} ${i.value}`).join("|") !== "out $0.17 below zero|ok $1,234.50 left") throw new Error(`older core: ${old.map((i) => `${i.level} ${i.value}`).join("|")}`);
+  // the advice says what the reading is: free requests come back, a key's limit is raised; a plan says "% used"
+  const adv = items({ credits: [{ provider: "OpenRouter", left: "0 of 50 free requests left today", short: "0/50 free today", state: "out", free_requests: true, page: "" },
+    { provider: "K", left: "$1.50 left of its $5.00 key limit", short: "$1.50 left (key)", usd_left: 1.5, state: "low", key_limit: true, page: "" }] as Credit[] } as Accounts, { plan5h: null, planWeek: null }, t0);
+  if (!/come back tomorrow/.test(adv[0].advice!) || adv[1].advice !== "Your K key limit has $1.50 left. Raise it soon, or runs on K will stop." || rows[1].short !== "Z.ai Coding Plan 95% used") throw new Error(`advice: ${adv.map((i) => i.advice).join("|")}`);
+  // the badge names an account that stopped before a plan at 95%, and that before one running low
+  const order = [rows[0], rows[1], rows[5]].sort(urgent).map((i) => i.key).join();
+  if (order !== "credit:K,credit:Z.ai Coding Plan,credit:Mortera") throw new Error(`badge order: ${order}`);
   const lv = Object.fromEntries(all.map((i) => [i.key, i.level]));
   const ok = lv["claude:5 hours"] === "ok" && lv["claude:week"] === "out" && lv["credit:SubRouter"] === "ok" && lv["credit:OpenRouter"] === "out" && lv["credit:Mortera"] === "unknown"
     && mine(all, { provider: "SubRouter" } as ModelChoice, "deepseek-v4.1-flash")[0]?.key === "credit:SubRouter"

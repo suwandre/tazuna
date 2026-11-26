@@ -219,6 +219,154 @@ const log = [];
       await c5.close(); }
     if (process.env.ONLY === "stats") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n")); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
   }
+  // the work panel's width (desktop/DESIGN.md, Layout; ONLY=resize: these alone): its edge dragged to 420 and to the most at
+  // 1440 and 1600, the reading column centred in what is left at each width (its text's two gaps and the box's within 1 px)
+  // and following the pointer during the drag (no transition), the keyboard (arrows, Shift, Home, End, Enter), a double
+  // click back to 300, the width kept over a reload, a smaller window holding it, the panel over the conversation at 1280
+  // as wide, the approval and the way back down at 420, and at 260 nothing in the panel past its edge (long checks, branch
+  // and paths put in); both themes
+  if (!process.env.ONLY || process.env.ONLY === "resize") {
+    const must = (c, what) => { if (!c) throw new Error(what); };
+    const SEP = "[role=separator][aria-label='Width of the work panel']", RAIL = "aside[aria-label='The work']";
+    const AGAIN = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { if (p?.msg?.type === "view") window.__lastView = p; return emit(e, p); };
+      window.__again = (f) => { const { tid, msg } = window.__lastView; T.view(tid, f({ ...msg, from: 0 })); };
+      window.__pr = (m) => T.emit("tazuna-view", { tid: window.__lastView.tid, msg: { type: "pr", ...m } }); })();`;
+    // what the panel measures: its width, the separator's values, the text's gaps on the sheet and the box's
+    const geo = (p) => p.evaluate(([SEP, RAIL]) => { const m = document.querySelector("main").getBoundingClientRect(), t = document.querySelector("[data-msg]")?.getBoundingClientRect(), c = document.querySelector("[data-composer]")?.getBoundingClientRect();
+      const a = document.querySelector(RAIL), sep = document.querySelector(SEP), over = !!document.querySelector("div[data-panel] " + RAIL);
+      return { panel: a ? Math.round((over ? a.parentElement : a).getBoundingClientRect().width) : 0, over, now: sep && +sep.getAttribute("aria-valuenow"), max: sep && +sep.getAttribute("aria-valuemax"), min: sep && +sep.getAttribute("aria-valuemin"),
+        left: t && Math.round(t.left + 28 - m.left), right: t && Math.round(m.right - (t.right - 28)), text: t && Math.round(t.width - 56), boxLeft: c && Math.round(c.left - m.left), boxRight: c && Math.round(m.right - c.right),
+        kept: localStorage.getItem("tazuna.panel-width") }; }, [SEP, RAIL]);
+    const even = (g) => Math.abs(g.left - g.right) <= 1 && Math.abs(g.boxLeft - g.boxRight) <= 1;
+    // the pointer on the edge, pressed, moved by dx in steps, let go
+    const drag = async (p, dx, hold) => { const h = await p.locator(SEP).boundingBox(), x = h.x + h.width / 2, y = h.y + h.height / 2;
+      await p.mouse.move(x, y); await p.mouse.down(); for (let i = 1; i <= 8; i++) await p.mouse.move(x + (dx * i) / 8, y);
+      if (hold) return [x, y]; await p.mouse.up(); await p.waitForTimeout(300); return [x, y]; };
+    // anything in the panel past its own edges, and what is cut with no tooltip saying it whole
+    const spill = (p) => p.evaluate((RAIL) => { const a = document.querySelector(RAIL), r = a.getBoundingClientRect(), name = (e) => `${e.tagName.toLowerCase()}.${String(e.className).split(" ").slice(0, 3).join(".")} "${(e.textContent ?? "").trim().slice(0, 30)}"`;
+      const els = [...a.querySelectorAll("*")].filter((e) => e.getBoundingClientRect().width > 0);
+      // what shows of an element: its box inside every ancestor that clips (a truncated row's spans run on under its cut)
+      const shown = (e) => { let b = e.getBoundingClientRect(), l = b.left, rt = b.right; for (let q = e.parentElement; q && q !== a; q = q.parentElement) if (getComputedStyle(q).overflowX !== "visible") { const c = q.getBoundingClientRect(); l = Math.max(l, c.left); rt = Math.min(rt, c.right); } return [l, rt]; };
+      return { wide: a.scrollWidth - a.clientWidth, past: els.filter((e) => { const [l, rt] = shown(e); return rt > l && (rt > r.right + 0.5 || l < r.left - 0.5); }).map(name),
+        cut: els.filter((e) => e.scrollWidth > e.clientWidth + 1 && getComputedStyle(e).overflowX !== "visible" && e !== a && !e.closest("[title]") && !e.closest("[role=group]")).map(name) }; }, RAIL);
+    // long lines put in: a check's command, the branch, deep paths in Changes
+    const long = (p) => p.evaluate(() => { window.__again((v) => ({ ...v,
+      blocks: v.blocks.map((b) => (b.kind === "verify" ? { ...b, cmd: "cargo test --workspace --all-features -- --test-threads=1 --nocapture integration::retry::backoff_respects_the_jitter_window" } : b)),
+      changes: [{ turn: 0, at_block: 8, undone: false, can_undo: true, files: [{ path: "packages/gateway/src/middleware/request-logging/latency-histogram-buckets.test.ts", added: 120, removed: 48, status: "M" },
+        { path: "tests/retry.test.ts", added: 9, removed: 3, status: "M" }, { path: "docs/an-unusually-long-file-name-with-no-folder-at-all-for-the-panel.md", added: 2, removed: 0, status: "A" }] }] }));
+      window.__pr({ none: true, branch: "feature/T-123-make-the-retry-backoff-respect-the-jitter-window-on-slow-runners" }); });
+    // the conversation's row is named by its first message once it has been opened
+    const openFix = async (p) => { await side(p).locator('a[title^="Fix the flaky retry test"], a[title^="The retry test fails"]').first().click({ timeout: 4000 }); await p.waitForTimeout(800); };
+    // back to 300 by the keyboard, the focus given back
+    const reset = async (p) => { await p.locator(SEP).focus(); await p.keyboard.press("Enter"); await p.locator(SEP).blur(); await p.waitForTimeout(300); };
+    const openPanel = async (p) => { if (!(await p.locator(RAIL).count())) { await p.evaluate(() => document.querySelector("main > header button[data-panel]").click()); await p.waitForTimeout(450); } };
+    for (const theme of ["dark", "light"]) {
+      const T = `resize-${theme[0]}`, [ctx, p] = await ctxOf({ theme, w: 1440, h: 900, extra: AGAIN });
+      await p.evaluate(() => localStorage.removeItem("tazuna.panel-width"));
+      for (const w of [1440, 1600]) {
+        await step(p, `${T}-${w}-300`, async () => { await p.setViewportSize({ width: w, height: 900 }); await p.waitForTimeout(250); await openFix(p); await long(p); await p.waitForTimeout(300); await openPanel(p);
+          // one width for the window: 1440's last one stands at 1600 until Enter puts it back
+          if (w === 1600) { log.push(`${T} 1600 with 1440's width kept: ${JSON.stringify(await geo(p))}`); await p.locator(SEP).focus(); await p.keyboard.press("Enter"); await p.locator(SEP).blur(); await p.waitForTimeout(300); }
+          const g = await geo(p); log.push(`${T} ${w} at 300: ${JSON.stringify(g)}`); must(g.panel === 300 && g.now === 300 && even(g) && g.text === 700, `at 300: ${JSON.stringify(g)}`); });
+        // the hairline on hover (line-strong), then the drag: during it the column is where the width says at once
+        await step(p, `${T}-${w}-hover`, async () => { const h = await p.locator(SEP).boundingBox(); await p.mouse.move(h.x + h.width / 2, 450); await p.waitForTimeout(200);
+          const c = await p.locator(SEP).evaluate((e) => [getComputedStyle(e, "::before").backgroundColor, getComputedStyle(e).cursor]), want = await p.evaluate(() => { const d = document.createElement("i"); d.style.color = "var(--line-strong)"; document.body.append(d); const c = getComputedStyle(d).color; d.remove(); return c; });
+          log.push(`${T} ${w} hover: ${c} (${want})`); must(c[0] === want && c[1] === "col-resize", `hover: ${c}, wanted ${want}`);
+          await p.screenshot({ path: `${OUT}/${T}-${w}-hover-edge.png`, clip: { x: h.x - 60, y: 0, width: 160, height: 220 } }); });
+        await step(p, `${T}-${w}-dragging`, async () => { await drag(p, -60, true); await p.waitForTimeout(60);
+          const mid = await geo(p), on = await p.evaluate(() => [document.documentElement.classList.contains("tz-sizing"), getComputedStyle(document.querySelector("[data-tauri-drag-region].grid")).transitionDuration]);
+          await p.mouse.up(); await p.waitForTimeout(300);
+          log.push(`${T} ${w} mid-drag: ${JSON.stringify(mid)} ${on}`); must(mid.panel === 360 && even(mid) && on[0] && on[1] === "0s", `mid-drag: ${JSON.stringify(mid)} ${on}`); });
+        await step(p, `${T}-${w}-420`, async () => { await drag(p, -60); const g = await geo(p); log.push(`${T} ${w} at 420: ${JSON.stringify(g)}`);
+          must(g.panel === 420 && g.now === 420 && g.kept === "420" && even(g), `at 420: ${JSON.stringify(g)}`); });
+        await step(p, `${T}-${w}-most`, async () => { await drag(p, -600); const g = await geo(p), want = w === 1440 ? 548 : 708; log.push(`${T} ${w} at the most: ${JSON.stringify(g)}`);
+          must(g.panel === want && g.max === want && even(g) && g.text === 580, `at the most (${want}): ${JSON.stringify(g)}`); });
+      }
+      // the keyboard: the separator focused (the page's own focus(): WebKit takes Tab to links and buttons only by its setting)
+      await step(p, `${T}-keys`, async () => { await p.locator(SEP).focus(); const got = [];
+        for (const k of ["Enter", "ArrowLeft", "Shift+ArrowLeft", "ArrowRight", "Shift+ArrowRight", "Home", "End", "Enter"]) { await p.keyboard.press(k); await p.waitForTimeout(260); const g = await geo(p); got.push(`${k} ${g.now}/${g.panel}`); }
+        log.push(`${T} keys at 1600: ${got.join(", ")}`);
+        must(got.join(",") === "Enter 300/300,ArrowLeft 316/316,Shift+ArrowLeft 380/380,ArrowRight 364/364,Shift+ArrowRight 300/300,Home 260/260,End 708/708,Enter 300/300", `keys: ${got}`);
+        await p.keyboard.press("Shift+ArrowLeft"); await p.waitForTimeout(260);
+        await p.screenshot({ path: `${OUT}/${T}-keys-focus.png` }); });
+      await step(p, `${T}-dblclick`, async () => { await drag(p, -200); const before = (await geo(p)).panel; await p.locator(SEP).dblclick(); await p.waitForTimeout(350); const g = await geo(p);
+        log.push(`${T} double click: ${before} -> ${JSON.stringify(g)}`); must(before === 564 && g.panel === 300 && g.kept === "300" && even(g), `double click: ${before} ${JSON.stringify(g)}`); });
+      // 260: nothing past the panel's edge, the long lines wrapped or cut with a tooltip
+      await step(p, `${T}-260`, async () => { await p.setViewportSize({ width: 1440, height: 900 }); await p.waitForTimeout(250); await p.locator(SEP).focus(); await p.keyboard.press("Home"); await p.waitForTimeout(300);
+        const g = await geo(p), s = await spill(p); log.push(`${T} 260: ${JSON.stringify(g)}; spill ${JSON.stringify(s)}`);
+        must(g.panel === 260 && even(g) && s.wide <= 0 && !s.past.length && !s.cut.length, `260: ${JSON.stringify([g, s])}`);
+        await p.locator(RAIL).screenshot({ path: `${OUT}/${T}-260-panel.png` }); });
+      await step(p, `${T}-420-panel`, async () => { await p.keyboard.press("End"); await p.waitForTimeout(300); await p.locator(RAIL).screenshot({ path: `${OUT}/${T}-548-panel.png` });
+        await drag(p, 128); const g = await geo(p), s = await spill(p); log.push(`${T} 420 panel: ${JSON.stringify(g)}; spill ${JSON.stringify(s)}`); must(g.panel === 420 && !s.past.length, `420: ${JSON.stringify([g, s])}`); });
+      // kept over a reload (one width for the window: another conversation has it too)
+      await step(p, `${T}-reload`, async () => { await p.reload(); await p.waitForTimeout(1100); await open(p, "Why is the CI build"); await openPanel(p); const g = await geo(p);
+        log.push(`${T} after a reload: ${JSON.stringify(g)}`); must(g.panel === 420 && g.kept === "420" && even(g), `after a reload: ${JSON.stringify(g)}`); });
+      // the approval card and the way back down follow the column
+      await step(p, `${T}-approval-420`, async () => { await open(p, "Bump the TLS library"); await openPanel(p); await p.getByText("Allow a shell command?").waitFor({ timeout: 4000 });
+        const a = await p.evaluate(() => { const m = document.querySelector("main").getBoundingClientRect(), c = document.querySelector("[data-composer]").getBoundingClientRect(), card = [...document.querySelectorAll("main *")].find((e) => e.textContent?.startsWith("Allow a shell command?") && e.getBoundingClientRect().width > 300 && e.getBoundingClientRect().width <= c.width + 1)?.getBoundingClientRect();
+          return { card: card && [Math.round(card.left - m.left), Math.round(m.right - card.right)], box: [Math.round(c.left - m.left), Math.round(m.right - c.right)] }; });
+        log.push(`${T} approval at 420: ${JSON.stringify(a)}`); must(a.card && Math.abs(a.card[0] - a.card[1]) <= 1 && Math.abs(a.box[0] - a.box[1]) <= 1, `approval: ${JSON.stringify(a)}`); });
+      await step(p, `${T}-down-420`, async () => { await p.setViewportSize({ width: 1440, height: 560 }); await open(p, "Why is the CI build"); await openPanel(p); await p.locator(".tz-scroller").first().evaluate((e) => { e.scrollTop = 0; e.dispatchEvent(new Event("scroll")); }); await p.waitForTimeout(400);
+        const d = await p.evaluate(() => { const m = document.querySelector("main").getBoundingClientRect(), b = document.querySelector("button[aria-label='Jump to the latest']")?.getBoundingClientRect(), t = document.querySelector("[data-msg]").getBoundingClientRect();
+          return b ? { button: Math.round(b.left + b.width / 2 - m.left), text: Math.round(t.left + t.width / 2 - m.left) } : null; });
+        log.push(`${T} way back down at 420: ${JSON.stringify(d)}`); await p.screenshot({ path: `${OUT}/${T}-down-420-shot.png` }); await p.setViewportSize({ width: 1440, height: 900 });
+        must(d && Math.abs(d.button - d.text) <= 1, `way back down: ${JSON.stringify(d)}`); });
+      // shut mid-drag (Ctrl+\): the drag ends where it was, no resize cursor or frozen transitions left behind; a press that
+      // does not move keeps the kept width
+      await step(p, `${T}-shut-mid-drag`, async () => { await drag(p, -40, true); await p.waitForTimeout(60); await p.keyboard.press("Control+Backslash"); await p.waitForTimeout(100); await p.mouse.up(); await p.waitForTimeout(400);
+        const left = await p.evaluate(() => [document.documentElement.classList.contains("tz-sizing"), localStorage.getItem("tazuna.panel-width"), !!document.querySelector("aside[aria-label='The work']")]);
+        await openPanel(p); const h = await p.locator(SEP).boundingBox(); await p.mouse.click(h.x + h.width / 2, 450); await p.waitForTimeout(200); const g = await geo(p);
+        log.push(`${T} shut mid-drag: ${JSON.stringify(left)}, open again ${JSON.stringify(g)}`); must(!left[0] && left[1] === "460" && !left[2] && g.panel === 460 && g.kept === "460", `shut mid-drag: ${JSON.stringify([left, g])}`); });
+      // a drag leaves the focus where it was: typing goes on in the box, and Enter or the arrows do not resize
+      await step(p, `${T}-focus-stays`, async () => { await reset(p); const box = p.getByRole("textbox", { name: "Message" }); await box.click(); await p.keyboard.type("hello");
+        const w0 = (await geo(p)).panel; await drag(p, -40); await p.keyboard.type(" world"); await p.keyboard.press("ArrowLeft");
+        const got = { value: await box.inputValue(), focus: await p.evaluate(() => document.activeElement?.getAttribute("aria-label")), panel: (await geo(p)).panel };
+        log.push(`${T} focus after a drag: ${JSON.stringify(got)} (from ${w0})`); await box.fill("");
+        must(got.value === "hello world" && got.focus === "Message" && got.panel === w0 + 40, `focus after a drag: ${JSON.stringify(got)}`); });
+      // the window left mid-drag (blur) or a move with the button up: the drag ends where it was, the mouse no longer resizes
+      await step(p, `${T}-lost-release`, async () => { await reset(p); const w0 = (await geo(p)).panel; let [x, y] = await drag(p, -40, true); await p.waitForTimeout(60);
+        await p.evaluate(() => window.dispatchEvent(new Event("blur"))); await p.mouse.move(x - 120, y); await p.waitForTimeout(100);
+        const a = [(await geo(p)).panel, await p.evaluate(() => document.documentElement.classList.contains("tz-sizing"))]; await p.mouse.up(); await p.waitForTimeout(250);
+        [x, y] = await drag(p, -24, true); await p.waitForTimeout(60);
+        await p.locator(SEP).evaluate((e, x) => e.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, buttons: 0, pointerId: 1, clientX: x, clientY: 400 })), x - 200); await p.mouse.move(x - 150, y); await p.waitForTimeout(100);
+        const b = [(await geo(p)).panel, await p.evaluate(() => document.documentElement.classList.contains("tz-sizing"))]; await p.mouse.up(); await p.waitForTimeout(250);
+        log.push(`${T} lost release from ${w0}: blur ${a}, buttons up ${b}`); must(a[0] === w0 + 40 && !a[1] && b[0] === w0 + 64 && !b[1], `lost release from ${w0}: ${a} ${b}`); });
+      // a second pointer while one drags starts nothing: the drag goes on from where it began
+      await step(p, `${T}-second-pointer`, async () => { await reset(p); const w0 = (await geo(p)).panel, [x, y] = await drag(p, -20, true); await p.waitForTimeout(60);
+        await p.locator(SEP).evaluate((e, x) => e.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, buttons: 1, pointerId: 7, clientX: x, clientY: 400 })), x + 300);
+        await p.mouse.move(x - 40, y); await p.mouse.up(); await p.waitForTimeout(250); const g = await geo(p);
+        log.push(`${T} second pointer from ${w0}: ${g.panel}`); must(g.panel === w0 - (-40), `second pointer from ${w0}: ${JSON.stringify(g)}`); });
+      // at 260 the Stats switch stands where it stood idle once a reply runs (the live dot keeps its room)
+      await step(p, `${T}-260-stats-live`, async () => { await open(p, "Make the request logger"); await openPanel(p); await p.locator(SEP).focus(); await p.keyboard.press("Home"); await p.locator(SEP).blur(); await p.waitForTimeout(300);
+        const at = () => p.evaluate(() => { const s = document.querySelector("section[aria-label=Stats]"), h = s.firstElementChild, dot = h.querySelector(".text-live-ink");
+          return [Math.round(s.querySelector("[role=radio]").getBoundingClientRect().top), Math.round(h.getBoundingClientRect().height), dot ? getComputedStyle(dot).visibility : "none"]; });
+        const idle = await at(); await p.locator(RAIL).screenshot({ path: `${OUT}/${T}-260-stats-rail-idle.png` });
+        await p.evaluate(() => window.__MOCK__.emit("p6", (v) => ({ ...v, activity: "Thinking", blocks: [...v.blocks, { kind: "prompt", text: "And the README" }] }))); await p.waitForTimeout(500);
+        const live = await at(); await p.locator(RAIL).screenshot({ path: `${OUT}/${T}-260-stats-rail-live.png` });
+        await p.evaluate(() => window.__MOCK__.emit("p6", (v) => v)); await p.waitForTimeout(300);
+        log.push(`${T} 260 Stats switch idle ${idle}, live ${live}`); must(idle[0] === live[0] && idle[1] === live[1] && idle[2] === "hidden" && live[2] === "visible", `260 Stats: idle ${idle}, live ${live}`); });
+      // a smaller window holds the width (the kept one stays, a wider window gives it back)
+      await step(p, `${T}-1372-held`, async () => { await drag(p, -600); await p.setViewportSize({ width: 1372, height: 900 }); await p.waitForTimeout(400); const g = await geo(p);
+        log.push(`${T} 1372 with ${g.kept} kept: ${JSON.stringify(g)}`); must(g.panel === 480 && g.max === 480 && g.kept === "548" && even(g), `1372: ${JSON.stringify(g)}`); });
+      // over the conversation at 1280: as wide as kept, to 45% of the window; its own edge resizes it
+      await step(p, `${T}-1280-over`, async () => { await p.setViewportSize({ width: 1280, height: 860 }); await p.waitForTimeout(400); await openFix(p); await long(p); await p.waitForTimeout(300); await openPanel(p);
+        const g = await geo(p); log.push(`${T} 1280 over: ${JSON.stringify(g)}`); must(g.over && g.panel === 548 && g.max === 576, `1280 over: ${JSON.stringify(g)}`); });
+      await step(p, `${T}-1280-over-drag`, async () => { await drag(p, 200); const g = await geo(p), s = await spill(p); log.push(`${T} 1280 over, dragged: ${JSON.stringify(g)}; spill ${JSON.stringify(s)}`);
+        must(g.over && g.panel === 348 && g.kept === "348" && !s.past.length, `1280 over, dragged: ${JSON.stringify([g, s])}`); });
+      await step(p, `${T}-1280-over-260`, async () => { await p.locator(SEP).focus(); await p.keyboard.press("Home"); await p.waitForTimeout(300); const g = await geo(p), s = await spill(p);
+        log.push(`${T} 1280 over at 260: ${JSON.stringify(g)}; spill ${JSON.stringify(s)}`); must(g.over && g.panel === 260 && s.wide <= 0 && !s.past.length && !s.cut.length, `1280 over 260: ${JSON.stringify([g, s])}`); });
+      log.push(`${T} page errors: ${JSON.stringify(p.errs.slice(0, 5))}`);
+      await ctx.close();
+    }
+    // where scrollbars always show (15 px, as on Windows; set before the app measures, on the root as it comes: WebKit runs
+    // init scripts before there is one): the widest docked panel still leaves the box 580 px
+    { const [ctx, p] = await ctxOf({ theme: "dark", w: 1440, h: 900, extra: AGAIN + ';new MutationObserver((_, o) => { if (document.documentElement) { document.documentElement.style.setProperty("--tz-sbw", "15px"); o.disconnect(); } }).observe(document, { childList: true });' });
+      await step(p, "resize-scrollbars", async () => { await openFix(p); await openPanel(p); await p.locator(SEP).focus(); await p.keyboard.press("End"); await p.waitForTimeout(300);
+        const g = await geo(p), box = await p.evaluate(() => Math.round(document.querySelector("[data-composer]").getBoundingClientRect().width));
+        log.push(`resize scrollbars of 15 px at the most: ${JSON.stringify(g)}, box ${box}`); must(g.max === 533 && g.panel === 533 && box === 580, `scrollbars: ${JSON.stringify(g)} box ${box}`); });
+      await ctx.close(); }
+    if (process.env.ONLY === "resize") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n")); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
+  }
   // Live stats (desktop/DESIGN.md, Motion; ONLY=live: these alone): a call streaming in the mock (the core's `live` estimate
   // every 50 ms: 0.8 s to the first token, then 200 t/s), the composer's strip and the Stats (tiles, rows) caught waiting for
   // the first token, mid-stream, as the call ends and once settled, then the last reply's speed after the reply; both themes,
@@ -594,13 +742,16 @@ const log = [];
         const at = await p.evaluate(() => !!document.activeElement?.closest(".tz-nums")), mode1 = await p.locator("[data-composer] button[aria-haspopup=menu]").first().innerText();
         ok(at && mode0 === mode1, `Shift+Tab with the numbers above: in the strip ${at}, mode ${mode0} → ${mode1}`); await box("shift-tab-above"); await setNumbers(p, "under"); });
       await step(p, `${T}-running-keeps-cost`, async () => {
-        const read = () => p.evaluate(() => { const s = document.querySelector(".tz-nums"), b = [...s.querySelectorAll("button")]; return { text: s.innerText.replace(/\s+/g, " "), ctx: Math.round(b[0].getBoundingClientRect().left), n: b.length }; });
+        const read = () => p.evaluate(() => { const s = document.querySelector(".tz-nums"), b = [...s.querySelectorAll("button")], t = (e) => e.getAttribute("title") ?? e.getAttribute("aria-description") ?? e.getAttribute("aria-label") ?? "";
+          return { text: s.innerText.replace(/\s+/g, " "), ctx: Math.round(b[0].getBoundingClientRect().left), n: b.length, titles: b.map(t) }; });
         await open(p, VIBE); const before = await read();
         // Claude's own models bring no model on a call: no running sum; the finished turns' stays, "so far"
         await p.evaluate(() => window.__MOCK__.emit("p6", (v) => ({ ...v, activity: "Tool", blocks: [...v.blocks, { kind: "prompt", text: "And the README" }],
           calls: [...v.calls, { block: v.blocks.length + 1, fresh: 900, cached: 157000, out: 120, first_ms: 800, tps: 210, total_ms: 1500, role: null }] }))); await p.waitForTimeout(400);
         const during = await read(); log.push(`${T} a reply with no price yet: ${JSON.stringify([before, during])}`);
-        ok(/\$0\.069 so far/.test(during.text) && during.n === before.n + 1 && during.ctx === before.ctx, `the cost during a reply: ${JSON.stringify([before, during])}`);
+        // the speed was there before too (the last reply's average, desktop 0.1.131): the reply's own now, nothing comes or goes
+        ok(/\$0\.069 so far/.test(during.text) && during.n === before.n && during.ctx === before.ctx, `the cost during a reply: ${JSON.stringify([before, during])}`);
+        ok(during.titles.some((x) => x.startsWith("This conversation's cost so far")) && during.titles.at(-1).startsWith("The reply's writing speed"), `the titles during a reply: ${JSON.stringify(during.titles)}`);
         await p.locator(".tz-nums button").last().click(); await p.waitForTimeout(600);
         ok(await p.getByRole("radio", { name: "This turn" }).getAttribute("aria-checked") === "true", "the speed did not open Stats at this turn");
         await p.evaluate(() => document.querySelector("main > header button[data-panel]")?.click()); await p.evaluate(() => window.__MOCK__.emit("p6", (v) => v)); await p.waitForTimeout(400); });
@@ -750,7 +901,8 @@ const log = [];
   // unfolded, its code drawn as code: a read's numbers in a gutter (none in a copy) and its long lines hanging under their
   // indent in the code's column, a printed file (`sed -n 1,40p x.ts` after a cd into a folder of the project, said "in …")
   // and a numbered search coloured by the file's language, an edit and a multi-edit as diffs (rows tinted, changed words
-  // marked, the "updated successfully" hidden), a new file with its numbers, a Python and a YAML read, a cd into the project
+  // marked, numbered from the turn's diff as the review pane numbers the same lines, the "updated successfully" hidden), a
+  // new file with its numbers, a Python and a YAML read, a cd into the project
   // left out; in both themes, under every accent, in the approval card (edit, multi-edit, write), and the review pane on
   // the same rows (a click on a line still comments)
   if (!process.env.ONLY || process.env.ONLY === "steps") {
@@ -761,6 +913,9 @@ const log = [];
     // what a copy of a box takes: its text as selected, the gutters' numbers and signs drawn by CSS left out
     const copied = (el) => el.evaluate((e) => { const s = getSelection(); s.selectAllChildren(e); const t = s.toString(); s.removeAllRanges(); return t; });
     const guts = (el) => el.locator(".tz-gut").evaluateAll((g) => g.map((e) => e.dataset.n).filter(Boolean));
+    // each code row's numbers ("old/new"), its sign and its text: a step's and the review pane's alike (CodeRow)
+    const rowNums = (el) => el.evaluate((e) => [...e.querySelectorAll("div:has(> .tz-gut)")].map((r) => { const g = [...r.querySelectorAll(":scope > .tz-gut")].map((x) => x.dataset.n ?? "");
+      return [g.slice(0, -1).join("/"), g.at(-1), r.querySelector(":scope > span.flex-1")?.textContent ?? ""]; }));
     // the contrast of every coloured text in a diff's tinted rows (their tokens, signs, marked words) against what is under it:
     // the card, the row's tint, a mark's over it, composited in a canvas as the screen does; the lowest, and where
     const lowest = (box) => box.evaluate((root) => {
@@ -782,6 +937,7 @@ const log = [];
     for (const theme of ["dark", "light"]) {
       const T = `steps-${theme[0]}`, [ctx, p] = await ctxOf({ theme, w: 1280, h: 900 });
       const rows = p.locator("[data-msg] button:has(svg.lucide-chevron-right)"), at = (k) => rows.nth(KINDS.indexOf(k) + 1).locator("xpath=../..");
+      const stepRows = []; // the edit's and the multi-edit's numbered rows, for the review pane's
       await step(p, `${T}-unfolded`, async () => {
         await open(p, "Order the summary lines");
         await p.getByRole("button", { name: /^Worked/ }).first().click(); await p.waitForTimeout(300);
@@ -820,6 +976,11 @@ const log = [];
           ok(marked, `${k}: a marked word is not in ink`);
           log.push(`${theme} ${k} lowest contrast on a tinted row ${low.ratio} (${low.what})`);
           if (k === "edit") ok((await box.locator("mark.bg-diff-add-word").innerText()).includes("sortSummaryLines"), "the edit's changed words are not marked");
+          // numbered from the turn's diff (review/mock.js answers the review's op): old on removed and unchanged lines, new on added and unchanged ones
+          const nums = await rowNums(box);
+          const wantNums = k === "edit" ? ["2/", "/2"] : ["174/178", "175/", "/179", "176/180", "2/", "/2", "/3", "/4", "/5", "/6"];
+          ok(JSON.stringify(nums.map((r) => r[0])) === JSON.stringify(wantNums), `${k}: its numbers ${nums.map((r) => r[0])}`);
+          stepRows.push(...nums);
           if (k === "multi-edit") ok(await box.locator(":scope > div").count() === 2, "the multi-edit is not two pieces");
         }
         if (k === "write") {
@@ -888,6 +1049,10 @@ const log = [];
         ok(await pane.locator(".bg-diff-add").count() > 3 && await pane.locator("mark.bg-diff-add-word").count() > 0, "the review's rows lost their tints or marks");
         const first = pane.locator("[role=button][aria-label^='Comment on line']").first();
         ok(!/^\s*\d/.test(await copied(first)), "a copy of the review's line takes its number");
+        // the steps' numbers are the pane's for the same lines
+        const paneRows = await rowNums(pane);
+        for (const [n, sign, text] of stepRows) ok(paneRows.some((r) => r[0] === n && r[1] === sign && r[2] === text), `the step's ${n} ${sign} ${text.slice(0, 40)} is not the review's`);
+        ok(stepRows.length === 12, `the steps' numbered rows: ${stepRows.length}`);
         await first.click(); await p.waitForTimeout(200);
         ok(await pane.locator("textarea").count() === 1, "a click on the review's line wrote no comment");
         await p.screenshot({ path: `${OUT}/${T}-review-pane-comment.png` });
