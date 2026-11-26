@@ -1409,11 +1409,6 @@ fn login_at(url: &str, var: &str) -> Option<&'static Login> {
     LOGINS.iter().find(|l| l.url == url && l.vars.contains(&var)).or_else(|| LOGINS.iter().find(|l| l.url == url))
 }
 
-/// SubRouter's balance in USD, read with an API key (SUBROUTER_API_KEY, else any route key; none set: nothing is
-/// sent), never the account login. Its billing endpoints count in the unit its public status names: on 2026-11-02 that
-/// was CNY at 6.8 to the dollar ((granted - used) / 6.8 matched the account page to the cent); by 2026-11-21 it was USD
-/// (`quota_display_type`), and the same division showed $0.046 for the user's $0.32. So the status decides, and without
-/// it the value stands as the endpoints give it.
 /// The other checked providers of the route `key_env` belongs to, cheapest first, as `TAZUNA_ROUTES` ("url key-env; ...",
 /// only keys that are set): a live own-loop session goes on there when its provider refuses or fails. SubRouter keeps a
 /// route's calls on one provider and does not forward a refusal: a6aa's content filter refused "when were you developed"
@@ -1434,17 +1429,33 @@ pub fn fallbacks(routes: &Path, key_env: &str) -> String {
     String::new()
 }
 
+/// SubRouter's balance in USD, read with an API key (SUBROUTER_API_KEY, else any route key; none set: nothing is
+/// sent), never the account login. Its billing endpoints count in the unit its public status names: on 2026-11-02 that
+/// was CNY at 6.8 to the dollar ((granted - used) / 6.8 matched the account page to the cent); by 2026-11-21 it was USD
+/// (`quota_display_type`), and the same division showed $0.046 for the user's $0.32. So the status decides, and without
+/// it the value stands as the endpoints give it.
 pub fn subrouter_balance() -> Option<f64> {
     let key = key("SUBROUTER_API_KEY")
         .or_else(|| std::env::vars().find(|(k, _)| k.starts_with("SUBROUTER_ROUTE_") && k.ends_with("_KEY")).map(|(_, v)| v))?;
-    let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(15))).build().into();
+    newapi_balance("https://subrouter.ai", &key)
+}
+
+/// What is left on a new-api gateway (SubRouter, TokenRouter) at `host`, in USD, with the key `key`: its billing endpoints
+/// as SubRouter's above. A key without a limit reads 100000000 there (new-api's placeholder for "unlimited"): no reading,
+/// not a balance (TokenRouter, 2026-11-26).
+pub fn newapi_balance(host: &str, key: &str) -> Option<f64> {
+    let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(10))).build().into();
     let get = |path: &str| -> Option<Value> {
-        let mut r = http.get(format!("https://subrouter.ai{path}")).header("Authorization", format!("Bearer {key}")).call().ok()?;
+        let mut r = http.get(format!("{host}{path}")).header("Authorization", format!("Bearer {}", key.trim())).call().ok()?;
         serde_json::from_str(&r.body_mut().read_to_string().ok()?).ok()
     };
-    let granted = get("/v1/dashboard/billing/subscription")?["hard_limit_usd"].as_f64()?;
-    let used = get("/v1/dashboard/billing/usage")?["total_usage"].as_f64()?;
-    Some(in_usd(granted - used / 100.0, &get("/api/status").unwrap_or_default()))
+    newapi_left(&get("/v1/dashboard/billing/subscription")?, &get("/v1/dashboard/billing/usage")?, &get("/api/status").unwrap_or_default())
+}
+
+/// The balance from new-api's subscription (`hard_limit_usd`), usage (`total_usage`, in cents) and status.
+fn newapi_left(sub: &Value, usage: &Value, status: &Value) -> Option<f64> {
+    let granted = sub["hard_limit_usd"].as_f64().filter(|g| *g < 1e7)?;
+    Some(in_usd(granted - usage["total_usage"].as_f64()? / 100.0, status))
 }
 
 /// A SubRouter billing figure in dollars, by the unit its status (`/api/status`) says the figures are in.
@@ -2966,6 +2977,9 @@ mod tests {
         assert!((in_usd(0.315, &usd) - 0.315).abs() < 1e-9, "the user's $0.32 read as $0.046 with the old division");
         assert!((in_usd(6.8, &cny) - 1.0).abs() < 1e-9);
         assert!((in_usd(0.315, &serde_json::json!(null)) - 0.315).abs() < 1e-9, "no status: as the endpoints give it");
+        let used = serde_json::json!({"object": "list", "total_usage": 68.5});
+        assert!((newapi_left(&serde_json::json!({"object": "billing_subscription", "hard_limit_usd": 1.0}), &used, &usd).unwrap() - 0.315).abs() < 1e-9);
+        assert_eq!(newapi_left(&serde_json::json!({"hard_limit_usd": 100000000.0}), &used, &usd), None, "an unlimited key's placeholder is no balance");
     }
 
     #[test]

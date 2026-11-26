@@ -16,6 +16,22 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.231 (2026-11-26): provider balances from their own APIs
+
+More providers say what is left, from their documented endpoints (no measurable metric moves).
+- OpenRouter reads its key (`/api/v1/key`) and the account (`/credits`) and shows whichever runs out first ("over its key
+  limit" when the key's own limit is the one); its free requests a day when that is the plan. Mortera's balance in rupiah
+  with a dollar estimate; Cheaper Inference's (it needs the key's account:read scope, and says so); TokenRouter and
+  SubRouter through one reader that leaves an unlimited key's placeholder out. For anyone with the key: DeepSeek,
+  Moonshot, SiliconFlow, Ollama Cloud, Synthetic, Venice; plan windows marked experimental for MiniMax's Token Plan, Z.ai
+  and Zhipu's Coding Plans and Kimi Code; Qwen Cloud's Token Plan through its own `qwencloud` CLI when installed and
+  signed in (tazuna never runs its login).
+- Each reading is shared by every tazuna process for a minute, read again after a run only for the provider that ran,
+  and kept when a read fails; every row carries its numbers and a state (ok, low, out, over), so the desktop and the
+  terminal no longer read the prose; a plan window counts as low from 75% and out from 90%.
+- The review op takes one file (`path`) and says the project's prefix in its repository, which also fixes a turn's empty
+  diff in a project opened at a subfolder.
+
 ## 0.1.230 (2026-11-26): live numbers for the window; usage over any range
 
 What the desktop's live stats and new usage ranges need from the core (no measurable metric moves).

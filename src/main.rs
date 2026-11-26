@@ -1551,7 +1551,7 @@ fn app_server(a: &Args) -> Result<()> {
     let review_tx = tx.clone();
     // review mode: the question the reviewer has (its request id); a cell, since the view reads it too
     let reviewing = std::cell::RefCell::new(None::<String>);
-    fetch_balance(&tx);
+    fetch_balance(&tx, None);
     // Each desktop conversation has its own process: refresh a stale catalog once an hour, but don't let a fresh
     // public list hide a newly configured provider whose list has never loaded.
     let dir = labels::dir().ok();
@@ -2100,23 +2100,25 @@ fn app_server(a: &Args) -> Result<()> {
                         }
                         // the review: a diff to go through piece by piece, answered as a `review` line. "uncommitted": the
                         // work tree against HEAD; "branch": against where it left the default branch; "turn": one turn's
-                        // changes (its git trees)
+                        // changes (its git trees), with `path` that file alone (a step's line numbers) and the project's
+                        // folder in the repository (`prefix`)
                         Some("review") => {
                             const MAX: usize = 2_000_000;
                             let scope = cmd["scope"].as_str().unwrap_or("uncommitted");
-                            let (text, base) = match scope {
+                            let (text, base, prefix) = match scope {
                                 "branch" => match turns::branch_diff(&cwd, MAX) {
-                                    Ok((b, d)) => (d, Some(b)),
-                                    Err(e) => (String::new(), Some(format!("{e:#}"))),
+                                    Ok((b, d)) => (d, Some(b), None),
+                                    Err(e) => (String::new(), Some(format!("{e:#}")), None),
                                 },
                                 "turn" => {
                                     let t = s.changes.get(cmd["turn"].as_u64().unwrap_or(u64::MAX) as usize);
-                                    (t.map(|t| t.files.iter().map(|f| turns::diff(&cwd, &t.before, &t.after, &f.path, MAX)).collect::<String>()).unwrap_or_default(), None)
+                                    let (text, prefix) = turn_review(&cwd, t, cmd["path"].as_str(), MAX);
+                                    (text, None, Some(prefix))
                                 }
-                                _ => (turns::worktree_diff(&cwd, MAX), None),
+                                _ => (turns::worktree_diff(&cwd, MAX), None, None),
                             };
                             let mut o = out.lock();
-                            let _ = writeln!(o, "{}", json!({"type": "review", "scope": scope, "turn": cmd["turn"], "base": base, "text": text}));
+                            let _ = writeln!(o, "{}", json!({"type": "review", "scope": scope, "turn": cmd["turn"], "path": cmd["path"], "prefix": prefix, "base": base, "text": text}));
                             let _ = o.flush();
                         }
                         // one piece of the review kept out (reverted in the work tree) or staged
@@ -2424,7 +2426,10 @@ fn app_server(a: &Args) -> Result<()> {
                 t.1 = true;
             }
             if e["type"] == "result" && e["tazuna_paid"] == true {
-                fetch_balance(&tx); // a run on SubRouter spent some of it
+                // the run spent some of its provider's credit: that one read again
+                if let Some(p) = s.provider.clone() {
+                    fetch_balance(&tx, Some(p));
+                }
             }
             s.apply(&e, t);
             changed = true;
@@ -3011,6 +3016,18 @@ fn conversation_changes(start: Option<&std::collections::BTreeMap<String, String
     let git: Vec<String> = out.iter().map(|c| c.path.clone()).collect();
     out.extend(ui::written_by_tools(s, &git));
     out
+}
+
+/// One turn's diff for the review: every file, or (`only`, from the project's folder) that one, and the project's folder in
+/// the repository ("pkg/" for a project opened at a subfolder, "" at its root). A turn's paths are the repository's
+/// ("pkg/src/a.ts"); they go to git from the top (from the subfolder they named nothing, and the diff came back empty).
+#[inline(never)]
+fn turn_review(cwd: &std::path::Path, t: Option<&session::Change>, only: Option<&str>, max: usize) -> (String, String) {
+    let prefix = std::process::Command::new("git").args(["rev-parse", "--show-prefix"]).current_dir(cwd).output()
+        .ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim_end().to_string()).unwrap_or_default();
+    let text = t.map(|t| t.files.iter().filter(|f| only.is_none_or(|p| f.path == format!("{prefix}{p}")))
+        .map(|f| turns::diff(cwd, &t.before, &t.after, &format!(":(top,literal){}", f.path), max)).collect()).unwrap_or_default();
+    (text, prefix)
 }
 
 /// A changed file's diff: the tools' own for a file git shows nothing for, else git's.
@@ -3694,7 +3711,7 @@ fn run_live(
     let mut route_on = !a.no_route;
     let mut last_reply = String::new();
     let mut chat_last: Option<ChatLast> = None;
-    fetch_balance(&status_tx);
+    fetch_balance(&status_tx, None);
     // no reading in any session yet (a new install, or a machine that only ran other providers) showed no plan line at
     // all (the Windows PC, 2026-11-08): claude's own /usage page reads it (no model call; a Haiku call until 0.1.174), and
     // it is recorded for the next start
@@ -3962,7 +3979,10 @@ fn run_live(
                 chat_last = live.handed().map(|(q, a)| ChatLast { q, a });
             }
             if e["type"] == "result" && e["tazuna_paid"] == true {
-                fetch_balance(&status_tx); // a run on SubRouter spent some of it
+                // the run spent some of its provider's credit: that one read again
+                if let Some(p) = s.provider.clone() {
+                    fetch_balance(&status_tx, Some(p));
+                }
             }
             // the project's hook after a turn that changed files (hooks.rs): on a thread, at no token cost
             if e["type"] == "result" && let Ok(dir) = std::env::current_dir() && let Some(cmd) = hooks::after_turn(&dir)
@@ -5456,23 +5476,33 @@ fn open_usage(v: &mut ui::View, tx: &std::sync::mpsc::Sender<serde_json::Value>)
     });
 }
 
-/// The keyed providers' readings (SubRouter's balance among them), read on a thread of its own; they arrive through `tx`
-/// for the cost box, which names the account in use and any other that needs you.
-fn fetch_balance(tx: &std::sync::mpsc::Sender<serde_json::Value>) {
+/// The keyed providers' readings (SubRouter's balance among them; `only`: just that provider's, after a run on it), read
+/// on a thread of its own; they arrive through `tx` for the cost box, which names the account in use and any other that
+/// needs you. Every provider after every run asked each one's server each turn, in every conversation (review of the
+/// balances, 2026-11-26).
+#[inline(never)]
+fn fetch_balance(tx: &std::sync::mpsc::Sender<serde_json::Value>, only: Option<String>) {
     let tx = tx.clone();
     std::thread::spawn(move || {
-        let _ = tx.send(json!({"type": "tazuna_credits", "v": accounts::credits()}));
+        let _ = tx.send(json!({"type": "tazuna_credits", "v": accounts::credits(only.as_deref())}));
     });
 }
 
-/// `tazuna_credits` (and /usage's readings): every provider's line into the session, SubRouter's balance as a number too.
+/// `tazuna_credits` (and /usage's readings): each provider's row into the session, replacing that provider's own (a
+/// reading of one provider leaves the others' be): its short line and whether it needs you, as the core decided
+/// (accounts.rs `row`: low, used up, past zero, a key that may not read it); SubRouter's dollars as a number too.
 #[inline(never)]
 fn take_credits(s: &mut Session, credits: &serde_json::Value) {
-    let Some(list) = credits.as_array() else { return };
-    s.credits = list.iter().filter_map(|c| Some((c["provider"].as_str()?.to_string(), c["left"].as_str().map(String::from)))).collect();
-    if let Some(b) = list.iter().find(|c| c["provider"] == "SubRouter").and_then(|c| c["left"].as_str())
-        .and_then(|l| l.trim_start_matches('$').split(' ').next()?.parse::<f64>().ok()) {
-        s.balance = Some(b);
+    for c in credits.as_array().into_iter().flatten() {
+        let Some(p) = c["provider"].as_str() else { continue };
+        let row = (p.to_string(), c["short"].as_str().or(c["left"].as_str()).map(String::from), matches!(c["state"].as_str(), Some("low" | "out" | "over" | "needs_scope")));
+        match s.credits.iter_mut().find(|x| x.0 == p) {
+            Some(x) => *x = row,
+            None => s.credits.push(row),
+        }
+        if p == "SubRouter" && let Some(b) = c["usd_left"].as_f64() {
+            s.balance = Some(b);
+        }
     }
 }
 
@@ -6242,6 +6272,21 @@ fn short_command<'a>(word: &str, commands: &'a [String]) -> Option<&'a String> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn one_providers_reading_replaces_its_own_row_only() {
+        let mut s = crate::session::Session::new("", "medium");
+        super::take_credits(&mut s, &serde_json::json!([
+            {"provider": "SubRouter", "left": "$1,234.50 left", "short": "$1,234.50 left", "usd_left": 1234.5, "state": "ok"},
+            {"provider": "OpenRouter", "left": "$1.25 used this month", "short": "$1.25 this month", "usd_left": null, "state": "unknown"},
+            {"provider": "Mortera", "left": "Rp 797 left (about $0.05)", "short": "Rp 797 left", "usd_left": 0.05, "state": "low"}]));
+        assert_eq!(s.balance, Some(1234.5), "SubRouter's dollars from the number, grouped text or not");
+        assert_eq!(s.credits[1], ("OpenRouter".to_string(), Some("$1.25 this month".to_string()), false), "spent is not low");
+        assert_eq!(s.credits[2], ("Mortera".to_string(), Some("Rp 797 left".to_string()), true), "the short line, and the core's state");
+        // after a run on Mortera only its row comes: the others stay
+        super::take_credits(&mut s, &serde_json::json!([{"provider": "Mortera", "left": "Rp 50,000 left (about $3.07)", "short": "Rp 50,000 left", "usd_left": 3.07, "state": "ok"}]));
+        assert_eq!((s.credits.len(), s.credits[2].2, s.credits[0].1.as_deref()), (3, false, Some("$1,234.50 left")));
+    }
+
+    #[test]
     fn login_finds_a_provider_by_any_of_its_words() {
         let name = |i: usize| if i == 0 { "Claude" } else { crate::models::LOGINS[i - 1].name };
         let names = |f: &str| super::login_shown(f).into_iter().map(name).collect::<Vec<_>>();
@@ -6340,6 +6385,40 @@ mod tests {
         let git = [ui::Changed { path: "sub/x.txt".into(), added: 2, removed: 0, diff: None }];
         let recap = ui::recap(&s, &git).unwrap();
         assert!(recap.contains("1 file changed +2 −0"), "{recap}");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    /// A turn's diff for a project opened at a subfolder: the repository's paths go to git from the top (it came back
+    /// empty), one file alone with `path` (from the folder), and the folder's prefix sent with it.
+    #[test]
+    fn a_turn_diff_from_a_subfolder_one_file_with_its_prefix() {
+        let repo = std::env::temp_dir().join(format!("tazuna-turn-review-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&repo);
+        std::fs::create_dir_all(repo.join("pkg/src")).unwrap();
+        let git = |args: &[&str]| std::process::Command::new("git").args(args).current_dir(&repo).status().is_ok_and(|s| s.success());
+        if !git(&["init", "-q"]) {
+            return; // no git here
+        }
+        let sub = std::fs::canonicalize(repo.join("pkg")).unwrap();
+        for f in ["src/a.ts", "src/b.ts", "my file.ts"] {
+            std::fs::write(sub.join(f), "one\ntwo\n").unwrap();
+        }
+        let before = turns::snapshot(&sub).unwrap();
+        for f in ["src/a.ts", "src/b.ts", "my file.ts"] {
+            std::fs::write(sub.join(f), "one\nTWO\n").unwrap();
+        }
+        let after = turns::snapshot(&sub).unwrap();
+        let t = session::Change { files: turns::files(&sub, &before, &after), before, after, at_block: 0, undone: false };
+        assert_eq!(t.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["pkg/my file.ts", "pkg/src/a.ts", "pkg/src/b.ts"]);
+        let (all, prefix) = turn_review(&sub, Some(&t), None, 100_000);
+        assert_eq!(prefix, "pkg/");
+        assert_eq!(all.matches("diff --git").count(), 3, "{all}");
+        let (one, _) = turn_review(&sub, Some(&t), Some("src/a.ts"), 100_000);
+        assert!(one.contains("+++ b/pkg/src/a.ts") && one.contains("+TWO") && one.matches("diff --git").count() == 1, "{one}");
+        let (spaced, _) = turn_review(&sub, Some(&t), Some("my file.ts"), 100_000);
+        assert!(spaced.contains("+TWO") && spaced.matches("diff --git").count() == 1, "{spaced}");
+        assert_eq!(turn_review(&sub, Some(&t), Some("pkg/src/a.ts"), 100_000).0, "", "a path from the repository's root is not the folder's");
+        assert_eq!(turn_review(&sub, None, Some("src/a.ts"), 100_000), (String::new(), "pkg/".to_string()));
         let _ = std::fs::remove_dir_all(&repo);
     }
 

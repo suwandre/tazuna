@@ -1812,23 +1812,22 @@ fn limits_age(s: &Session) -> String {
 }
 
 /// The cost box's two account rows: the account this session runs on (Claude's plan windows; a provider's balance where
-/// its API tells, "plan" for a subscription), then another only when it needs you (Claude's plan at 80% or more, a
-/// balance under $1 or past its credit). It named Claude and SubRouter always and no other provider (the user,
+/// its API tells, short, "plan" for a subscription), then another only when it needs you (Claude's plan at 80% or more, a
+/// reading the core says needs you: low, used up, past zero, a key that may not read it). It named Claude and SubRouter always and no other provider (the user,
 /// 2026-11-23: "how will users know the current usage remaining of other providers"); every account is in /usage.
 pub fn account_rows(s: &Session, th: &Theme) -> (Line<'static>, Line<'static>) {
     let name = |n: &str| Span::styled(format!("{n} "), st(th.ink2).add_modifier(Modifier::BOLD));
     let on_claude = s.provider.is_none() && s.price_m.is_none();
-    let low = |left: &str| left.contains("over") || left.strip_prefix('$').and_then(|l| l.split(' ').next()?.parse::<f64>().ok()).is_some_and(|x| x < 1.0);
     let first = if on_claude {
         match plan_spans(s, th) {
             Some(plan) => Line::from([vec![name("Claude")], plan].concat()),
             None => Line::from(Span::styled(if s.exact_cost.is_some() && !s.estimated { "exact (reported)" } else { "estimate (list prices)" }, st(th.faint))),
         }
     } else if let Some(p) = &s.provider {
-        let reading = s.credits.iter().find(|(n, _)| n == p).and_then(|(_, l)| l.clone());
+        let reading = s.credits.iter().find(|(n, ..)| n == p).and_then(|(_, l, needs)| Some((l.clone()?, *needs)));
         let plan = crate::models::LOGINS.iter().any(|l| l.name == p && l.plan);
         match reading {
-            Some(left) => Line::from(vec![name(p), Span::styled(left.clone(), st(if low(&left) { th.warn } else { th.dim }))]),
+            Some((left, needs)) => Line::from(vec![name(p), Span::styled(left, st(if needs { th.warn } else { th.dim }))]),
             None => Line::from(vec![name(p), Span::styled(if plan { "plan" } else { "no balance it reports" }, st(th.faint))]),
         }
     } else {
@@ -1838,8 +1837,8 @@ pub fn account_rows(s: &Session, th: &Theme) -> (Line<'static>, Line<'static>) {
     let claude_high = s.limits.filter(|(h5, d7)| !on_claude && (*h5 >= 80.0 || *d7 >= 80.0));
     let second = if let Some(plan) = claude_high.and_then(|_| plan_spans(s, th)) {
         Line::from([vec![name("Claude")], plan].concat())
-    } else if let Some((n, left)) = s.credits.iter().filter(|(n, _)| Some(n) != s.provider.as_ref())
-        .find_map(|(n, l)| l.as_ref().filter(|l| low(l)).map(|l| (n, l))) {
+    } else if let Some((n, left)) = s.credits.iter().filter(|(n, ..)| Some(n) != s.provider.as_ref())
+        .find_map(|(n, l, needs)| l.as_ref().filter(|_| *needs).map(|l| (n, l))) {
         Line::from(vec![name(n), Span::styled(left.clone(), st(th.warn))])
     } else {
         Line::default()
@@ -4384,7 +4383,7 @@ mod tests {
             assert!(want, "design {}", d as u8);
         }
         // on SubRouter, the cockpit says its balance whole
-        (s.provider, s.price_m, s.credits) = (Some("SubRouter".into()), Some((0.1, 0.01, 0.4)), vec![("SubRouter".into(), Some("$8.82 left".into()))]);
+        (s.provider, s.price_m, s.credits) = (Some("SubRouter".into()), Some((0.1, 0.01, 0.4)), vec![("SubRouter".into(), Some("$8.82 left".into()), false)]);
         let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
         term.draw(|f| { draw(f, &s, &v); }).unwrap();
@@ -4873,7 +4872,7 @@ mod tests {
         v.cursor = 0;
         s.cache_ttl_ms = Some(300_000.0);
         s.last_call_ms = Some(0.0);
-        s.credits.push(("other".into(), Some("$0.50".into())));
+        s.credits.push(("other".into(), Some("$0.50".into()), true));
         let (side, _) = render(&s, &v, 120, 34);
         assert!(side.contains("cache life") && side.contains("other $0.50"), "populated optional rows must remain: {side}");
     }
@@ -5153,11 +5152,11 @@ mod tests {
         let text = |l: &Line| l.spans.iter().map(|x| x.content.to_string()).collect::<String>();
         let mut s = Session::new("", "medium");
         s.limits = Some((47.0, 65.0));
-        s.credits = vec![("SubRouter".into(), Some("$5.00 left".into())), ("Mistral".into(), None)];
+        s.credits = vec![("SubRouter".into(), Some("$5.00 left".into()), false), ("Mistral".into(), None, false)];
         let (a, b) = account_rows(&s, th);
         assert!(text(&a).starts_with("Claude 5h 47%") && text(&b).is_empty(), "on Claude: its plan, nothing else needs you");
         (s.provider, s.price_m) = (Some("Qwen Cloud Token Plan".into()), Some((0.0, 0.0, 0.0)));
-        s.credits[0].1 = Some("$0.22 left".into());
+        (s.credits[0].1, s.credits[0].2) = (Some("$0.22 left".into()), true);
         let (a, b) = account_rows(&s, th);
         assert_eq!((text(&a).as_str(), text(&b).as_str()), ("Qwen Cloud Token Plan plan", "SubRouter $0.22 left"), "a plan, and a low balance elsewhere");
         s.provider = Some("SubRouter".into());

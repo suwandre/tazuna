@@ -392,8 +392,9 @@ pub struct Session {
     pub limits_reset: Option<u64>,
     /// SubRouter's balance in USD, where a SubRouter key is set.
     pub balance: Option<f64>,
-    /// Each keyed provider's reading (accounts::credits): its name and what is left, where its API tells.
-    pub credits: Vec<(String, Option<String>)>,
+    /// Each keyed provider's reading (accounts::credits): its name, its short line where its API tells, and whether it
+    /// needs you (the core's state: low, used up, past zero, a key that may not read it).
+    pub credits: Vec<(String, Option<String>, bool)>,
     /// Part of the cost is priced at list rates: a stopped turn reported $0.
     pub estimated: bool,
     /// Time the agent spent working (message to its last token, the tests), summed over finished runs; `run_since`: when
