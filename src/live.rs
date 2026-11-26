@@ -2167,9 +2167,9 @@ impl Live {
             let gave_up = self.runs.front().is_some_and(|r| !r.is_interrupted() && (!success || r.changed_files(&self.cwd).is_empty()));
             if gave_up {
                 self.escalated = true;
-                let plan = self.on_plan();
+                let (plan, lane) = (self.on_plan(), self.provider.as_ref().map(|(u, k)| (crate::models::provider_name(u, k), k.clone())));
                 if let Some(run) = self.runs.front_mut() {
-                    run.escalated(plan);
+                    run.escalated(plan, lane);
                 }
                 let mut out = vec![self.record(json!({"type": "harness_escalate", "model": m, "effort": e}))];
                 self.respawn(m, e);
@@ -2300,9 +2300,9 @@ impl Live {
             if let Some((m, e)) = self.escalate.clone().filter(|_| !self.escalated) {
                 // the cheap lane failed its tests: fix rounds run on the stronger model
                 self.escalated = true;
-                let plan = self.on_plan();
+                let (plan, lane) = (self.on_plan(), self.provider.as_ref().map(|(u, k)| (crate::models::provider_name(u, k), k.clone())));
                 if let Some(run) = self.runs.front_mut() {
-                    run.escalated(plan);
+                    run.escalated(plan, lane);
                 }
                 out.push(self.record(json!({"type": "harness_escalate", "model": m, "effort": e})));
                 self.respawn(m, e);

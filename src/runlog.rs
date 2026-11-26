@@ -39,6 +39,8 @@ pub struct Run {
     pub reviewed: bool,
     /// The independent reviewer's result (`--review-model`), for the run log.
     pub review: Option<Value>,
+    /// The cheaper lane's part of an escalated run (`escalated`).
+    lane: Option<Value>,
 }
 
 pub type SharedBaseline = std::sync::Arc<std::sync::Mutex<Baseline>>;
@@ -85,14 +87,22 @@ impl Run {
             types_before: None,
             reviewed: false,
             review: None,
+            lane: None,
         }
     }
 
-    /// `from_plan`: the cheaper lane ran on a plan's key, so what it cost so far stays apart (`plan_cost_usd`).
-    pub fn escalated(&mut self, from_plan: bool) {
+    /// `from_plan`: the cheaper lane ran on a plan's key, so what it cost so far stays apart (`plan_cost_usd`). `lane`: its
+    /// provider and key variable, logged with its part so far (`lane`: model calls, tokens, cost): the run's own `provider`
+    /// is claude's by the end, and a provider's allowance counted here (accounts.rs) takes the lane's part.
+    pub fn escalated(&mut self, from_plan: bool, lane: Option<(String, String)>) {
         self.escalated = true;
         if from_plan {
             self.plan_cost = self.cost;
+        }
+        if let Some((provider, key_env)) = lane {
+            let sum = |k: usize| self.turns.iter().map(|t| t[k]).sum::<u64>();
+            self.lane = Some(json!({"provider": provider, "key_env": key_env, "turns": self.turns.len(), "cost_usd": (self.cost * 1e6).round() / 1e6,
+                "tokens": {"input": sum(0), "cache_write": sum(1), "cache_read": sum(2), "output": sum(3)}}));
         }
     }
 
@@ -232,6 +242,9 @@ impl Run {
         if self.plan_cost > 0.0 {
             line["plan_cost_usd"] = json!((self.plan_cost * 1e6).round() / 1e6);
         }
+        if let Some(l) = self.lane {
+            line["lane"] = l;
+        }
         line
     }
 }
@@ -349,13 +362,17 @@ mod tests {
         // Mistral Vibe gave up, claude on an API key took over: $0.30 at the plan's reference price is not paid money
         let mut run = Run::new("fix it", 0.0, Path::new("/nonexistent"));
         run.add_cost(0.3);
-        run.escalated(true);
+        run.turns = vec![[100, 0, 50, 10], [200, 0, 150, 20]];
+        run.escalated(true, Some(("Mistral Vibe".into(), "MISTRAL_VIBE_API_KEY".into())));
         run.add_cost(0.5);
+        run.turns.push([1, 2, 3, 4]);
         let line = run.finish(None, 1_000.0, &json!({}), Path::new("/nonexistent"));
         assert_eq!((line["cost_usd"].as_f64(), line["plan_cost_usd"].as_f64(), &line["escalated"]), (Some(0.8), Some(0.3), &json!(true)));
+        assert_eq!(line["lane"], json!({"provider": "Mistral Vibe", "key_env": "MISTRAL_VIBE_API_KEY", "turns": 2, "cost_usd": 0.3,
+            "tokens": {"input": 300, "cache_write": 0, "cache_read": 200, "output": 30}}), "the lane's part, before claude took over");
         let mut paid = Run::new("fix it", 0.0, Path::new("/nonexistent"));
         paid.add_cost(0.3);
-        paid.escalated(false);
+        paid.escalated(false, None);
         assert!(paid.finish(None, 1_000.0, &json!({}), Path::new("/nonexistent")).get("plan_cost_usd").is_none());
     }
 

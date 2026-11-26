@@ -159,27 +159,71 @@ fn get(agent: &ureq::Agent, url: &str, key: &str) -> Option<Value> {
     fetch(agent, url, &format!("Bearer {}", key.trim())).filter(|(s, _)| (200..300).contains(s)).map(|(_, v)| v)
 }
 
-/// Each provider with a key (only `only`, where named: after a run, the provider it ran on): its row (`row`), from the
-/// reading every tazuna process on this machine shares (`cached`: asked once a minute at most). Each reader on a thread of
-/// its own; those not done within 12 s (a reader makes up to three requests of 10 s each, the Qwen CLI two starts) give
-/// their last good row, and finish into the shared reading for the next look. A reading that fails is no reading, never
-/// an error.
+/// Each tracked provider (only `only`, where named: after a run, the provider it ran on), read its chosen way (`track`):
+/// `local` and `console` from files here, the others (`api`, `api_scope`, `cli`) from the reading every tazuna process on
+/// this machine shares (`cached`: asked once a minute at most), each reader on a thread of its own; those not done within
+/// 12 s (a reader makes up to three requests of 10 s each, the Qwen CLI two starts) give their last good row, and finish
+/// into the shared reading for the next look. A reading that fails is no reading, never an error.
 #[inline(never)]
 pub fn credits(only: Option<&str>) -> Vec<Value> {
-    let keyed: Vec<(&'static crate::models::Login, String)> = crate::models::LOGINS.iter()
-        .filter(|l| l.name != "OmniRoute" && only.is_none_or(|o| o == l.name))
-        .filter_map(|l| Some((l, l.vars.iter().find_map(|v| crate::models::key(v))?))).collect();
-    let dir = crate::labels::dir().ok().map(|d| d.join("credits"));
+    credits_in(&usage_conf(usage_file().as_deref()), only)
+}
+
+fn credits_in(conf: &Value, only: Option<&str>) -> Vec<Value> {
+    let base = crate::labels::dir().ok();
+    rows_of(&tracked_in(conf, only, &|v| crate::models::key(v)), conf, base.as_deref(), crate::session::unix_now(), reading)
+}
+
+/// The providers to read: tracked on, with a key where their method needs one (console and local know it by name).
+fn tracked_in(conf: &Value, only: Option<&str>, key: &dyn Fn(&str) -> Option<String>) -> Vec<(&'static crate::models::Login, String, &'static str)> {
+    crate::models::LOGINS.iter().filter(|l| l.name != "OmniRoute" && only.is_none_or(|o| o == l.name)).filter_map(|l| {
+        let key = l.vars.iter().find_map(|v| key(v));
+        let (on, method) = track(l, conf, key.is_some());
+        (on && (key.is_some() || matches!(method, "console" | "local"))).then(|| (l, key.unwrap_or_default(), method))
+    }).collect()
+}
+
+/// The rows of `tracked`, each by its method; `read` is the readers' (`reading`; a stand-in in tests).
+fn rows_of(tracked: &[(&'static crate::models::Login, String, &'static str)], conf: &Value, base: Option<&std::path::Path>, now: u64,
+    read: fn(&crate::models::Login, &str) -> Option<Reading>) -> Vec<Value> {
+    let dir = base.map(|d| d.join("credits"));
+    // the run log only when a provider is counted here
+    let runs = if tracked.iter().any(|t| t.2 == "local") { base.map(crate::labels::runs).unwrap_or_default() } else { vec![] };
     let (tx, rx) = std::sync::mpsc::channel();
-    for (i, (l, key)) in keyed.iter().cloned().enumerate() {
+    for (i, (l, key, method)) in tracked.iter().cloned().enumerate() {
+        if !matches!(method, "api" | "api_scope" | "cli") {
+            continue;
+        }
         let (tx, dir) = (tx.clone(), dir.clone());
         std::thread::spawn(move || {
-            let _ = tx.send((i, cached(dir.as_deref(), l, &key, crate::session::unix_now(), || reading(l, &key))));
+            let _ = tx.send((i, cached(dir.as_deref(), l, &key, crate::session::unix_now(), || read(l, &key))));
         });
     }
     drop(tx);
-    let rows = gather(&rx, keyed.len(), Duration::from_secs(12));
-    keyed.iter().zip(rows).map(|((l, key), r)| r.unwrap_or_else(|| kept_row(&kept(dir.as_deref(), l, key), crate::session::unix_now()).unwrap_or_else(|| row(l, None)))).collect()
+    let got = gather(&rx, tracked.len(), Duration::from_secs(12));
+    // ponytail: no local offset on Windows (the code has no call for it there): its periods start at UTC midnight
+    let off = |t: i64| local_offset(t).unwrap_or(0);
+    tracked.iter().zip(got).map(|((l, key, method), r)| match *method {
+        "local" => local_row(l, allowance_of(conf, l.name).as_ref(), &runs, now as i64, off),
+        "console" => console_row(l, console_reading(base, l, now as i64), now as i64),
+        "api" | "api_scope" | "cli" => r.unwrap_or_else(|| kept_row(&kept(dir.as_deref(), l, key), now).unwrap_or_else(|| row(l, None))),
+        _ => row(l, None),
+    }).collect()
+}
+
+/// The providers with a key whose usage is not read (`track` off): /usage names them in one line.
+fn untracked_in(conf: &Value, key: &dyn Fn(&str) -> Option<String>) -> Vec<&'static str> {
+    crate::models::LOGINS.iter().filter(|l| l.name != "OmniRoute" && l.vars.iter().any(|v| key(v).is_some()) && !track(l, conf, true).0)
+        .map(|l| l.name).collect()
+}
+
+/// The credits alone, read again after a usage choice (not Claude's plan nor OmniRoute): the app server's
+/// `accounts_credits` line, merged into the accounts as `accounts_plan` is; rows and the untracked from one read of the
+/// choices.
+#[inline(never)]
+pub fn credits_reading() -> Value {
+    let conf = usage_conf(usage_file().as_deref());
+    json!({"type": "accounts_credits", "credits": credits_in(&conf, None), "untracked": untracked_in(&conf, &|v| crate::models::key(v))})
 }
 
 /// The rows of `n` readers as they arrive through `rx`, until all are in or `within` has passed: one that is late is None.
@@ -195,9 +239,14 @@ fn gather(rx: &std::sync::mpsc::Receiver<(usize, Value)>, n: usize, within: Dura
 /// The shared reading's file for `l` (under ~/.local/share/tazuna/credits/), and what it holds when it was read with this
 /// key (`kh`, a hash of it: a new key is read again at once); else null.
 fn kept(dir: Option<&std::path::Path>, l: &crate::models::Login, key: &str) -> Value {
-    let Some(f) = dir.map(|d| d.join(format!("{}.json", l.name.replace(|c: char| !c.is_ascii_alphanumeric(), "-")))) else { return Value::Null };
+    let Some(f) = dir.map(|d| d.join(slug(l.name))) else { return Value::Null };
     let v: Value = std::fs::read_to_string(&f).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
     if v["kh"] == key_hash(key) { v } else { Value::Null }
+}
+
+/// A provider's file name: "Qwen Cloud Token Plan" is "Qwen-Cloud-Token-Plan.json".
+fn slug(name: &str) -> String {
+    format!("{}.json", name.replace(|c: char| !c.is_ascii_alphanumeric(), "-"))
 }
 
 fn key_hash(key: &str) -> String {
@@ -221,7 +270,7 @@ fn cached(dir: Option<&std::path::Path>, l: &crate::models::Login, key: &str, no
     if k["at"].as_u64().is_some_and(|at| now.saturating_sub(at) < 60) && k["row"].is_object() {
         return k["row"].clone();
     }
-    let file = dir.map(|d| d.join(format!("{}.json", l.name.replace(|c: char| !c.is_ascii_alphanumeric(), "-"))));
+    let file = dir.map(|d| d.join(slug(l.name)));
     // written whole and moved into place: another process never reads half a file
     let save = |v: &Value| if let Some(f) = &file {
         let tmp = f.with_extension(format!("{}.tmp", std::process::id()));
@@ -554,14 +603,21 @@ fn kimi(v: &Value) -> Option<Reading> {
 /// the CLI is signed in to (`qwencloud auth status`; it may not be the one the key belongs to, so the row names it). Only
 /// when the CLI is on PATH and signed in: tazuna never signs it in, nor reads its credentials.
 fn qwencloud_usage() -> Option<(Option<String>, Value)> {
-    // tests never start the user's CLI
-    if cfg!(test) || !crate::platform::on_path("qwencloud", &std::env::var_os("PATH").unwrap_or_default()) {
-        return None;
-    }
-    let status = cli_json("qwencloud", &["auth", "status", "--format", "json"], 5).filter(|s| s["authenticated"] == true)?;
-    let account = ["account", "email", "username", "user", "accountName"].iter().find_map(|k| status[*k].as_str()).or(status["user"]["email"].as_str()).map(String::from);
+    let account = qwencloud_signed_in().ok()?;
     Some((account, cli_json("qwencloud", &["usage", "summary", "--format", "json"], 8)?))
 }
+
+/// The account Qwen's CLI is signed in to (`qwencloud auth status`), or why it cannot read: not installed, not signed in.
+fn qwencloud_signed_in() -> Result<Option<String>, &'static str> {
+    // tests never start the user's CLI
+    if cfg!(test) || !crate::platform::on_path("qwencloud", &std::env::var_os("PATH").unwrap_or_default()) {
+        return Err(CLI_MISSING);
+    }
+    let status = cli_json("qwencloud", &["auth", "status", "--format", "json"], 5).filter(|s| s["authenticated"] == true).ok_or("Qwen's CLI is not signed in: qwencloud auth login")?;
+    Ok(["account", "email", "username", "user", "accountName"].iter().find_map(|k| status[*k].as_str()).or(status["user"]["email"].as_str()).map(String::from))
+}
+
+const CLI_MISSING: &str = "Qwen's CLI is not installed";
 
 /// Its Token Plan (`token_plan`: `remainingCredits` of `totalCredits`, shown at the precision given; `usedPct`;
 /// `resetDate`). None when not subscribed.
@@ -615,9 +671,10 @@ pub fn all() -> Value {
 /// ask other servers and take as long again, and the plan is what a refresh is looked at for. The three are read at once,
 /// so the whole takes as long as the slowest, not their sum.
 pub fn all_then(early: impl FnOnce(&Value)) -> Value {
+    let conf = usage_conf(usage_file().as_deref());
     std::thread::scope(|s| {
         // claude's login read again too (the pickers' Claude rows follow it)
-        let (c, o, _) = (s.spawn(|| credits(None)), s.spawn(omniroute), s.spawn(refresh_claude_login));
+        let (c, o, _) = (s.spawn(|| credits_in(&conf, None)), s.spawn(omniroute), s.spawn(refresh_claude_login));
         let plan = claude_plan();
         let mut v = json!({
             "plan": plan.as_ref().map(|(rows, _)| rows.iter().map(|r| json!({"label": r.label, "used": r.used, "resets": r.resets})).collect::<Vec<_>>()),
@@ -626,8 +683,440 @@ pub fn all_then(early: impl FnOnce(&Value)) -> Value {
         early(&v);
         v["credits"] = json!(c.join().unwrap_or_default());
         v["omniroute"] = json!(o.join().unwrap_or_default());
+        // the keyed providers whose usage is not read: /usage names them
+        v["untracked"] = json!(untracked_in(&conf, &|v| crate::models::key(v)));
         v
     })
+}
+
+// Usage sources (2026-11-26): which providers' usage is read, and how; the user chooses on the settings page
+// (out/review-14/usage-sources-spec.md).
+
+/// The providers whose documented endpoint `reading` reads with their key alone.
+const API: [&str; 16] = ["SubRouter", "TokenRouter", "OpenRouter", "Mortera", "DeepSeek", "Moonshot", "SiliconFlow", "SiliconFlow China", "Ollama Cloud",
+    "Synthetic", "Venice", "MiniMax Plan", "Z.ai Coding Plan", "Zhipu Coding Plan", "Kimi Code", "Kimi Code China"];
+
+/// Where Qwen's CLI is documented.
+const QWENCLOUD_CLI: &str = "https://github.com/QwenCloud/qwencloud-cli";
+
+/// The ways tazuna can read a provider's usage, best first: `api` (its documented endpoint, `reading`), `api_scope` (the
+/// same once the key may read the account: Cheaper Inference's account:read), `admin_key` (Mistral's API tells this
+/// month's spend only, to an Admin key: not read), `cli` (Qwen's official CLI), `console` (what the desktop's console
+/// reader wrote), `local` (tazuna's own use against an allowance the user sets: any provider), and `none` where nothing
+/// reads it automatically (its page).
+pub fn methods(name: &str) -> Vec<&'static str> {
+    let own: &[&'static str] = match name {
+        "Cheaper Inference" => &["api_scope"],
+        "Qwen Cloud Token Plan" => &["cli", "console"],
+        "Mistral" => &["admin_key"],
+        "Mistral Vibe" => &["admin_key", "console"],
+        "Caffeine" => &["console"],
+        n if API.contains(&n) => &["api"],
+        _ => &[],
+    };
+    let mut m = own.to_vec();
+    m.push("local");
+    if !own.iter().any(|x| matches!(*x, "api" | "api_scope" | "cli" | "console")) {
+        m.push("none");
+    }
+    m
+}
+
+/// A method's steps in plain words (what tazuna does, what the user does) and the page they need.
+fn steps(l: &crate::models::Login, method: &str) -> (String, &'static str) {
+    let n = l.name;
+    match method {
+        "api" => (format!("tazuna reads it from {n}'s API with your key, at most once a minute. Nothing to do once the key is saved."), l.page),
+        "api_scope" => (format!("tazuna reads it from {n}'s API once the key may read the account: turn on account:read for this key on its dashboard, then check again."), l.page),
+        "admin_key" => (format!("{n}'s API tells only this month's spend, and only to an Admin key; tazuna does not read it. Count it here instead, or look on its console."), l.page),
+        "cli" => ("Install Qwen's CLI: npm install -g @qwencloud/qwencloud-cli, then sign in with qwencloud auth login. tazuna reads `qwencloud usage summary`.".into(), QWENCLOUD_CLI),
+        "console" => (format!("Sign in to {n}'s console once in tazuna's own window (Sign in…); tazuna reads its usage page there, at most every 15 minutes. Experimental: automated reading may break the provider's terms; your own account."), l.page),
+        "local" => (format!("tazuna counts its own use of {n} against an allowance you enter (amount, unit, period). Use through other apps is not counted."), l.page),
+        _ => (format!("{n} offers no way to read its usage: see its page."), l.page),
+    }
+}
+
+/// The user's choices: ~/.config/tazuna/usage.json, `{"track": {provider: {"on", "method"}}, "allowance": {provider:
+/// {"amount", "unit", "period", "reset"}}}`, beside the spend cap; a provider not in it takes the default (`track`).
+fn usage_file() -> Option<std::path::PathBuf> {
+    crate::platform::home().map(|h| h.join(".config/tazuna/usage.json"))
+}
+
+fn usage_conf(file: Option<&std::path::Path>) -> Value {
+    file.and_then(|f| std::fs::read_to_string(f).ok()).and_then(|t| serde_json::from_str::<Value>(&t).ok()).filter(Value::is_object).unwrap_or_else(|| json!({}))
+}
+
+/// Whether `l`'s usage is read, and how: the user's choice where its method is one of `l`'s and can be on; else on, by
+/// its endpoint or Qwen's CLI, for a provider with a key (as before tracking), off for the rest; the method then its first
+/// that reads (never `admin_key` or `none`).
+fn track(l: &crate::models::Login, conf: &Value, has_key: bool) -> (bool, &'static str) {
+    let ms = methods(l.name);
+    let t = &conf["track"][l.name];
+    if let (Some(on), Some(m)) = (t["on"].as_bool(), t["method"].as_str().and_then(|m| ms.iter().find(|x| **x == m))) {
+        return (on && !matches!(*m, "admin_key" | "none"), m);
+    }
+    let first = ms.iter().copied().find(|m| !matches!(*m, "admin_key" | "none")).unwrap_or("local");
+    (has_key && matches!(first, "api" | "api_scope" | "cli"), first)
+}
+
+/// An allowance checked: `amount` above 0, `unit` tokens|usd|requests, `period` day|week|month, `reset` the weekday it
+/// starts (0 Sunday to 6) for a week, the day of the month (1 to 31; a shorter month resets on its last) for a month, null
+/// for a day.
+pub fn allowance(v: &Value) -> Result<Value, &'static str> {
+    let amount = v["amount"].as_f64().filter(|a| a.is_finite() && *a > 0.0 && *a <= 1e15).ok_or("the amount is a number above 0, at most 1e15")?;
+    let unit = ["tokens", "usd", "requests"].into_iter().find(|u| v["unit"] == *u).ok_or("the unit is tokens, usd or requests")?;
+    let period = ["day", "week", "month"].into_iter().find(|p| v["period"] == *p).ok_or("the period is day, week or month")?;
+    let reset = match period {
+        "day" => Value::Null,
+        "week" => json!(v["reset"].as_u64().filter(|r| *r <= 6).ok_or("a week resets on a weekday, 0 (Sunday) to 6")?),
+        _ => json!(v["reset"].as_u64().filter(|r| (1..=31).contains(r)).ok_or("a month resets on a day from 1 to 31")?),
+    };
+    Ok(json!({"amount": amount, "unit": unit, "period": period, "reset": reset}))
+}
+
+fn allowance_of(conf: &Value, name: &str) -> Option<Value> {
+    allowance(&conf["allowance"][name]).ok()
+}
+
+/// A provider usage can be set for: in LOGINS, not OmniRoute (its accounts have their own section).
+fn usage_login(name: &str) -> Result<&'static crate::models::Login, String> {
+    crate::models::LOGINS.iter().find(|l| l.name == name && l.name != "OmniRoute").ok_or_else(|| format!("no provider named {name}"))
+}
+
+/// `{"provider", "on", "method"}` into the choices.
+fn track_edit(conf: &mut Value, cmd: &Value) -> Result<(), String> {
+    let l = usage_login(cmd["provider"].as_str().unwrap_or_default())?;
+    let on = cmd["on"].as_bool().ok_or("on is true or false")?;
+    let method = cmd["method"].as_str().filter(|m| methods(l.name).contains(m)).ok_or_else(|| format!("{} has no method {}", l.name, cmd["method"]))?;
+    if on && matches!(method, "none" | "admin_key") {
+        return Err(format!("{} cannot be read that way: choose another method", l.name));
+    }
+    conf["track"][l.name] = json!({"on": on, "method": method});
+    Ok(())
+}
+
+/// `{"provider", "allowance": {...} | null}` into the choices (null: none).
+fn allowance_edit(conf: &mut Value, cmd: &Value) -> Result<(), String> {
+    let l = usage_login(cmd["provider"].as_str().unwrap_or_default())?;
+    match &cmd["allowance"] {
+        Value::Null => {
+            conf["allowance"].as_object_mut().map(|m| m.shift_remove(l.name));
+        }
+        a => conf["allowance"][l.name] = allowance(a)?,
+    }
+    Ok(())
+}
+
+/// The choices read, edited by `edit` and written whole (moved into place: another process never reads half of it), under
+/// a lock file (`usage.json.lock`, made only when absent: one writer at a time; one left over 10 s is a crashed writer's).
+/// A file that is there but not a JSON object is never written over (it may hold the user's allowances): an error to show.
+/// A `track` or `allowance` that is not an object (a hand edit) starts empty.
+fn edit_conf(file: Option<&std::path::Path>, edit: impl FnOnce(&mut Value) -> Result<(), String>) -> Result<(), String> {
+    let f = file.ok_or("no home folder")?;
+    std::fs::create_dir_all(f.parent().unwrap_or(f)).map_err(|e| format!("the choice was not saved: {e}"))?;
+    let lock = f.with_extension("json.lock");
+    let mut tries = 0;
+    while std::fs::OpenOptions::new().write(true).create_new(true).open(&lock).is_err() {
+        let old = std::fs::metadata(&lock).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|e| e > Duration::from_secs(10));
+        if old {
+            let _ = std::fs::remove_file(&lock);
+        } else if tries >= 40 {
+            return Err("the choice was not saved: another tazuna is saving one; try again".into());
+        } else {
+            tries += 1;
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+    let done = (|| {
+        let mut conf = match std::fs::read_to_string(f) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
+            Err(e) => return Err(format!("the choice was not saved: {e}")),
+            Ok(t) => serde_json::from_str::<Value>(&t).ok().filter(Value::is_object)
+                .ok_or_else(|| format!("the choice was not saved: {} is not valid JSON; fix or delete it", f.display()))?,
+        };
+        for k in ["track", "allowance"] {
+            if !conf[k].is_object() {
+                conf[k] = json!({});
+            }
+        }
+        edit(&mut conf)?;
+        let tmp = f.with_extension(format!("{}.tmp", std::process::id()));
+        std::fs::write(&tmp, serde_json::to_string_pretty(&conf).unwrap_or_default()).and_then(|_| std::fs::rename(&tmp, f))
+            .map_err(|e| format!("the choice was not saved: {e}"))
+    })();
+    let _ = std::fs::remove_file(&lock);
+    done
+}
+
+/// The app server's `usage_track` (whether to read a provider's usage, and how) and `usage_allowance` (its allowance for
+/// local counting, or none): saved on the event loop, in the order they came; None for another op.
+#[inline(never)]
+pub fn usage_save(cmd: &Value) -> Option<Result<(), String>> {
+    usage_save_in(cmd, usage_file().as_deref())
+}
+
+fn usage_save_in(cmd: &Value, file: Option<&std::path::Path>) -> Option<Result<(), String>> {
+    match cmd["op"].as_str() {
+        Some("usage_track") => Some(edit_conf(file, |c| track_edit(c, cmd))),
+        Some("usage_allowance") => Some(edit_conf(file, |c| allowance_edit(c, cmd))),
+        _ => None,
+    }
+}
+
+/// `/usage track <provider>` (any case): read with its first method that can read now, else its first that reads at all.
+/// Quick enough for the screen's thread: the CLI is looked for on PATH, not started.
+#[inline(never)]
+pub fn track_by_name(name: &str) -> Result<String, String> {
+    let cli = if crate::platform::on_path("qwencloud", &std::env::var_os("PATH").unwrap_or_default()) { Ok(None) } else { Err(CLI_MISSING) };
+    track_by_name_in(name, usage_file().as_deref(), crate::labels::dir().ok().as_deref(), &|v| crate::models::key(v), &cli)
+}
+
+fn track_by_name_in(name: &str, file: Option<&std::path::Path>, base: Option<&std::path::Path>, key: &dyn Fn(&str) -> Option<String>,
+    cli: &Result<Option<String>, &'static str>) -> Result<String, String> {
+    let l = crate::models::LOGINS.iter().find(|l| l.name.eq_ignore_ascii_case(name.trim()) && l.name != "OmniRoute").ok_or_else(|| format!("no provider named {}", name.trim()))?;
+    let conf = usage_conf(file);
+    let k = l.vars.iter().find_map(|v| key(v));
+    let ms: Vec<&str> = methods(l.name).into_iter().filter(|m| !matches!(*m, "admin_key" | "none")).collect();
+    let method = ms.iter().find(|m| why_not(l, m, k.as_deref(), &conf, base, cli).is_none()).or(ms.first()).copied().unwrap_or("local");
+    edit_conf(file, |c| track_edit(c, &json!({"provider": l.name, "on": true, "method": method})))?;
+    let wait = if k.is_none() && !matches!(method, "console" | "local") { ", once it has a key" } else { "" };
+    Ok(format!("usage: {} tracked ({method}){wait}", l.name))
+}
+
+/// Why `method` cannot read `l`'s usage now; None: it can. `cli` is Qwen's CLI as `qwencloud_signed_in` found it.
+fn why_not(l: &crate::models::Login, method: &str, key: Option<&str>, conf: &Value, base: Option<&std::path::Path>, cli: &Result<Option<String>, &'static str>) -> Option<String> {
+    match method {
+        "api" | "api_scope" if key.is_none() => Some("no key saved".into()),
+        // the last reading said the key may not read the account
+        "api_scope" => (kept_row(&kept(base.map(|b| b.join("credits")).as_deref(), l, key.unwrap_or_default()), crate::session::unix_now()).is_some_and(|r| r["state"] == "needs_scope"))
+            .then(|| "this key may not read the account: turn on account:read".into()),
+        "api" => None,
+        "cli" => cli.as_ref().err().map(|e| e.to_string()),
+        "console" => match console_reading(base, l, crate::session::unix_now() as i64) {
+            None => Some("not signed in yet: Sign in…".into()),
+            Some(Err(())) => Some("its console reading is not valid".into()),
+            Some(Ok(c)) if c["status"] == "signed_out" => Some("signed out: sign in again".into()),
+            Some(Ok(c)) if c["status"] == "error" => Some("the last reading failed".into()),
+            Some(Ok(_)) => None,
+        },
+        "local" => allowance_of(conf, l.name).is_none().then(|| "no allowance set".into()),
+        "admin_key" => Some("tazuna does not read Admin keys".into()),
+        _ => Some("nothing reads it".into()),
+    }
+}
+
+/// The settings page's usage lines (the app server's `usage_sources`): each provider, whether it has a key, its methods
+/// with their steps, link and whether each can read now (`ready`, else `why`), what is tracked, its allowance. Starts
+/// Qwen's CLI once when it is installed (up to 5 s): off the event loop.
+#[inline(never)]
+pub fn sources() -> Value {
+    sources_in(&usage_conf(usage_file().as_deref()), crate::labels::dir().ok().as_deref(), &|v| crate::models::key(v), &qwencloud_signed_in())
+}
+
+fn sources_in(conf: &Value, base: Option<&std::path::Path>, key: &dyn Fn(&str) -> Option<String>, cli: &Result<Option<String>, &'static str>) -> Value {
+    let providers: Vec<Value> = crate::models::LOGINS.iter().filter(|l| l.name != "OmniRoute").map(|l| {
+        let k = l.vars.iter().find_map(|v| key(v));
+        let methods: Vec<Value> = methods(l.name).into_iter().map(|m| {
+            let ((steps, link), why) = (steps(l, m), why_not(l, m, k.as_deref(), conf, base, cli));
+            json!({"id": m, "steps": steps, "link": link, "ready": why.is_none(), "why": why})
+        }).collect();
+        let (on, method) = track(l, conf, k.is_some());
+        json!({"provider": l.name, "has_key": k.is_some(), "methods": methods, "track": {"on": on, "method": method}, "allowance": allowance_of(conf, l.name)})
+    }).collect();
+    json!({"type": "usage_sources", "providers": providers})
+}
+
+/// The allowance's current period: (start, next reset) in seconds since 1970, each at local midnight. `off` is the zone's
+/// offset from UTC at an instant; midnight is placed by the offset at midnight itself (found in two steps), so the day
+/// after a DST change starts at its own midnight, not an hour off.
+fn period(a: &Value, now: i64, off: impl Fn(i64) -> i64) -> (i64, i64) {
+    let today = (now + off(now)).div_euclid(86_400);
+    let reset = a["reset"].as_i64().unwrap_or(1);
+    let (from, to) = match a["period"].as_str() {
+        Some("week") => {
+            // 1970-01-01 was a Thursday (4)
+            let back = ((today + 4).rem_euclid(7) - reset).rem_euclid(7);
+            (today - back, today - back + 7)
+        }
+        Some("month") => {
+            // the reset day, or the month's last where it is shorter
+            let next = |y: i64, m: i64| if m == 12 { (y + 1, 1) } else { (y, m + 1) };
+            let on = |y: i64, m: i64| {
+                let (ny, nm) = next(y, m);
+                days_from_civil(y, m, 1) + reset.min(days_from_civil(ny, nm, 1) - days_from_civil(y, m, 1)) - 1
+            };
+            let (y, m, _) = civil(today);
+            let (y, m) = if today >= on(y, m) { (y, m) } else if m == 1 { (y - 1, 12) } else { (y, m - 1) };
+            let (ny, nm) = next(y, m);
+            (on(y, m), on(ny, nm))
+        }
+        _ => (today, today + 1),
+    };
+    let midnight = |day: i64| {
+        let t = day * 86_400;
+        t - off(t - off(t))
+    };
+    (midnight(from), midnight(to))
+}
+
+/// A run's provider and key variable (its `meta`, or an escalated run's `lane`) are `l`'s, as start_pick matches them.
+fn ran_on(l: &crate::models::Login, m: &Value) -> bool {
+    let (p, var) = (m["provider"].as_str().unwrap_or_default(), m["key_env"].as_str().unwrap_or_default());
+    // logged as "Mistral" before Mistral Vibe was a provider (0.1.198): the Vibe key, as start_pick takes it
+    let p = if var.is_empty() && p == "Mistral" { "Mistral Vibe" } else { p };
+    p == l.name && (var.is_empty() || l.vars.contains(&var))
+}
+
+/// `l`'s part of a run in `unit`: the whole run on it (less the independent reviewer's cost, another model's), or the
+/// cheaper lane's part of a run that went on to claude (`lane`, runlog.rs); else 0.
+fn use_of(l: &crate::models::Login, r: &Value, unit: &str) -> f64 {
+    let part = if ran_on(l, &r["meta"]) { r } else if ran_on(l, &r["lane"]) { &r["lane"] } else { return 0.0 };
+    match unit {
+        "usd" => num(&part["cost_usd"]).unwrap_or(0.0) - if std::ptr::eq(part, r) { num(&r["review"]["cost_usd"]).unwrap_or(0.0) } else { 0.0 },
+        "requests" => part["turns"].as_f64().unwrap_or(0.0),
+        _ => ["input", "cache_write", "output"].iter().filter_map(|k| part["tokens"][*k].as_f64()).sum(),
+    }
+}
+
+/// The meters' limits (desktop byPct): 90% used is out, 75% low.
+fn by_pct(used: f64) -> &'static str {
+    if used >= 90.0 { "out" } else if used >= 75.0 { "low" } else { "ok" }
+}
+
+/// `l`'s row counted here: its allowance less tazuna's own use of it this period, from the run log. Tokens are what the
+/// provider bills in full: input, cache writes and output; cache reads are left out (billed at a tenth or less, where at
+/// all: a long session re-reads millions). usd is the run's logged cost; requests its model calls (`turns`: one per call).
+/// ponytail: tazuna's own use on this machine only (not other apps, other machines, nor the explorer's calls), and a plan's
+/// own way of counting (cache reads, credits) is not modelled.
+fn local_row(l: &crate::models::Login, a: Option<&Value>, runs: &[Value], now: i64, off: impl Fn(i64) -> i64) -> Value {
+    let Some(a) = a else {
+        return row(l, Some(Reading { left: "no allowance set: Settings › Providers".into(), short: "no allowance".into(), ..Default::default() }));
+    };
+    let (from, to) = period(a, now, off);
+    let (total, unit) = (a["amount"].as_f64().unwrap_or(1.0), a["unit"].as_str().unwrap_or("tokens"));
+    let used: f64 = runs.iter().filter(|r| r["ts"].as_i64().is_some_and(|t| t >= from && t <= now)).map(|r| use_of(l, r, unit)).sum();
+    let pct = used / total * 100.0;
+    let left = (100.0 - pct).max(0.0);
+    let of = match unit { "usd" => amount("USD", total), "requests" => format!("{} requests", grouped(total)), _ => format!("{} tokens", grouped(total)) };
+    let name = match a["period"].as_str() { Some("day") => "daily", Some("week") => "weekly", _ => "monthly" };
+    row(l, Some(Reading {
+        left: format!("≈ {left:.0}% left of {of} (use through tazuna on this machine)"),
+        short: format!("≈ {left:.0}% left"),
+        windows: vec![window(name, pct, Some(iso_ms(to as f64 * 1000.0)))],
+        money: (unit == "usd").then_some((total - used, "USD")),
+        state: Some(by_pct(pct)),
+        ..Default::default()
+    }))
+}
+
+/// What the desktop's console reader last wrote for `l`: ~/.local/share/tazuna/console/<name>.json, the name as the shared
+/// readings' ("Qwen-Cloud-Token-Plan.json"). None: no file; Err: not valid.
+fn console_reading(base: Option<&std::path::Path>, l: &crate::models::Login, now: i64) -> Option<Result<Value, ()>> {
+    use std::io::Read;
+    let f = Some(base?.join("console").join(slug(l.name))).filter(|f| f.is_file())?;
+    let mut text = String::new();
+    let read = std::fs::File::open(f).and_then(|f| f.take(CONSOLE_MAX as u64 + 1).read_to_string(&mut text));
+    Some(read.ok().and_then(|_| console_check(&text, now)).ok_or(()))
+}
+
+/// A console reading's file is at most this long.
+const CONSOLE_MAX: usize = 4096;
+
+/// A console reading checked strictly, as data from a web page: `at` (seconds, not in the future), `status`
+/// ok|signed_out|error, `source` "console", and when ok `numbers`: `unit` usd|tokens|credits|percent, `left`, `total`,
+/// `used_pct` each a finite number or null (total above 0, used 0 to 1000%), `resets` an ISO time or seconds or null. What
+/// comes back is only these, rebuilt: nothing else of the file is shown or used.
+fn console_check(text: &str, now: i64) -> Option<Value> {
+    if text.len() > CONSOLE_MAX {
+        return None;
+    }
+    let v: Value = serde_json::from_str(text).ok()?;
+    let at = v["at"].as_f64().filter(|a| a.is_finite() && *a >= 1e9 && *a <= (now + 300) as f64)? as i64;
+    let status = ["ok", "signed_out", "error"].into_iter().find(|s| v["status"] == *s)?;
+    if v["source"] != "console" {
+        return None;
+    }
+    if status != "ok" {
+        return Some(json!({"at": at, "status": status}));
+    }
+    let n = &v["numbers"];
+    let unit = ["usd", "tokens", "credits", "percent"].into_iter().find(|u| n["unit"] == *u)?;
+    let opt = |k: &str| match &n[k] {
+        Value::Null => Some(None),
+        x => x.as_f64().filter(|f| f.is_finite() && f.abs() < 1e15).map(Some),
+    };
+    let (left, total, used) = (opt("left")?, opt("total")?, opt("used_pct")?);
+    if total.is_some_and(|t| t <= 0.0) || used.is_some_and(|u| !(0.0..=1000.0).contains(&u)) {
+        return None;
+    }
+    let secs = match &n["resets"] {
+        Value::Null => None,
+        Value::String(s) if s.len() <= 40 => Some(iso_secs(s)?),
+        x @ Value::Number(_) => Some(x.as_f64().filter(|s| s.is_finite())? as i64),
+        _ => return None,
+    };
+    let resets = match secs {
+        Some(s) if (1_000_000_000..10_000_000_000).contains(&s) => Some(iso_ms(s as f64 * 1000.0)),
+        Some(_) => return None,
+        None => None,
+    };
+    Some(json!({"at": at, "status": status, "numbers": {"unit": unit, "left": left, "total": total, "used_pct": used, "resets": resets}}))
+}
+
+/// "4 min ago", "3 h ago", "2 d ago".
+fn ago(at: i64, now: i64) -> String {
+    let m = (now - at).max(0) / 60;
+    if m < 60 { format!("{m} min ago") } else if m < 1440 { format!("{} h ago", m / 60) } else { format!("{} d ago", m / 1440) }
+}
+
+/// `l`'s row from its console reading (`console_reading`): "$4.20 left of $10.00 from its console", the state by the
+/// meters' limits where a share used is known (else by the money, as an API's); over an hour old it is unknown, and says
+/// when it was read.
+fn console_row(l: &crate::models::Login, c: Option<Result<Value, ()>>, now: i64) -> Value {
+    let say = |left: String, short: &str| row(l, Some(Reading { left, short: short.into(), ..Default::default() }));
+    let c = match c {
+        None => return say("not read yet: sign in to its console in Settings".into(), "not signed in"),
+        Some(Err(())) => return say("its console reading is not valid".into(), "unreadable"),
+        Some(Ok(c)) => c,
+    };
+    let at = c["at"].as_i64().unwrap_or(0);
+    match c["status"].as_str() {
+        Some("signed_out") => return say("sign in again in Settings".into(), "sign in again"),
+        Some("error") => return say(format!("its console could not be read ({})", ago(at, now)), "console failed"),
+        _ => {}
+    }
+    let n = &c["numbers"];
+    let (left, total, unit) = (n["left"].as_f64(), n["total"].as_f64(), n["unit"].as_str().unwrap_or_default());
+    let used = n["used_pct"].as_f64().or_else(|| Some((1.0 - left? / total?) * 100.0)).or_else(|| (unit == "percent").then_some(100.0 - left?));
+    let text = match (unit, left, total) {
+        ("usd", Some(x), _) if x < 0.0 => format!("{} below zero", amount("USD", x)),
+        ("usd", Some(x), Some(t)) => format!("{} left of {}", amount("USD", x), amount("USD", t)),
+        ("usd", Some(x), None) => format!("{} left", amount("USD", x)),
+        ("percent", Some(x), _) => format!("{x:.0}% left"),
+        (u, Some(x), Some(t)) => format!("{} of {} {u} left", grouped(x), grouped(t)),
+        (u, Some(x), None) => format!("{} {u} left", grouped(x)),
+        (_, None, _) => match used {
+            Some(u) => format!("{u:.0}% used"),
+            None => return say("its console gave no numbers".into(), "no numbers"),
+        },
+    };
+    // over an hour old: no numbers to decide by (the window's meters and alerts read max_used_pct and the money before
+    // the state), only what it said and when
+    if now - at > 3600 {
+        return say(format!("{text} from its console, last read {}", ago(at, now)), &format!("read {}", ago(at, now)));
+    }
+    let short = match (unit, left) {
+        ("usd", Some(x)) => money("USD", x).short,
+        _ => format!("{:.0}% used", used.unwrap_or(0.0)),
+    };
+    row(l, Some(Reading {
+        left: format!("{text} from its console"),
+        short,
+        windows: used.map(|u| vec![window("usage", u, n["resets"].as_str().map(String::from))]).unwrap_or_default(),
+        money: left.filter(|_| unit == "usd").map(|x| (x, "USD")),
+        state: used.map(by_pct),
+        ..Default::default()
+    }))
 }
 
 /// A bar of `width` cells for `used` %.
@@ -641,12 +1130,16 @@ fn bar(used: f64, width: usize) -> String {
 fn iso_secs(iso: &str) -> Option<i64> {
     let n = |a: usize, b: usize| iso.get(a..b)?.parse::<i64>().ok();
     let (y, m, d, hh, mm, ss) = (n(0, 4)?, n(5, 7)?, n(8, 10)?, n(11, 13)?, n(14, 16)?, n(17, 19)?);
+    Some(days_from_civil(y, m, d) * 86_400 + hh * 3600 + mm * 60 + ss)
+}
+
+/// Days since 1970-01-01 of a civil date (Howard Hinnant's days_from_civil).
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = y.div_euclid(400);
     let yoe = y - era * 400;
     let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
-    let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468;
-    Some(days * 86_400 + hh * 3600 + mm * 60 + ss)
+    era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468
 }
 
 /// "in 6 d 23 h", "in 3 h 12 min", "in 4 min" from `now` (seconds since 1970) to an ISO time: no time zone to get wrong.
@@ -813,8 +1306,9 @@ pub fn lines(v: &Value) -> Vec<(String, crate::ui::Tone, Option<String>)> {
         None => push("  no reading: is claude installed and logged in to a subscription?".into(), Dim, None),
     }
     let credits = v["credits"].as_array().cloned().unwrap_or_default();
+    let untracked: Vec<&str> = v["untracked"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
     let col = link_from(v) - 2;
-    if !credits.is_empty() {
+    if !credits.is_empty() || !untracked.is_empty() {
         push(String::new(), Plain, None);
         push("Providers' credits".into(), Head, None);
         push(String::new(), Rule, None);
@@ -842,6 +1336,9 @@ pub fn lines(v: &Value) -> Vec<(String, crate::ui::Tone, Option<String>)> {
         }
         if credits.iter().any(|c| c["left"].is_null()) {
             push("  no balance from their APIs: their page is a click away".into(), Dim, None);
+        }
+        if !untracked.is_empty() {
+            push(format!("  not tracked: {} (Settings, or /usage track <provider>)", untracked.join(", ")), Dim, None);
         }
     }
     let accounts = v["omniroute"].as_array().cloned().unwrap_or_default();
@@ -1063,6 +1560,265 @@ mod tests {
         let rows = gather(&rx, 2, Duration::from_millis(300));
         assert!(rows[0].is_some() && rows[1].is_none() && t.elapsed() < Duration::from_secs(2), "{rows:?}");
         drop(late);
+    }
+
+    fn login(name: &str) -> &'static crate::models::Login {
+        crate::models::LOGINS.iter().find(|l| l.name == name).unwrap()
+    }
+
+    #[test]
+    fn each_provider_has_its_ways_to_read_usage_and_the_choices_are_checked() {
+        for l in crate::models::LOGINS.iter().filter(|l| l.name != "OmniRoute") {
+            let ms = methods(l.name);
+            assert!(ms.contains(&"local"), "any provider can be counted here: {}", l.name);
+            for m in &ms {
+                let (steps, link) = steps(l, m);
+                assert!(!steps.is_empty() && link.starts_with("http"), "{} {m}: {link}", l.name);
+            }
+        }
+        assert!(API.iter().all(|n| crate::models::LOGINS.iter().any(|l| l.name == *n)), "each reader's provider is in LOGINS by that name");
+        assert_eq!(methods("Qwen Cloud Token Plan"), ["cli", "console", "local"]);
+        assert_eq!(methods("Mistral"), ["admin_key", "local", "none"], "an Admin key reads nothing: no way to read it but here");
+        assert_eq!(methods("Mistral Vibe"), ["admin_key", "console", "local"]);
+        assert_eq!(methods("Cheaper Inference"), ["api_scope", "local"]);
+        assert_eq!((methods("SubRouter"), methods("Groq")), (vec!["api", "local"], vec!["local", "none"]));
+        assert!(steps(login("Qwen Cloud Token Plan"), "cli").0.contains("npm install -g @qwencloud/qwencloud-cli"));
+        // the defaults: read by its endpoint where it has a key, as before tracking; the rest off
+        let none = json!({});
+        assert_eq!([track(login("SubRouter"), &none, true), track(login("SubRouter"), &none, false), track(login("Cheaper Inference"), &none, true),
+            track(login("Qwen Cloud Token Plan"), &none, true), track(login("Caffeine"), &none, true), track(login("Groq"), &none, true)],
+            [(true, "api"), (false, "api"), (true, "api_scope"), (true, "cli"), (false, "console"), (false, "local")]);
+        assert_eq!((track(login("Qwen Cloud Token Plan"), &none, false), track(login("Mistral"), &none, true), track(login("Mistral Vibe"), &none, true)),
+            ((false, "cli"), (false, "local"), (false, "console")), "Qwen's CLI read with a key, as before tracking; never admin_key by default");
+        // usage_track: a known provider, one of its methods, on a boolean; none is never on
+        let mut c = json!({});
+        let t = |c: &mut Value, p: &str, on: Value, m: &str| track_edit(c, &json!({"provider": p, "on": on, "method": m}));
+        assert!(t(&mut c, "Nobody", json!(true), "local").is_err());
+        assert!(t(&mut c, "OmniRoute", json!(true), "local").is_err(), "its accounts have their own section");
+        assert!(t(&mut c, "Caffeine", json!(true), "api").is_err(), "Caffeine has no API reader");
+        assert!(t(&mut c, "Groq", json!(true), "none").is_err());
+        assert!(t(&mut c, "Mistral", json!(true), "admin_key").is_err(), "an Admin key is read by nothing");
+        c["track"]["Mistral"] = json!({"on": true, "method": "admin_key"});
+        assert_eq!(track(login("Mistral"), &c, true), (false, "admin_key"), "a hand edit cannot turn it on");
+        assert!(t(&mut c, "Groq", json!("yes"), "local").is_err());
+        t(&mut c, "Caffeine", json!(true), "console").unwrap();
+        t(&mut c, "SubRouter", json!(false), "api").unwrap();
+        assert_eq!((track(login("Caffeine"), &c, true), track(login("SubRouter"), &c, true)), ((true, "console"), (false, "api")));
+        c["track"]["Groq"] = json!({"on": true, "method": "cli"});
+        assert_eq!(track(login("Groq"), &c, true), (false, "local"), "a method it does not have (a hand edit): the default");
+        // usage_allowance: bounds, units, periods, resets
+        let a = |c: &mut Value, al: Value| allowance_edit(c, &json!({"provider": "Caffeine", "allowance": al}));
+        for bad in [json!({"amount": 0, "unit": "usd", "period": "month", "reset": 1}), json!({"amount": -5, "unit": "usd", "period": "month", "reset": 1}),
+            json!({"amount": "10", "unit": "usd", "period": "month", "reset": 1}), json!({"amount": 10, "unit": "eur", "period": "month", "reset": 1}),
+            json!({"amount": 10, "unit": "usd", "period": "year", "reset": 1}), json!({"amount": 10, "unit": "usd", "period": "month", "reset": 32}),
+            json!({"amount": 10, "unit": "usd", "period": "month", "reset": 0}), json!({"amount": 10, "unit": "usd", "period": "week", "reset": 7}),
+            json!({"amount": 10, "unit": "usd", "period": "week"}), json!({"amount": 1e16, "unit": "tokens", "period": "day"}), json!("ten dollars")] {
+            assert!(a(&mut c, bad.clone()).is_err(), "{bad}");
+        }
+        a(&mut c, json!({"amount": 2_000_000, "unit": "tokens", "period": "day", "reset": 9})).unwrap();
+        assert_eq!(allowance_of(&c, "Caffeine"), Some(json!({"amount": 2_000_000.0, "unit": "tokens", "period": "day", "reset": null})), "a day ignores its reset");
+        a(&mut c, json!({"amount": 10, "unit": "usd", "period": "week", "reset": 0})).unwrap();
+        assert_eq!(allowance_of(&c, "Caffeine").unwrap()["reset"], 0);
+        a(&mut c, Value::Null).unwrap();
+        assert_eq!(allowance_of(&c, "Caffeine"), None, "null: none");
+        // the three ops: saved whole; a refused choice leaves the file as it was; each answers with the usage lines
+        let dir = std::env::temp_dir().join(format!("tazuna-usage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let f = dir.join("usage.json");
+        let op = |cmd: Value| usage_save_in(&cmd, Some(&f));
+        assert!(op(json!({"op": "usage_sources"})).is_none(), "nothing to save");
+        op(json!({"op": "usage_track", "provider": "Caffeine", "on": true, "method": "local"})).unwrap().unwrap();
+        assert!(op(json!({"op": "usage_track", "provider": "Caffeine", "on": true, "method": "api"})).unwrap().is_err());
+        op(json!({"op": "usage_allowance", "provider": "Caffeine", "allowance": {"amount": 5, "unit": "usd", "period": "month", "reset": 31}})).unwrap().unwrap();
+        assert!(op(json!({"op": "usage_allowance", "provider": "Caffeine", "allowance": {"amount": 5, "unit": "usd", "period": "year"}})).unwrap().is_err());
+        assert_eq!(track(login("Caffeine"), &usage_conf(Some(&f)), true), (true, "local"));
+        let keys = |v: &str| (v == "CAFFEINE_API_KEY").then(|| "k".to_string());
+        let src = sources_in(&usage_conf(Some(&f)), Some(&dir), &keys, &Err(CLI_MISSING));
+        let caf = src["providers"].as_array().unwrap().iter().find(|p| p["provider"] == "Caffeine").unwrap().clone();
+        assert_eq!((&caf["has_key"], &caf["track"], &caf["allowance"]["reset"]), (&json!(true), &json!({"on": true, "method": "local"}), &json!(31)));
+        assert_eq!(caf["methods"].as_array().unwrap().iter().map(|m| (m["id"].as_str().unwrap(), m["ready"].as_bool().unwrap())).collect::<Vec<_>>(), [("console", false), ("local", true)]);
+        assert!(!src["providers"].as_array().unwrap().iter().any(|p| p["provider"] == "OmniRoute"));
+        // odd shapes: a track or allowance that is not an object starts empty, never a crash
+        std::fs::write(&f, r#"{"track": ["SubRouter"], "allowance": 3, "other": true}"#).unwrap();
+        op(json!({"op": "usage_track", "provider": "Groq", "on": true, "method": "local"})).unwrap().unwrap();
+        op(json!({"op": "usage_allowance", "provider": "Groq", "allowance": null})).unwrap().unwrap();
+        let c2 = usage_conf(Some(&f));
+        assert_eq!((&c2["track"], &c2["allowance"], &c2["other"]), (&json!({"Groq": {"on": true, "method": "local"}}), &json!({}), &json!(true)));
+        // a file that is not JSON (the user's allowances in it) is never written over
+        std::fs::write(&f, "{\"allowance\": {\"Groq\": ").unwrap();
+        assert!(op(json!({"op": "usage_track", "provider": "Groq", "on": false, "method": "local"})).unwrap().unwrap_err().contains("not valid JSON"));
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "{\"allowance\": {\"Groq\": ");
+        std::fs::write(&f, "[1]").unwrap();
+        assert!(op(json!({"op": "usage_track", "provider": "Groq", "on": false, "method": "local"})).unwrap().is_err(), "not an object either");
+        // another writer's lock: waited for, then refused; a crashed writer's (old) lock is taken over
+        std::fs::write(&f, "{}").unwrap();
+        let lock = f.with_extension("json.lock");
+        std::fs::write(&lock, "").unwrap();
+        assert!(op(json!({"op": "usage_track", "provider": "Groq", "on": true, "method": "local"})).unwrap().unwrap_err().contains("another tazuna"));
+        std::fs::File::options().write(true).open(&lock).unwrap().set_modified(std::time::SystemTime::now() - Duration::from_secs(60)).unwrap();
+        op(json!({"op": "usage_track", "provider": "Caffeine", "on": true, "method": "local"})).unwrap().unwrap();
+        assert!(!lock.exists(), "the lock goes with the save");
+        op(json!({"op": "usage_allowance", "provider": "Caffeine", "allowance": {"amount": 5, "unit": "usd", "period": "month", "reset": 31}})).unwrap().unwrap();
+        // /usage track: by name in any case, its first method that reads now; a provider with no reader is counted here
+        assert_eq!(track_by_name_in("caffeine", Some(&f), Some(&dir), &keys, &Err(CLI_MISSING)).unwrap(), "usage: Caffeine tracked (local)", "an allowance is set: local reads now");
+        assert_eq!(track_by_name_in("Mistral", Some(&f), Some(&dir), &keys, &Err(CLI_MISSING)).unwrap(), "usage: Mistral tracked (local)", "never admin_key");
+        assert_eq!(track_by_name_in("SubRouter", Some(&f), Some(&dir), &keys, &Err(CLI_MISSING)).unwrap(), "usage: SubRouter tracked (api), once it has a key");
+        assert_eq!(track_by_name_in("Qwen Cloud Token Plan", Some(&f), Some(&dir), &keys, &Ok(None)).unwrap(), "usage: Qwen Cloud Token Plan tracked (cli), once it has a key");
+        assert!(track_by_name_in("OmniRoute", Some(&f), Some(&dir), &keys, &Err(CLI_MISSING)).is_err() && track_by_name_in("nobody", Some(&f), Some(&dir), &keys, &Err(CLI_MISSING)).is_err());
+        assert_eq!(track(login("Mistral"), &usage_conf(Some(&f)), false), (true, "local"));
+        // the rows by method: console and local need no key; api by the shared reading (a stand-in reader here); untracked
+        let conf = usage_conf(Some(&f));
+        let mut both = conf.clone();
+        both["track"]["Mortera"] = json!({"on": true, "method": "api"});
+        both["track"]["Mistral Vibe"] = json!({"on": true, "method": "console"});
+        both["track"]["SubRouter"] = json!({"on": false, "method": "api"});
+        both["track"]["Qwen Cloud Token Plan"] = json!({"on": false, "method": "cli"});
+        let tracked = tracked_in(&both, None, &keys);
+        let names: Vec<(&str, &str)> = tracked.iter().map(|t| (t.0.name, t.2)).collect();
+        assert_eq!(names, [("Mistral", "local"), ("Mistral Vibe", "console"), ("Caffeine", "local")], "Mortera has no key here: not read");
+        let rows = rows_of(&tracked, &both, Some(&dir), crate::session::unix_now(), |_, _| None);
+        assert_eq!(rows.iter().map(|r| r["left"].as_str().unwrap_or("-")).collect::<Vec<_>>(),
+            ["no allowance set: Settings › Providers", "not read yet: sign in to its console in Settings", "≈ 100% left of $5.00 (use through tazuna on this machine)"]);
+        let api = rows_of(&[(login("Mortera"), "k".into(), "api"), (login("Mistral"), "k".into(), "admin_key")], &both, Some(&dir), crate::session::unix_now(),
+            |_, _| Some(money("IDR", 50_000.0)));
+        assert_eq!((api[0]["left"].as_str(), api[1]["left"].as_str(), api[1]["page"].as_str()), (Some("Rp 50,000 left"), None, Some(login("Mistral").page)), "admin_key: not read, its page");
+        assert_eq!(untracked_in(&both, &keys), Vec::<&str>::new(), "Caffeine, the one keyed, is tracked");
+        assert_eq!(untracked_in(&json!({}), &keys), ["Caffeine"]);
+        // why a method cannot read now
+        let conf = usage_conf(Some(&f));
+        let cli: Result<Option<String>, &str> = Err(CLI_MISSING);
+        let why = |name: &str, m: &str, key: Option<&str>| why_not(login(name), m, key, &conf, Some(&dir), &cli);
+        assert_eq!((why("SubRouter", "api", None).as_deref(), why("SubRouter", "api", Some("k"))), (Some("no key saved"), None));
+        assert_eq!(why("Qwen Cloud Token Plan", "cli", Some("k")).as_deref(), Some(CLI_MISSING));
+        assert_eq!(why("Groq", "local", Some("k")).as_deref(), Some("no allowance set"));
+        assert_eq!(why("Caffeine", "console", Some("k")).as_deref(), Some("not signed in yet: Sign in…"));
+        std::fs::create_dir_all(dir.join("console")).unwrap();
+        let now = crate::session::unix_now() as i64;
+        std::fs::write(dir.join("console/Caffeine.json"), json!({"at": now, "status": "signed_out", "source": "console"}).to_string()).unwrap();
+        assert_eq!(why("Caffeine", "console", Some("k")).as_deref(), Some("signed out: sign in again"));
+        std::fs::write(dir.join("console/Caffeine.json"), json!({"at": now, "status": "ok", "source": "console", "numbers": {"unit": "usd", "left": 3, "total": 10, "used_pct": null, "resets": null}}).to_string()).unwrap();
+        assert_eq!(why("Caffeine", "console", Some("k")), None);
+        assert!(why("Mistral", "admin_key", Some("k")).is_some() && why("Groq", "none", Some("k")).is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_allowance_period_starts_at_local_midnight_across_dst() {
+        let t = |iso: &str| iso_secs(iso).unwrap();
+        // Berlin: CET +1, CEST +2 from 2026-03-29 01:00 UTC to 2026-10-25 01:00 UTC
+        let (spring, autumn) = (t("2026-03-29T01:00:00Z"), t("2026-10-25T01:00:00Z"));
+        let berlin = |at: i64| if (spring..autumn).contains(&at) { 7200 } else { 3600 };
+        let a = |period: &str, reset: Value| json!({"amount": 1, "unit": "tokens", "period": period, "reset": reset});
+        assert_eq!(period(&a("day", Value::Null), t("2026-10-25T12:00:00Z"), berlin), (t("2026-10-24T22:00:00Z"), t("2026-10-25T23:00:00Z")), "the autumn day has 25 hours");
+        assert_eq!(period(&a("day", Value::Null), t("2026-03-29T12:00:00Z"), berlin), (t("2026-03-28T23:00:00Z"), t("2026-03-29T22:00:00Z")), "the spring day has 23");
+        assert_eq!(period(&a("month", json!(25)), t("2026-10-25T12:00:00Z"), berlin), (t("2026-10-24T22:00:00Z"), t("2026-11-24T23:00:00Z")), "each end at its own offset");
+        assert_eq!(period(&a("month", json!(1)), t("2026-11-30T23:30:00Z"), berlin).0, t("2026-11-30T23:00:00Z"), "already December 1 in Berlin");
+        assert_eq!(period(&a("month", json!(10)), t("2026-01-05T12:00:00Z"), berlin), (t("2025-12-09T23:00:00Z"), t("2026-01-09T23:00:00Z")), "across the year");
+        assert_eq!(period(&a("month", json!(28)), t("2026-11-26T12:00:00Z"), |_| 0), (t("2026-10-28T00:00:00Z"), t("2026-11-28T00:00:00Z")));
+        // Thursday 2026-11-26; a week from Monday (1), or from Thursday (4): today
+        assert_eq!(period(&a("week", json!(1)), t("2026-11-26T10:00:00Z"), berlin), (t("2026-11-22T23:00:00Z"), t("2026-11-29T23:00:00Z")));
+        assert_eq!(period(&a("week", json!(4)), t("2026-11-26T10:00:00Z"), |_| 0).0, t("2026-11-26T00:00:00Z"));
+        // a reset on the 31st: a shorter month resets on its last day (February 28, April 30)
+        assert_eq!(period(&a("month", json!(31)), t("2026-02-15T12:00:00Z"), |_| 0), (t("2026-01-31T00:00:00Z"), t("2026-02-28T00:00:00Z")));
+        assert_eq!(period(&a("month", json!(31)), t("2026-02-28T12:00:00Z"), |_| 0), (t("2026-02-28T00:00:00Z"), t("2026-03-31T00:00:00Z")));
+        assert_eq!(period(&a("month", json!(30)), t("2028-02-29T12:00:00Z"), |_| 0).0, t("2028-02-29T00:00:00Z"), "a leap year's February");
+    }
+
+    #[test]
+    fn local_counting_takes_the_providers_runs_this_period() {
+        let now = iso_secs("2026-11-26T12:00:00Z").unwrap();
+        let run = |ts: i64, provider: &str, var: Option<&str>, cost: f64, turns: u64| json!({"ts": ts, "meta": {"provider": provider, "key_env": var},
+            "cost_usd": cost, "turns": turns, "tokens": {"input": 1000, "cache_write": 500, "cache_read": 1_000_000, "output": 500}});
+        let runs = vec![
+            run(now - 3600, "Mistral Vibe", Some("MISTRAL_VIBE_API_KEY"), 1.5, 10),
+            run(now - 7200, "Mistral", None, 2.5, 20),  // logged before Mistral Vibe was a provider: the Vibe key
+            run(now - 7200, "Mistral", Some("MISTRAL_API_KEY"), 9.0, 99),  // the API key's: not Vibe's
+            run(now - 40 * 86_400, "Mistral Vibe", Some("MISTRAL_VIBE_API_KEY"), 9.0, 99),  // last month
+            run(now + 60, "Mistral Vibe", Some("MISTRAL_VIBE_API_KEY"), 9.0, 99),  // a clock ahead: not yet
+            run(now - 60, "SubRouter", Some("SUBROUTER_API_KEY"), 9.0, 99),
+        ];
+        let mut runs = runs;
+        // the reviewer's cost (another model) is left out of the run's provider's dollars
+        runs[0]["review"] = json!({"ok": true, "cost_usd": 0.5});
+        runs[0]["cost_usd"] = json!(2.0);
+        // a run the Vibe lane began and claude finished: the lane's part counts, claude's does not
+        runs.push(json!({"ts": now - 60, "meta": {"provider": null, "key_env": null}, "cost_usd": 7.0, "turns": 50,
+            "tokens": {"input": 9999, "cache_write": 0, "cache_read": 0, "output": 9999},
+            "lane": {"provider": "Mistral Vibe", "key_env": "MISTRAL_VIBE_API_KEY", "turns": 0, "cost_usd": 0.0, "tokens": {"input": 0, "cache_write": 0, "cache_read": 0, "output": 0}}}));
+        let vibe = login("Mistral Vibe");
+        let al = |amount: f64, unit: &str| json!({"amount": amount, "unit": unit, "period": "month", "reset": 1});
+        let r = local_row(vibe, Some(&al(10.0, "usd")), &runs, now, |_| 0);
+        assert_eq!((r["left"].as_str(), r["short"].as_str(), r["usd_left"].as_f64(), r["max_used_pct"].as_f64(), r["state"].as_str()),
+            (Some("≈ 60% left of $10.00 (use through tazuna on this machine)"), Some("≈ 60% left"), Some(6.0), Some(40.0), Some("ok")));
+        let mut lane = runs.clone();
+        lane.last_mut().unwrap()["lane"]["cost_usd"] = json!(1.0);
+        lane.last_mut().unwrap()["lane"]["turns"] = json!(5);
+        assert_eq!(local_row(vibe, Some(&al(10.0, "usd")), &lane, now, |_| 0)["usd_left"].as_f64(), Some(5.0), "the lane's $1.00, not the run's $7.00");
+        assert_eq!(local_row(vibe, Some(&al(35.0, "requests")), &lane, now, |_| 0)["max_used_pct"].as_f64(), Some(100.0), "and its 5 calls");
+        assert_eq!(r["windows"][0]["resets"], "2026-12-01T00:00:00Z");
+        let r = local_row(vibe, Some(&al(5000.0, "tokens")), &runs, now, |_| 0);
+        assert_eq!((r["max_used_pct"].as_f64(), r["state"].as_str(), r["usd_left"].as_f64()), (Some(80.0), Some("low"), None), "input, cache writes, output: 4,000; cache reads left out");
+        assert_eq!(r["left"], "≈ 20% left of 5,000 tokens (use through tazuna on this machine)");
+        let r = local_row(vibe, Some(&al(30.0, "requests")), &runs, now, |_| 0);
+        assert_eq!((r["max_used_pct"].as_f64(), r["state"].as_str()), (Some(100.0), Some("out")), "30 model calls of 30");
+        assert_eq!(local_row(vibe, Some(&al(25.0, "requests")), &runs, now, |_| 0)["left"], "≈ 0% left of 25 requests (use through tazuna on this machine)", "past it: none left, not less");
+        let none = local_row(vibe, None, &runs, now, |_| 0);
+        assert_eq!((none["left"].as_str(), none["state"].as_str()), (Some("no allowance set: Settings › Providers"), Some("unknown")));
+    }
+
+    #[test]
+    fn a_console_reading_is_checked_strictly_and_ages() {
+        let now = 1_795_000_000;
+        let file = |at: i64, status: &str, numbers: Value| json!({"at": at, "status": status, "numbers": numbers, "source": "console"}).to_string();
+        let usd = json!({"left": 4.2, "total": 10, "unit": "usd", "used_pct": null, "resets": "2026-12-01T00:00:00Z"});
+        let c = console_check(&file(now - 60, "ok", usd.clone()), now).unwrap();
+        assert_eq!(c["numbers"]["resets"], "2026-12-01T00:00:00Z");
+        let l = login("Caffeine");
+        let r = console_row(l, Some(Ok(c)), now);
+        assert_eq!((r["left"].as_str(), r["short"].as_str(), r["usd_left"].as_f64(), r["state"].as_str()), (Some("$4.20 left of $10.00 from its console"), Some("$4.20 left"), Some(4.2), Some("ok")));
+        assert_eq!(r["max_used_pct"].as_f64().map(f64::round), Some(58.0));
+        let stale = console_row(l, Some(Ok(console_check(&file(now - 7200, "ok", usd.clone()), now).unwrap())), now);
+        assert_eq!((stale["left"].as_str(), stale["short"].as_str(), stale["state"].as_str()), (Some("$4.20 left of $10.00 from its console, last read 2 h ago"), Some("read 2 h ago"), Some("unknown")));
+        let red = console_row(l, Some(Ok(console_check(&file(now - 7200, "ok", json!({"left": null, "total": null, "unit": "percent", "used_pct": 95, "resets": null})), now).unwrap())), now);
+        assert_eq!((&red["max_used_pct"], &red["usd_left"], red.get("windows"), red["state"].as_str()), (&Value::Null, &Value::Null, None, Some("unknown")), "a stale 95% is not red: {red}");
+        let below = console_row(l, Some(Ok(console_check(&file(now, "ok", json!({"left": -4.2, "total": 10, "unit": "usd", "used_pct": null, "resets": null})), now).unwrap())), now);
+        assert_eq!((below["left"].as_str(), below["short"].as_str(), below["state"].as_str()), (Some("$4.20 below zero from its console"), Some("$4.20 below zero"), Some("out")));
+        let pct = console_check(&file(now, "ok", json!({"left": null, "total": null, "unit": "percent", "used_pct": 92, "resets": 1_796_000_000})), now).unwrap();
+        assert_eq!(pct["numbers"]["resets"], iso_ms(1_796_000_000_000.0), "seconds as an ISO time");
+        let r = console_row(l, Some(Ok(pct)), now);
+        assert_eq!((r["left"].as_str(), r["state"].as_str()), (Some("92% used from its console"), Some("out")));
+        let credits = console_check(&file(now, "ok", json!({"left": 1500, "total": 2000, "unit": "credits", "used_pct": null, "resets": null})), now).unwrap();
+        assert_eq!(console_row(l, Some(Ok(credits)), now)["left"], "1,500 of 2,000 credits left from its console");
+        let out = console_row(l, Some(Ok(console_check(&file(now, "signed_out", Value::Null), now).unwrap())), now);
+        assert_eq!((out["left"].as_str(), out["state"].as_str()), (Some("sign in again in Settings"), Some("unknown")));
+        assert_eq!(console_row(l, Some(Ok(console_check(&file(now - 300, "error", Value::Null), now).unwrap())), now)["left"], "its console could not be read (5 min ago)");
+        assert_eq!(console_row(l, None, now)["left"], "not read yet: sign in to its console in Settings");
+        assert_eq!(console_row(l, Some(Err(())), now)["left"], "its console reading is not valid");
+        // not valid: a wrong type, a number that is not finite, the future, another source, an unknown unit, a total of 0,
+        // a reset that is no time, too long a file
+        let n = |k: &str, v: Value| { let mut x = usd.clone(); x[k] = v; x };
+        for bad in [file(now, "ok", n("left", json!("4.2"))), file(now, "ok", n("total", json!(0))), file(now, "ok", n("unit", json!("eur"))),
+            file(now, "ok", n("used_pct", json!(-1))), file(now, "ok", n("resets", json!("soon"))), file(now, "ok", n("resets", json!(12))),
+            file(now, "ok", n("resets", json!({"at": 1}))), file(now + 3600, "ok", usd.clone()), file(now, "fine", usd.clone()), file(now, "ok", Value::Null),
+            json!({"at": now, "status": "ok", "numbers": usd, "source": "page"}).to_string(), json!({"at": now * 1000, "status": "ok", "numbers": usd, "source": "console"}).to_string(),
+            "{\"at\": 1795000000, \"status\": \"ok\", \"source\": \"console\", \"numbers\": {\"unit\": \"usd\", \"left\": NaN}}".to_string(), "not json".into(),
+            format!("{}{}", file(now, "ok", usd.clone()), " ".repeat(CONSOLE_MAX))] {
+            assert!(console_check(&bad, now).is_none(), "{}", &bad[..bad.len().min(200)]);
+        }
+        // the file under the shared readings' name only
+        let dir = std::env::temp_dir().join(format!("tazuna-console-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("console")).unwrap();
+        std::fs::write(dir.join("console/Qwen Cloud Token Plan.json"), file(now, "ok", usd.clone())).unwrap();
+        assert!(console_reading(Some(&dir), login("Qwen Cloud Token Plan"), now).is_none());
+        std::fs::write(dir.join("console/Qwen-Cloud-Token-Plan.json"), file(now, "ok", usd.clone())).unwrap();
+        assert!(console_reading(Some(&dir), login("Qwen Cloud Token Plan"), now).is_some_and(|r| r.is_ok()));
+        std::fs::write(dir.join("console/Qwen-Cloud-Token-Plan.json"), "{}").unwrap();
+        assert_eq!(console_reading(Some(&dir), login("Qwen Cloud Token Plan"), now), Some(Err(())));
+        let _ = std::fs::remove_dir_all(&dir);
+        // /usage: the untracked keyed providers in one line
+        let shown = lines(&json!({"credits": [], "untracked": ["Caffeine", "Mistral Vibe"]}));
+        assert!(shown.iter().any(|l| l.0 == "  not tracked: Caffeine, Mistral Vibe (Settings, or /usage track <provider>)"), "{shown:?}");
     }
 
     #[cfg(unix)]

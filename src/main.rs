@@ -1436,6 +1436,30 @@ fn login_save(l: &'static models::Login, typed: &str, tx: &std::sync::mpsc::Send
     Ok(said.join("; "))
 }
 
+/// The usage page's accounts (accounts.rs): Claude's plan, credits, OmniRoute's accounts, as an `accounts` line; the plan
+/// first, on an `accounts_plan` line as soon as it is read (the window's bar shows it then), and into this conversation's
+/// meters through `tx`.
+#[inline(never)]
+fn app_accounts(tx: &std::sync::mpsc::Sender<serde_json::Value>) {
+    use std::io::Write;
+    let mut v = accounts::all_then(|plan| {
+        let mut early = plan.clone();
+        early["type"] = json!("accounts_plan");
+        let mut o = std::io::stdout().lock();
+        let _ = writeln!(o, "{early}");
+        let _ = o.flush();
+    });
+    let rows: Vec<accounts::PlanRow> = v["plan"].as_array().into_iter().flatten().map(|r| accounts::PlanRow {
+        label: r["label"].as_str().unwrap_or_default().to_string(), used: r["used"].as_f64().unwrap_or(0.0), resets: String::new() }).collect();
+    if let Some(ev) = accounts::rate_event(&rows) {
+        let _ = tx.send(json!({"type": "tazuna_chat_event", "e": ev}));
+    }
+    v["type"] = json!("accounts");
+    let mut o = std::io::stdout().lock();
+    let _ = writeln!(o, "{v}");
+    let _ = o.flush();
+}
+
 /// The window's key op (Settings › Providers): a key saved, kept, or (Mistral Vibe's kept from before) removed; how it went
 /// as a `signin` line for that provider's row, not in the conversation, then the pickers' rows again.
 #[inline(never)]
@@ -1572,9 +1596,9 @@ fn app_server(a: &Args) -> Result<()> {
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 51] = ["send", "interrupt", "new", "profile", "models", "refresh_model_list", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo", "retry",
+        const OPS: [&str; 54] = ["send", "interrupt", "new", "profile", "models", "refresh_model_list", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo", "retry",
             "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork", "usage", "spend_cap",
-            "worktree_new", "worktrees", "worktree_remove", "pr", "create", "create_enable", "create_discard", "mcp", "mcp_on", "mcp_add", "mcp_remove", "mcp_check", "hook", "setup", "gallery", "gallery_get", "accounts", "complete", "agent", "task_stop"];
+            "worktree_new", "worktrees", "worktree_remove", "pr", "create", "create_enable", "create_discard", "mcp", "mcp_on", "mcp_add", "mcp_remove", "mcp_check", "hook", "setup", "gallery", "gallery_get", "accounts", "complete", "agent", "task_stop", "usage_sources", "usage_track", "usage_allowance"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1887,7 +1911,7 @@ fn app_server(a: &Args) -> Result<()> {
                         }
                         // SubRouter's balance, read on a thread
                         Some("tazuna_balance") => s.balance = cmd["usd"].as_f64(),
-                        Some("tazuna_credits") => take_credits(&mut s, &cmd["v"]),
+                        Some("tazuna_credits") => take_credits(&mut s, &cmd["v"], cmd["only"].as_str()),
                         Some("tazuna_review") => review_done(&mut live, &mut s, &cmd),
                         // the project's hook ran (hooks.rs): only a failure shows
                         Some("tazuna_hook") => if cmd["ok"] != true {
@@ -1920,24 +1944,32 @@ fn app_server(a: &Args) -> Result<()> {
                         // plan's reading also feeds this conversation's meters
                         Some("accounts") => {
                             let tx = hook_tx.clone();
+                            std::thread::spawn(move || app_accounts(&tx));
+                        }
+                        // the settings page's usage lines (accounts.rs `sources`): each provider's ways to read its usage, what is
+                        // tracked, its allowance. A choice is saved here, in the order they came, then said back with the credits
+                        // read again (`accounts_credits`); both carry the op's `seq`, so a reply that comes late is known as old.
+                        // On a thread: Qwen's CLI may be asked whether it is signed in
+                        Some("usage_sources" | "usage_track" | "usage_allowance") => {
+                            static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                            let (seq, saved) = (SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1, accounts::usage_save(&cmd));
                             std::thread::spawn(move || {
-                                // the plan first, on its own line, as soon as it is read: the window's bar shows it then
-                                let mut v = accounts::all_then(|plan| {
-                                    let mut early = plan.clone();
-                                    early["type"] = json!("accounts_plan");
-                                    let mut o = std::io::stdout().lock();
-                                    let _ = writeln!(o, "{early}");
-                                    let _ = o.flush();
-                                });
-                                let rows: Vec<accounts::PlanRow> = v["plan"].as_array().into_iter().flatten().map(|r| accounts::PlanRow {
-                                    label: r["label"].as_str().unwrap_or_default().to_string(), used: r["used"].as_f64().unwrap_or(0.0), resets: String::new() }).collect();
-                                if let Some(ev) = accounts::rate_event(&rows) {
-                                    let _ = tx.send(json!({"type": "tazuna_chat_event", "e": ev}));
+                                let mut v = accounts::sources();
+                                v["seq"] = json!(seq);
+                                if let Some(Err(e)) = &saved {
+                                    v["error"] = json!(e);
                                 }
-                                v["type"] = json!("accounts");
-                                let mut o = std::io::stdout().lock();
-                                let _ = writeln!(o, "{v}");
-                                let _ = o.flush();
+                                let mut lines = vec![v];
+                                if matches!(saved, Some(Ok(()))) {
+                                    let mut c = accounts::credits_reading();
+                                    c["seq"] = json!(seq);
+                                    lines.push(c);
+                                }
+                                for v in lines {
+                                    let mut o = std::io::stdout().lock();
+                                    let _ = writeln!(o, "{v}");
+                                    let _ = o.flush();
+                                }
                             });
                         }
                         // the first run's checks: is the claude CLI there (its version; ~1 s, so on a thread), and signed in
@@ -4040,7 +4072,7 @@ fn run_live(
                 // a chat answer is the last reply too, for the router's next check, and a follow-up's context
                 Some("tazuna_chat_event") => chat_event(live, &mut s, &e, &mut chat_last, &mut last_reply),
                 Some("tazuna_balance") => s.balance = e["usd"].as_f64(),
-                Some("tazuna_credits") => take_credits(&mut s, &e["v"]),
+                Some("tazuna_credits") => take_credits(&mut s, &e["v"], e["only"].as_str()),
                 Some("tazuna_update") => {
                     s.apply(&json!({"type": "harness_info", "text": e["text"]}), live.elapsed_ms());
                     if e["signed_out"] == true && let Some((t, e)) = signed_out_start(live, &s, a) {
@@ -4075,7 +4107,7 @@ fn run_live(
                         let (t, ev) = live.note(ev);
                         s.apply(&ev, t);
                     }
-                    take_credits(&mut s, &e["v"]["credits"]);
+                    take_credits(&mut s, &e["v"]["credits"], None);
                     // into the panel /usage opened, unless it was closed meanwhile
                     if v.list.as_ref().is_some_and(|l| l.title == ACCOUNTS && l.pending) {
                         v.list = Some(accounts_panel(Some(&e["v"])));
@@ -4972,6 +5004,13 @@ fn run_live(
                     open_usage(&mut v, &status_tx);
                     continue;
                 }
+                // /usage track <provider>: its usage read from now on (accounts.rs), then the panel
+                if let Some(name) = text.strip_prefix("/usage track ") {
+                    let said = accounts::track_by_name(name).unwrap_or_else(|e| e);
+                    s.apply(&json!({"type": "harness_info", "text": said}), live.elapsed_ms());
+                    open_usage(&mut v, &status_tx);
+                    continue;
+                }
                 // /new: a fresh conversation; /resume: a picker of this repo's sessions (/resume ID opens one directly)
                 // /boss: boss mode on (haiku workers, or /boss MODEL) or off for the rest of the session
                 if text == "/boss" || text.starts_with("/boss ") {
@@ -5484,15 +5523,22 @@ fn open_usage(v: &mut ui::View, tx: &std::sync::mpsc::Sender<serde_json::Value>)
 fn fetch_balance(tx: &std::sync::mpsc::Sender<serde_json::Value>, only: Option<String>) {
     let tx = tx.clone();
     std::thread::spawn(move || {
-        let _ = tx.send(json!({"type": "tazuna_credits", "v": accounts::credits(only.as_deref())}));
+        let _ = tx.send(json!({"type": "tazuna_credits", "v": accounts::credits(only.as_deref()), "only": only}));
     });
 }
 
 /// `tazuna_credits` (and /usage's readings): each provider's row into the session, replacing that provider's own (a
-/// reading of one provider leaves the others' be): its short line and whether it needs you, as the core decided
-/// (accounts.rs `row`: low, used up, past zero, a key that may not read it); SubRouter's dollars as a number too.
+/// reading of one provider, `only`, leaves the others' be): its short line and whether it needs you, as the core decided
+/// (accounts.rs `row`: low, used up, past zero, a key that may not read it); SubRouter's dollars as a number too. A
+/// provider read and not in it is no longer tracked: its row goes.
 #[inline(never)]
-fn take_credits(s: &mut Session, credits: &serde_json::Value) {
+fn take_credits(s: &mut Session, credits: &serde_json::Value, only: Option<&str>) {
+    let read: Vec<&str> = credits.as_array().into_iter().flatten().filter_map(|c| c["provider"].as_str()).collect();
+    let had = s.credits.iter().any(|x| x.0 == "SubRouter");
+    s.credits.retain(|x| read.contains(&x.0.as_str()) || only.is_some_and(|o| o != x.0));
+    if had && !s.credits.iter().any(|x| x.0 == "SubRouter") {
+        s.balance = None;
+    }
     for c in credits.as_array().into_iter().flatten() {
         let Some(p) = c["provider"].as_str() else { continue };
         let row = (p.to_string(), c["short"].as_str().or(c["left"].as_str()).map(String::from), matches!(c["state"].as_str(), Some("low" | "out" | "over" | "needs_scope")));
@@ -6277,13 +6323,19 @@ mod tests {
         super::take_credits(&mut s, &serde_json::json!([
             {"provider": "SubRouter", "left": "$1,234.50 left", "short": "$1,234.50 left", "usd_left": 1234.5, "state": "ok"},
             {"provider": "OpenRouter", "left": "$1.25 used this month", "short": "$1.25 this month", "usd_left": null, "state": "unknown"},
-            {"provider": "Mortera", "left": "Rp 797 left (about $0.05)", "short": "Rp 797 left", "usd_left": 0.05, "state": "low"}]));
+            {"provider": "Mortera", "left": "Rp 797 left (about $0.05)", "short": "Rp 797 left", "usd_left": 0.05, "state": "low"}]), None);
         assert_eq!(s.balance, Some(1234.5), "SubRouter's dollars from the number, grouped text or not");
         assert_eq!(s.credits[1], ("OpenRouter".to_string(), Some("$1.25 this month".to_string()), false), "spent is not low");
         assert_eq!(s.credits[2], ("Mortera".to_string(), Some("Rp 797 left".to_string()), true), "the short line, and the core's state");
         // after a run on Mortera only its row comes: the others stay
-        super::take_credits(&mut s, &serde_json::json!([{"provider": "Mortera", "left": "Rp 50,000 left (about $3.07)", "short": "Rp 50,000 left", "usd_left": 3.07, "state": "ok"}]));
+        super::take_credits(&mut s, &serde_json::json!([{"provider": "Mortera", "left": "Rp 50,000 left (about $3.07)", "short": "Rp 50,000 left", "usd_left": 3.07, "state": "ok"}]), Some("Mortera"));
         assert_eq!((s.credits.len(), s.credits[2].2, s.credits[0].1.as_deref()), (3, false, Some("$1,234.50 left")));
+        // Mortera no longer tracked: its own reading is empty, and its row goes
+        super::take_credits(&mut s, &serde_json::json!([]), Some("Mortera"));
+        assert_eq!(s.credits.len(), 2);
+        // all read again without SubRouter (untracked): only what came stays, and its balance goes
+        super::take_credits(&mut s, &serde_json::json!([{"provider": "OpenRouter", "left": "$1.25 used this month", "short": "$1.25 this month", "state": "unknown"}]), None);
+        assert_eq!((s.credits.len(), s.balance), (1, None));
     }
 
     #[test]

@@ -561,7 +561,7 @@ pub fn describe(cmd: &str) -> &'static str {
         "route" => "Whether general questions may go to a chat (on, off)",
         "verify" => "Tests and type checks after edits (on, off)",
         "rewind" => "Go back to before an earlier message",
-        "usage" => "The plan's 5-hour and weekly use, the API balance",
+        "usage" => "The plan's 5-hour and weekly use, the API balance; /usage track <provider>",
         "vim" => "Vim keys in the message box (on, off)",
         "clear" => "Claude: clear the conversation",
         "compact" => "Claude: summarise the conversation to free context",

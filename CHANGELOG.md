@@ -16,6 +16,20 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.232 (2026-11-26): choose whose usage tazuna shows, and how
+
+Usage sources (no measurable metric moves).
+- Each provider says how its usage can be read and what that needs from you: its API (automatic), a key permission
+  (Cheaper Inference's account:read), an Admin key (Mistral: spend only, never tracked), Qwen's CLI (install and sign in),
+  its console (the desktop's sign-in window, experimental), counting tazuna's own use against an allowance you enter, or
+  nothing. Tracking is per provider (~/.config/tazuna/usage.json, saved under a lock, a broken file never overwritten):
+  on by default where an API, a key permission or Qwen's CLI reads it, as before; tazuna reads only what is tracked.
+- New app-server ops `usage_sources`, `usage_track`, `usage_allowance` (with `seq`, and an `accounts_credits` reply);
+  `/usage track <provider>` in the terminal. Local counting: input + cache writes + output tokens, dollars or model calls
+  in a local-time day, week or month (reset days 1-31, the month's last day when shorter), on this machine; an escalated
+  run counts for the lane that ran it, a reviewer's cost for none. Console readings from the desktop are read strictly
+  and go quiet after an hour.
+
 ## 0.1.231 (2026-11-26): provider balances from their own APIs
 
 More providers say what is left, from their documented endpoints (no measurable metric moves).
