@@ -49,7 +49,8 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let said = vec![Span::styled(format!("{glyph} {}", if busy { "working" } else { &label }), st(color)), Span::styled(if busy { esc_hint(v) } else { "" }, st(th.faint))];
     let typing = v.live && !v.input.is_empty() && v.asking.is_none();
     // a note for a moment ("copied 12 chars", the design ctrl-t switched to); while typing it is the row under the draft
-    let note = if typing { String::new() } else { v.toast.as_ref().map_or(String::new(), |(t, _)| format!("{t}   ")) };
+    // (and under a question it stands in for the answers' keys, composer_rows_in)
+    let note = if typing || (v.asking.is_some() && v.input.is_empty()) { String::new() } else { v.toast.as_ref().map_or(String::new(), |(t, _)| format!("{t}   ")) };
     // a question in a narrow column has the row to itself (its "?" says who is waited for): beside "● needs you" the
     // answers were cut to "a al" at 40 columns
     let alone = v.asking.is_some() && col.width < 60;

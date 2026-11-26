@@ -447,6 +447,15 @@ impl Editor {
         self.browsing = None;
     }
 
+    /// Ctrl-C at idle: the box cleared, its text kept in history (and its file) so ↑ brings it back; a stashed message stays
+    /// stashed.
+    #[inline(never)]
+    pub fn shelve(&mut self) {
+        let stash = self.stash.take();
+        self.take();
+        self.stash = stash;
+    }
+
     /// Enter: the message to send. It goes into history (and its file) unless it repeats the last one. Undo starts over:
     /// a sent message is not taken back into the box.
     pub fn take(&mut self) -> String {
@@ -496,6 +505,8 @@ pub fn suggest(token: &str, at_start: bool, commands: &[String], files: &[String
 /// list that opens over the message box when it holds only `/...` (OpenCode's command menu, the user's ask 2026-11-16).
 /// `mine`: the user's own commands (behave.rs) with their descriptions; claude's names for them ("tazuna:x") are left
 /// out, since a typed /x runs them.
+/// Claude's commands come after tazuna's own (theirs said "Claude: …", `claude_row`); they led the list on a model that is
+/// not Claude (design review 14).
 pub fn command_menu(prefix: &str, commands: &[String], mine: &[(String, String)]) -> Vec<(String, String)> {
     let p = prefix.to_lowercase();
     let mut all: Vec<&String> = commands.iter().filter(|c| !c.starts_with("tazuna:")).chain(mine.iter().map(|m| &m.0)).collect();
@@ -504,7 +515,15 @@ pub fn command_menu(prefix: &str, commands: &[String], mine: &[(String, String)]
     let about = |c: &str| mine.iter().find(|m| m.0 == c).map_or_else(|| describe(c).to_string(), |m| m.1.clone());
     let starts = all.iter().filter(|c| c.starts_with(&p));
     let inside = all.iter().filter(|c| !c.starts_with(&p) && c.contains(&p));
-    starts.chain(inside).take(60).map(|c| (format!("/{c}"), about(c))).collect()
+    let mut rows: Vec<(String, String)> = starts.chain(inside).map(|c| (format!("/{c}"), about(c))).collect();
+    rows.sort_by_key(|r| claude_row(&r.1).is_some()); // stable: the matches' order within each group
+    rows.truncate(60);
+    rows
+}
+
+/// A menu row's description when the command is Claude's: without its "Claude: ", for the menu's Claude group.
+pub fn claude_row(about: &str) -> Option<&str> {
+    about.strip_prefix("Claude: ")
 }
 
 /// claude's common built-in commands (those `describe` knows): the menu's guess on Claude before claude has listed its
@@ -554,7 +573,7 @@ pub fn describe(cmd: &str) -> &'static str {
         "rename" => "Claude: rename this conversation",
         "fast" => "Claude: fast mode",
         "output-style" => "Claude: how answers are written",
-        _ => "Claude command or skill",
+        _ => "Claude: a command or skill",
     }
 }
 
@@ -572,7 +591,10 @@ mod tests {
         assert_eq!(m.iter().map(|(c, _)| c.as_str()).collect::<Vec<_>>(), ["/review", "/security-review"], "names that start with it first");
         assert_eq!(m[0].1, "A review of each finished change (on, off, a model)");
         assert_eq!(super::command_menu("", &cmds, &[]).len(), 7);
-        assert_eq!(super::command_menu("my", &cmds, &[])[0].1, "Claude command or skill");
+        assert_eq!(super::command_menu("my", &cmds, &[])[0].1, "Claude: a command or skill");
+        // tazuna's own first, then Claude's
+        let all: Vec<String> = super::command_menu("", &cmds, &[]).into_iter().map(|r| r.0).collect();
+        assert_eq!(all, ["/diff", "/model", "/new", "/review", "/compact", "/my-skill", "/security-review"]);
         // the user's own command: its description, and claude's plugin name for it left out
         let with = [cmds.clone(), vec!["tazuna:standup".into()]].concat();
         let m = super::command_menu("st", &with, &[("standup".into(), "Write today's standup".into())]);
@@ -593,6 +615,21 @@ mod tests {
         (e.anchor, e.cursor) = (Some(1), 1);
         e.backspace();
         assert_eq!(e.text, "ye", "a click without a drag selects nothing: a plain backspace");
+    }
+
+    #[test]
+    fn ctrl_c_clears_the_box_and_up_brings_the_text_back() {
+        let mut e = Editor::default();
+        e.insert("long draft");
+        e.toggle_stash();
+        e.insert("half typed");
+        e.shelve();
+        assert!(e.text.is_empty(), "cleared, the stash not put back");
+        e.up();
+        assert_eq!(e.text, "half typed");
+        e.down();
+        assert_eq!(e.toggle_stash(), "unstashed");
+        assert_eq!(e.text, "long draft");
     }
 
     #[test]

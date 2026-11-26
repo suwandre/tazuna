@@ -16,6 +16,26 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.228 (2026-11-26): a new user starts on a model that runs; Ctrl+C keeps your words
+
+Design review 14's fixes in the core and the terminal (no measurable metric moves).
+- Without Claude Code installed (or found signed out before the first message), a new session starts on a model that can
+  run: the own-loop model used most in the last 30 days on the provider and key it ran on (a Mistral Vibe user stays on the
+  Vibe key, not Mistral's billed one with the same id), else a free one (a local server's first). Never a paid model nobody
+  chose: then the status says "pick a model · /model" instead of "ready". `--model`, `-c` and the desktop's saved pick win.
+- A retried call tells the window when the next try is (`retry_at`, `tries` on the retry notice); the retry policy is
+  unchanged.
+- Ctrl+C with text in the box clears it (↑ brings it back, "ctrl-c again quits"); an empty box quits. Ctrl+D with text
+  deletes forward instead of quitting.
+- The exit recap starts on its own line instead of running into the message box.
+- Claude's slash commands show only on Claude, after tazuna's own under a "Claude" heading.
+- Shift+Tab during a permission question no longer changes the mode.
+- A message sent while a reply runs or retries shows as queued until it goes (it looked sent); a message typed during a
+  chat's hand-off to the agent no longer disappears; the retry line no longer shows twice.
+- A turn's time leaves out the wait for your answer to a permission question ("Done 2 s", not 21 s); the cockpit's clock
+  too.
+- Times under a tenth of a second read "<0.1 s", never "0.0s"; "t/s" for speed; the ctrl-o totals wrap by whole facts.
+
 ## 0.1.227 (2026-11-25): each call's timing on its own receipt row
 
 - A call's time to first token, speed and duration stay on its own receipt row: a call that never finished no longer

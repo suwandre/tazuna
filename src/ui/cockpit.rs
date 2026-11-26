@@ -195,10 +195,10 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
                 let c = s.call_time(i);
                 let mut l = vec![Span::styled(format!("#{} ", i + 1), st(th.faint)), Span::styled(human(data[i]), st(th.text)), Span::styled(" out", st(th.faint))];
                 if let Some(ms) = c.and_then(|c| c.ttft_ms) {
-                    l.extend([Span::styled(" · ", st(th.faint)), Span::styled(format!("{:.1}s", ms / 1000.0), st(th.text)), Span::styled(" first", st(th.faint))]);
+                    l.extend([Span::styled(" · ", st(th.faint)), Span::styled(super::tenths(ms / 1000.0), st(th.text)), Span::styled(" first", st(th.faint))]);
                 }
                 if let Some(c) = c.filter(|c| c.gen_ms > 0.0) {
-                    l.extend([Span::styled(" · ", st(th.faint)), Span::styled(format!("{:.0}", c.out as f64 / c.gen_ms * 1000.0), st(th.text)), Span::styled(" tok/s", st(th.faint))]);
+                    l.extend([Span::styled(" · ", st(th.faint)), Span::styled(format!("{:.0}", c.out as f64 / c.gen_ms * 1000.0), st(th.text)), Span::styled(" t/s", st(th.faint))]);
                 }
                 Line::from(l)
             }
@@ -220,12 +220,12 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         f.render_widget(Paragraph::new(ylab), axis);
         // the call in flight, live: the wait for its first token, then how fast it writes (≈: its output is estimated until
         // it ends); between calls the last one's exact figures
-        let secs = |ms: f64| format!("{:.1}s", ms / 1000.0);
+        let secs = |ms: f64| super::tenths(ms / 1000.0);
         let pace_line = match (s.in_flight(), s.calls.last()) {
             (Some((start, None, _)), _) => vec![Span::styled("waiting for first token · ", st(th.faint)), Span::styled(secs(v.clock_ms - start), st(th.text))],
             (Some((start, Some(first), est)), _) => {
                 let rate = if v.clock_ms - first > 500.0 { format!("≈{:.0}", est / (v.clock_ms - first) * 1000.0) } else { "…".into() };
-                vec![Span::styled(rate, st(th.text)), Span::styled(" tok/s · ", st(th.faint)), Span::styled(secs(first - start), st(th.text)), Span::styled(" to first token", st(th.faint))]
+                vec![Span::styled(rate, st(th.text)), Span::styled(" t/s · ", st(th.faint)), Span::styled(secs(first - start), st(th.text)), Span::styled(" to first token", st(th.faint))]
             }
             // between calls the session's figures, as the run's summary line has them: the last call's alone (743 tok/s beside
             // the summary's 788, a user asking which was right, 2026-11-12) are one click away, on the chart above
@@ -233,11 +233,11 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
                 let (ttft, tps, e2e) = crate::session::speed(&s.calls);
                 let mut l = vec![];
                 if let Some(r) = tps {
-                    l.extend([Span::styled(format!("{r:.0}"), st(th.text)), Span::styled(" tok/s writing", st(th.faint))]);
+                    l.extend([Span::styled(format!("{r:.0}"), st(th.text)), Span::styled(" t/s writing", st(th.faint))]);
                 }
                 if let Some(e) = e2e {
                     l.extend([Span::styled(if l.is_empty() { "" } else { " · " }, st(th.faint)), Span::styled(format!("{e:.0}"), st(th.text)),
-                        Span::styled(if tps.is_some() { " end to end" } else { " tok/s end to end" }, st(th.faint))]);
+                        Span::styled(if tps.is_some() { " end to end" } else { " t/s end to end" }, st(th.faint))]);
                 }
                 if let Some(t) = ttft {
                     l.extend([Span::styled(if l.is_empty() { "" } else { " · " }, st(th.faint)), Span::styled(secs(t), st(th.text)), Span::styled(" to first token", st(th.faint))]);
@@ -385,9 +385,9 @@ fn tool_tally(s: &Session) -> Vec<(String, usize, usize, f64, usize)> {
     out
 }
 
-/// A duration in its own unit: "7.1s", "30.7m", "1.2h".
+/// A duration in its own unit: "7.1 s" ("<0.1 s", not "0.0s"), "30.7m", "1.2h".
 fn dur(secs: f64) -> String {
-    if secs < 60.0 { format!("{secs:.1}s") } else if secs < 3600.0 { format!("{:.1}m", secs / 60.0) } else { format!("{:.1}h", secs / 3600.0) }
+    if secs < 60.0 { super::tenths(secs) } else if secs < 3600.0 { format!("{:.1}m", secs / 60.0) } else { format!("{:.1}h", secs / 3600.0) }
 }
 
 /// Shortens a path from the left so the file name stays visible.

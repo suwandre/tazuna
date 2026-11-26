@@ -415,6 +415,9 @@ pub struct View {
     pub ask_risky: bool,
     /// Vim mode's state for the composer ("NORMAL", "INSERT"); empty when vim mode is off.
     pub vim: &'static str,
+    /// The session is on Claude and Claude cannot run (not installed, signed out): what the status says in place of "ready"
+    /// (design review 14).
+    pub cant_run: Option<&'static str>,
 }
 
 /// `/login`: the providers (name, its state now), and a provider's page while its key is typed.
@@ -728,7 +731,9 @@ fn draw_menu(f: &mut Frame, v: &View, th: &Theme, over: Rect) {
         return;
     }
     let none = v.menu.is_empty();
-    let area = overlay_area(over, if none { 1 } else { v.menu.len().min(10) }, true);
+    // Claude's commands after tazuna's, under a heading of their own (editor::command_menu): one row more
+    let claude_at = v.menu.iter().position(|(_, d)| crate::editor::claude_row(d).is_some());
+    let area = overlay_area(over, if none { 1 } else { (v.menu.len() + claude_at.is_some() as usize).min(10) }, true);
     let sel = v.menu_sel.min(v.menu.len().saturating_sub(1));
     let count = if none { String::new() } else { format!("{}/{}", sel + 1, v.menu.len()) };
     // esc clears the draft, and the menu goes with it ("esc closes" promised the draft would stay, design review 11)
@@ -743,15 +748,25 @@ fn draw_menu(f: &mut Frame, v: &View, th: &Theme, over: Rect) {
     // by the rows the box shows, which may be fewer than the list's ten: in a short window the selected row scrolled out
     // of sight under the border (design review 11)
     let shown = inner.height as usize;
-    let first = sel.saturating_sub(shown.saturating_sub(1));
+    // the rows drawn: a command by its index, the heading as None
+    let rows: Vec<Option<usize>> = (0..v.menu.len()).flat_map(|i| [(claude_at == Some(i)).then_some(None), Some(Some(i))]).flatten().collect();
+    let at = rows.iter().position(|r| *r == Some(sel)).unwrap_or(0);
+    let first = at.saturating_sub(shown.saturating_sub(1));
     let name_w = v.menu.iter().map(|(c, _)| c.width()).max().unwrap_or(8).min(24) + 3;
-    let lines: Vec<Line> = v.menu.iter().enumerate().skip(first).take(shown).map(|(i, (c, d))| {
+    let lines: Vec<Line> = rows.iter().skip(first).take(shown).map(|r| {
+        let Some(i) = *r else { return Line::from(Span::styled(" Claude", st(th.faint).add_modifier(Modifier::BOLD))) };
+        let (c, d) = &v.menu[i];
+        // "Clear the conversation", as tazuna's own read
+        let d: String = match crate::editor::claude_row(d) {
+            Some(r) => r.chars().take(1).flat_map(char::to_uppercase).chain(r.chars().skip(1)).collect(),
+            None => d.clone(),
+        };
         let on = i == sel;
         // the selected row has a mark too, as the model and session lists: with NO_COLOR the terminal library resets
         // every attribute with its (empty) colour, so the fill alone left no row marked (design review 11)
         let name: String = format!("{}{c:<n$}", if on { "›" } else { " " }, n = name_w - 1).chars().take(name_w).collect();
         // a description cut short ends in "…" (cockpit's narrower menu cut "(enable, disca" with nothing, design review 10)
-        let about = ellipsis(d, w.saturating_sub(name_w + 1));
+        let about = ellipsis(&d, w.saturating_sub(name_w + 1));
         let pad = " ".repeat(w.saturating_sub(name.width() + about.width()));
         let style = if on { picked(th) } else { st(th.text).add_modifier(Modifier::BOLD) };
         Line::from(vec![Span::styled(name, style), Span::styled(about, if on { style.remove_modifier(Modifier::BOLD) } else { st(th.dim) }), Span::styled(pad, style)])
@@ -1653,6 +1668,7 @@ pub fn activity(s: &Session, v: &View, th: &Theme) -> (&'static str, String, Col
     match s.activity {
         // the turn is over, but claude's background work goes on: say so where "done" would be (ctrl-b lists it)
         Activity::Ready | Activity::Done if v.bg_running > 0 => (spin, format!("{} working in background · ctrl-b", v.bg_running), th.accent),
+        Activity::Ready if let Some(why) = v.cant_run => ("!", why.into(), th.warn),
         Activity::Ready => ("●", "ready".into(), th.dim),
         // keep-alive pings and no output (the own loop's provider queueing it): said, so it does not look like tazuna hangs
         Activity::Waiting if s.waiting_note.is_some() => (spin, "provider still processing (no output yet)".into(), th.warn),
@@ -1670,6 +1686,11 @@ pub fn activity(s: &Session, v: &View, th: &Theme) -> (&'static str, String, Col
         Activity::Done if s.verify_cancelled || matches!(s.blocks.iter().rev().find_map(|b| if let Block::Done(d) = b { Some(d) } else { None }), Some(d) if d.stopped) => ("■", "stopped".into(), th.dim),
         Activity::Done => ("✓", "done".into(), th.ok),
     }
+}
+
+/// Seconds to a tenth: "1.5 s", and "<0.1 s" for less, never "0.0s" (design review 14).
+pub fn tenths(secs: f64) -> String {
+    if secs < 0.05 { "<0.1 s".into() } else { format!("{secs:.1} s") }
 }
 
 /// A wait in the units the line under an answer uses: "8 s", "4 min 52 s".
@@ -2203,6 +2224,16 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
         lines.extend(wrap(working_row(s, v, th), width.max(10), &[Span::raw("   ")]));
         owners.resize(lines.len(), None);
     }
+    // messages typed during the run wait under it, dim, until they go: they were drawn as sent, amid its retries (design
+    // review 14)
+    for q in &s.queued {
+        let more = if q.trim_end().contains('\n') { " …" } else { "" };
+        let first = ellipsis(q.lines().next().unwrap_or_default(), width.saturating_sub(4 + more.len()));
+        lines.push(Line::default());
+        lines.push(Line::from(vec![Span::styled(BAR, st(th.faint)), Span::styled(format!("{first}{more}"), st(th.dim))]));
+        lines.push(Line::from(vec![Span::styled(BAR, st(th.faint)), Span::styled("queued · goes after this reply", st(th.faint))]));
+        owners.resize(lines.len(), None);
+    }
     let tail = lines.len() - before;
     let footer = background_lines(s, v, th, width);
     if !footer.is_empty() {
@@ -2613,19 +2644,20 @@ fn block_lines(b: &Block, i: usize, s: &Session, v: &View, th: &Theme, o: &Opts,
             let mut facts = vec![format!("↑ {}", human(u.total_in())), format!("{} call{}", s.turns, if s.turns == 1 { "" } else { "s" }),
                 format!("cache {:.0}% ({})", u.cache_hit() * 100.0, human(u.cache_read)), format!("↓ {}", human(u.output)), files_n(files)];
             if let Some(f) = ttft {
-                facts.push(format!("{:.1}s to first token", f / 1000.0));
+                facts.push(format!("{} to first token", tenths(f / 1000.0)));
             }
             // writing (after the first token) and end to end (the waits included), each where known
             match (tps, e2e) {
-                (Some(r), Some(e)) => facts.extend([format!("{r:.0} tok/s writing"), format!("{e:.0} end to end")]),
-                (Some(r), None) => facts.push(format!("{r:.0} tok/s writing")),
-                (None, Some(e)) => facts.push(format!("{e:.0} tok/s end to end")),
+                (Some(r), Some(e)) => facts.extend([format!("{r:.0} t/s writing"), format!("{e:.0} end to end")]),
+                (Some(r), None) => facts.push(format!("{r:.0} t/s writing")),
+                (None, Some(e)) => facts.push(format!("{e:.0} t/s end to end")),
                 (None, None) => {}
             }
             // one short line under each answer: how long and what it cost (design review, 2026-11-19). The second
             // line of numbers was the whole conversation's so far, the same under every answer and wrapping onto two
             // lines: it shows when the line is clicked, or with everything expanded.
-            let took = if d.secs < 60.0 { format!("{:.0} s", d.secs) } else { format!("{} min {:02} s", d.secs as u64 / 60, d.secs as u64 % 60) };
+            // tenths under 10 s: "Done 0 s" for a quick turn (design review 14)
+            let took = if d.secs < 10.0 { tenths(d.secs) } else if d.secs < 60.0 { format!("{:.0} s", d.secs) } else { format!("{} min {:02} s", d.secs as u64 / 60, d.secs as u64 % 60) };
             // an estimate says so, and a cost nobody can tell is not shown as one (design review 12); a plan without a
             // reference price: the plan, not "$0" (the user, 2026-11-25)
             let cost = match d.bill.as_ref() {
@@ -2654,9 +2686,11 @@ fn block_lines(b: &Block, i: usize, s: &Session, v: &View, th: &Theme, o: &Opts,
             }
             let mut out = vec![(Line::from(first), vec![Span::raw("  ")])];
             if open {
-                // it wraps between its facts, each whole: "· 424" / "tok/s end to end" (design review 13)
-                let facts: Vec<String> = facts.iter().map(|f| whole(f)).collect();
-                out.push((Line::from(Span::styled(format!("  so far: {}", facts.join("\u{a0}· ")), st(th.dim))), vec![Span::raw("  ")]));
+                // rows of whole facts, the separator between two on a row only: it wrapped as "· 424" / "tok/s end to end"
+                // (design review 13), then with a "·" left at a row's end (14)
+                for row in fact_rows("so far:", &facts, width.saturating_sub(2)) {
+                    out.push((Line::from(Span::styled(format!("  {row}"), st(th.dim))), vec![Span::raw("  ")]));
+                }
             }
             out
         }
@@ -2671,8 +2705,8 @@ fn verify_lines(x: &crate::session::Verify, v: &View, th: &Theme) -> Vec<Prefixe
         _ if x.timed_out => ("·", th.faint, format!("timed out after {:.0}s · not verified", x.secs)),
         _ if x.cannot_run => ("·", th.faint, "could not run (command not found) · not verified".to_string()),
         None => (spinner(v.clock_ms), th.accent, "running…".to_string()),
-        Some(true) => ("✓", th.ok, format!("passed · {:.1}s", x.secs)),
-        Some(false) => ("✗", th.err, format!("failed · {:.1}s", x.secs)),
+        Some(true) => ("✓", th.ok, format!("passed · {}", tenths(x.secs))),
+        Some(false) => ("✗", th.err, format!("failed · {}", tenths(x.secs))),
     };
     let round = if x.round > 1 { format!(" (round {})", x.round) } else { String::new() };
     let mut out = vec![(
@@ -2748,7 +2782,7 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool,
         meta = if meta.is_empty() { format!("{} · {last}", whole(&format!("{n} steps"))) } else { format!("{meta} · {}", whole(&format!("{n} steps"))) };
     }
     if let (true, Some(secs)) = (o.durations, t.secs()) {
-        meta.push_str(&format!(" · {secs:.1}s"));
+        meta.push_str(&format!(" · {}", tenths(secs)));
     }
     let gutter = || vec![Span::raw("    "), Span::styled(BAR, st(th.faint))];
     // closed, the call is one short summary (a subagent's whole prompt ran 25 rows, 2026-11-02); opened (a click, or
@@ -3386,6 +3420,22 @@ pub fn wrap(mut line: Line<'static>, width: usize, cont: &[Span<'static>]) -> Ve
     out
 }
 
+/// `facts` after `head`, as many on a row as fit in `room` columns (each whole, " · " between two on one row).
+fn fact_rows(head: &str, facts: &[String], room: usize) -> Vec<String> {
+    let mut rows = vec![head.to_string()];
+    for f in facts.iter().map(|f| whole(f)) {
+        let last = rows.last_mut().expect("one row at least");
+        let sep = if *last == head { " " } else { " · " };
+        if last.width() + sep.width() + f.width() <= room {
+            last.push_str(sep);
+            last.push_str(&f);
+        } else {
+            rows.push(f);
+        }
+    }
+    rows
+}
+
 /// The no-break space: `wrap` breaks a row only at plain spaces.
 const NBSP: char = '\u{a0}';
 /// A block's fold mark, held to the word before it.
@@ -3474,6 +3524,12 @@ pub fn composer_rows_in(v: &View, th: &Theme, glyph: &str, placeholder: &str, wi
     // an open question over the draft: what is typed meanwhile stays in sight under it (design review 13)
     let ask = v.asking.as_ref().map(|q| asking_rows(q, th, width, v.ask_risky, v.confirm && !typed, typed)).unwrap_or_default();
     if !ask.is_empty() && !typed {
+        // a note for a moment ("answer first: …") in place of the answers' keys: beside them it narrowed the question to a
+        // column of a few words (design review 14)
+        let mut ask = ask;
+        if let (Some((t, _)), Some(last)) = (&v.toast, ask.last_mut()) {
+            *last = Line::from(Span::styled(format!("   {t}"), st(th.ok)));
+        }
         return ask;
     }
     if !typed {
@@ -3830,14 +3886,14 @@ pub fn split_row(f: &mut Frame, area: Rect, left: Line<'static>, right: Line<'st
 mod tests {
     /// A live cockpit view with nothing open.
     fn live_view() -> View {
-        View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false }
+        View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None }
     }
 
     /// Under 110 columns the cockpit's header carries the cost, after the status: "● ready   ≈$0", not "≈$0● ready".
     #[test]
     fn the_narrow_header_puts_the_cost_after_the_status() {
         let s = Session::new("", "medium");
-        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
         term.draw(|f| { draw(f, &s, &v); }).unwrap();
         let top = (0..80).map(|x| term.backend().buffer()[(x, 0)].symbol().to_string()).collect::<String>();
@@ -3849,7 +3905,7 @@ mod tests {
     fn replay_strip_keeps_state_and_real_keys_without_a_live_composer() {
         let mut s = Session::new("Why does the retry test fail?", "medium");
         for design in [Design::Cockpit, Design::Zen] {
-            let mut v = View { design, expand_all: false, scroll: 0, clock_ms: 18_000.0, speed: 0.25, paused: false, live: false, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+            let mut v = View { design, expand_all: false, scroll: 0, clock_ms: 18_000.0, speed: 0.25, paused: false, live: false, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
             for (width, height) in [(40, 12), (80, 24), (120, 34), (160, 40)] {
                 for paused in [false, true] { for expanded in [false, true] { for initialized in [false, true] {
                     (v.paused, v.expand_all) = (paused, expanded);
@@ -4007,9 +4063,15 @@ mod tests {
         let done = Line::from(vec![Span::raw("✓ Done"), Span::raw(format!("  {}  {}", whole("2 min 03 s"), whole("cost not known"))), Span::raw(FOLD_SHUT)]);
         let rows: Vec<String> = wrap(done, 33, &[]).iter().map(text).collect();
         assert!(rows.iter().all(|r| r.trim() != "▸") && rows.last().unwrap().ends_with("cost not known  ▸"), "{rows:#?}");
-        let facts = ["↑ 15.0k", "5 calls", "cache 32% (4.8k)", "↓ 800", "1 file", "0.1s to first token", "424 end to end"].map(whole).join("\u{a0}· ");
-        let rows: Vec<String> = wrap(Line::from(format!("  so far: {facts}")), 56, &[Span::raw("  ")]).iter().map(text).collect();
-        assert!(rows.iter().any(|r| r.contains("0.1s to first token")) && rows.iter().any(|r| r.contains("424 end to end")) && rows.iter().all(|r| !r.trim_start().starts_with('·')), "{rows:#?}");
+        // the ctrl-o "so far:" facts: whole, and no "·" at a row's start or end (design review 14: one ended "·" at 80 columns)
+        let facts = ["↑ 15.0k", "5 calls", "cache 32% (4.8k)", "↓ 800", "1 file", "<0.1 s to first token", "486 t/s end to end"].map(String::from);
+        for room in [78, 54, 30] {
+            let rows: Vec<String> = fact_rows("so far:", &facts, room).iter().map(|r| r.replace(NBSP, " ")).collect();
+            assert!(rows.iter().any(|r| r.contains("<0.1 s to first token")) && rows.iter().any(|r| r.contains("486 t/s end to end")), "{rows:#?}");
+            assert!(rows.iter().all(|r| r.width() <= room && !r.starts_with('·') && !r.trim_end().ends_with('·')), "{room}: {rows:#?}");
+        }
+        assert_eq!(super::tenths(0.04), "<0.1 s");
+        assert_eq!(super::tenths(1.46), "1.5 s");
         // the composer: words whole where they fit; a click and up/down land where the text is drawn
         let typed = "this is a long message that will wrap onto a second line in the composer box and keep going";
         let v = View { input: typed.into(), cursor: typed.len(), ..live_view() };
@@ -4171,7 +4233,7 @@ mod tests {
 
     #[test]
     fn the_command_menu_lists_commands_over_the_box() {
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: "/re".into(), cursor: 3, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: "/re".into(), cursor: 3, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         let cmds: Vec<String> = ["new", "resume", "review", "rewind", "security-review"].map(String::from).to_vec();
         v.menu = crate::editor::command_menu("re", &cmds, &[]);
         v.menu_sel = 1;
@@ -4180,13 +4242,16 @@ mod tests {
         let b = term.backend().buffer().clone();
         let text: Vec<String> = (0..b.area.height).map(|y| (0..b.area.width).map(|x| b[(x, y)].symbol()).collect::<String>().trim_end().to_string()).collect();
         let all = text.join("\n");
-        for want in ["┌ commands ─", " 2/4 ─┐", "›/review", "↑↓ move   enter runs   tab fills in   esc clears", "/resume", "Continue an earlier conversation of this folder", "/security-review", "Claude: a security review"] {
+        for want in ["┌ commands ─", " 2/4 ─┐", "›/review", "↑↓ move   enter runs   tab fills in   esc clears", "/resume", "Continue an earlier conversation of this folder", "/security-review", "A security review"] {
             assert!(all.contains(want), "{want}\n{all}");
         }
         assert!(!all.contains("/new"), "only matches: {all}");
-        // the menu sits on the transcript's bottom rows, just over the box
+        // Claude's after tazuna's, under their heading, without "Claude: " in each (design review 14)
+        let row = |w: &str| text.iter().position(|l| l.contains(w)).unwrap();
+        assert!(row("/rewind") < row("│ Claude") && row("│ Claude") + 1 == row("/security-review") && !all.contains("Claude: "), "{all}");
+        // the menu sits on the transcript's bottom rows, just over the box (a row more for the heading)
         let first = text.iter().position(|l| l.contains("commands")).unwrap();
-        assert_eq!(first, 26 - 4 - 2, "{all}");
+        assert_eq!(first, 26 - 5 - 2, "{all}");
         // nothing matches: the frame says so (the menu just went)
         (v.menu, v.input) = (vec![], "/zz".into());
         term.draw(|f| { draw(f, &Session::new("", "medium"), &v); }).unwrap();
@@ -4255,7 +4320,7 @@ mod tests {
         s.limits = Some((12.0, 14.0));
         s.balance = Some(8.816);
         for d in [Design::Cockpit, Design::Zen] {
-            let v = View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+            let v = View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
             term.draw(|f| { draw(f, &s, &v); }).unwrap();
             let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
@@ -4266,7 +4331,7 @@ mod tests {
         }
         // on SubRouter, the cockpit says its balance whole
         (s.provider, s.price_m, s.credits) = (Some("SubRouter".into()), Some((0.1, 0.01, 0.4)), vec![("SubRouter".into(), Some("$8.82 left".into()))]);
-        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
         term.draw(|f| { draw(f, &s, &v); }).unwrap();
         let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
@@ -4282,14 +4347,14 @@ mod tests {
             result: Some("It runs sequentially.".into()), error: false, started_ms: 0.0, done_ms: Some(6700.0), sub: None, at: None }));
         s.blocks.push(Block::Tool(Tool { id: "b".into(), name: "Bash".into(), input: serde_json::json!({"command": format!("gh run view 1 --jq '{}'", "x".repeat(400))}),
             result: Some("ok".into()), error: false, started_ms: 0.0, done_ms: Some(4300.0), sub: None, at: None }));
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         let text = |v: &View| { let (l, _, owners) = transcript(&s, v, Design::Cockpit.theme(), &cockpit::OPTS, 100); (l.iter().map(|l| l.spans.iter().map(|x| x.content.to_string()).collect::<String>()).collect::<Vec<_>>(), owners) };
         let (closed, owners) = text(&v);
         // closed: the subagent as who and what for (its 25-row prompt hidden), the long command cut, both marked ▸
         assert!(closed[0].contains("explorer: Inspect load-secrets.sh retry impact") && closed[0].contains("▸") && !closed.concat().contains("fetch_secret"), "{closed:#?}");
         assert!(closed.len() <= 6, "{} rows: {closed:#?}", closed.len());
         assert_eq!((owners[0], owners.last().copied().flatten()), (Some(0), Some(1)));
-        assert!(closed.last().unwrap().starts_with("         · 1 line · 4.3s"), "a long call's counts on a row of their own: {closed:#?}");
+        assert!(closed.last().unwrap().starts_with("         · 1 line · 4.3 s"), "a long call's counts on a row of their own: {closed:#?}");
         v.open.insert(0);
         let (opened, _) = text(&v);
         assert!(opened.concat().contains("How is fetch_secret invoked") && opened.concat().contains("It runs sequentially") && opened[0].contains("▾"), "{opened:#?}");
@@ -4435,7 +4500,7 @@ mod tests {
         assert!(links("[x](javascript:alert(1)) [y](https://a.b/\u{1b}]8;;)").iter().all(|(_, u)| u.is_none()), "only plain http(s) addresses");
         let mut s = Session::new("", "medium");
         s.blocks.push(Block::Text { text: "Sources: [GitHub changelog](https://github.blog/c)".into(), live: false });
-        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20)).unwrap();
         let mut areas = None;
         term.draw(|f| areas = Some(draw(f, &s, &v))).unwrap();
@@ -4457,7 +4522,7 @@ mod tests {
     #[test]
     fn the_session_picker_lists_and_marks_the_selected_one() {
         let s = Session::new("", "medium");
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         v.sessions = Some(SessionsPanel { rows: vec!["8m ago · 2 messages · review PR 1370  (4cb8a388)".into(), "2h ago · 5 messages · fix the login  (aa11bb22)".into()], selected: 1 });
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
         term.draw(|f| { draw(f, &s, &v); }).unwrap();
@@ -4469,7 +4534,7 @@ mod tests {
     #[test]
     fn background_tasks_show_live_under_the_transcript() {
         let s = Session::new("", "medium");
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 400.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 400.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         let row = |agent: &str, kind: &str, secs, tokens, tools, doing: &str| TaskRow { kind: kind.into(), description: "Tick workflows loss window check".into(), status: "running".into(), secs, output: String::new(), agent: agent.into(), tokens, tools, doing: doing.into() };
         assert!(transcript(&s, &v, Design::Cockpit.theme(), &cockpit::OPTS, 100).0.is_empty(), "nothing while none run");
         v.running = vec![row("explorer", "local_agent", 72, 21_129, 3, "Running Show Ledger tick workflow"), row("", "local_bash", 12, 0, 0, "")];
@@ -4508,7 +4573,7 @@ mod tests {
     #[test]
     fn files_panel_totals_and_the_diff_view() {
         let s = Session::new("", "medium");
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         v.changed = (0..12).map(|i| Changed { path: format!("shared/src/testing/file{i}.ts"), added: 10 + i, removed: i, diff: None }).collect();
         let text = |v: &View| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 40)).unwrap();
@@ -4530,7 +4595,7 @@ mod tests {
     fn key_hints_fit_whole_and_point_to_the_rest() {
         assert_eq!(fitted_keys("a · bb · cc", 100), "a · bb · cc");
         assert_eq!(fitted_keys("a · bb · cc", 16), "a · /keys all", "never a hint cut in half");
-        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         let line: String = composer_line(&v, Design::Cockpit.theme(), "›", "Message tazuna…", 90).spans.iter().map(|s| s.content.to_string()).collect();
         assert!(line.width() <= 90 && line.ends_with("/keys all"), "{line}");
         let mut v = v;
@@ -4541,7 +4606,7 @@ mod tests {
 
     #[test]
     fn composer_grows_with_lines_and_keeps_the_latest() {
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         let th = Design::Cockpit.theme();
         assert_eq!(composer_height(&v, 40), 3, "empty: one row");
         v.input = "first\nsecond".into();
@@ -4569,7 +4634,7 @@ mod tests {
     fn up_and_down_walk_the_rows_a_long_line_wraps_into() {
         // the user's case: a long last line wrapping past the box's rows, the cursor at a row's end
         let th = Design::Cockpit.theme();
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         let line = "abcdefghij".repeat(20); // 200 chars: 6 rows of 34 at width 38 (room 34)
         v.input = format!("one\ntwo\n{line}");
         v.cursor = 8 + 34; // the end of the long line's first row
@@ -4601,7 +4666,7 @@ mod tests {
 
     #[test]
     fn a_click_lands_where_the_text_is_drawn() {
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: "hello world\nsecond".into(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: "hello world\nsecond".into(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         // cursor at 0 is drawn as a cell before "h": columns 3 (cursor), 4 (h) ...
         assert_eq!(composer_index(&v, 38, 3, 0), Some(0));
         assert_eq!(composer_index(&v, 38, 4 + 6, 0), Some(6), "the w of world");
@@ -4634,7 +4699,7 @@ mod tests {
     fn cockpit_centers_its_reading_lane_and_hit_targets_inside_the_original_frame() {
         let mut s = Session::new("", "medium");
         s.blocks.push(Block::Text { text: "Read [the guide](https://example.com/guide).\n\n```rust\nlet answer = 42;\n```".into(), live: false });
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         for width in [80, 109, 110, 120, 130, 131, 132, 175] {
             for live in [true, false] {
                 v.live = live;
@@ -4667,7 +4732,7 @@ mod tests {
         }
         s.turn_usage = (0..40).map(|i| crate::session::Usage { input: 10, cache_write: 100, cache_read: 50_000, output: 200 + 300 * (i % 7) }).collect();
         s.calls.push(crate::session::CallTime { ttft_ms: Some(1500.0), gen_ms: 10_000.0, out: 12_000, total_ms: 11_500.0 });
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         let render = |s: &Session, v: &View, width: u16, height: u16| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
             let mut areas = Areas::default();
@@ -4690,7 +4755,7 @@ mod tests {
                 v.live = live;
                 let (side, areas) = render(&s, &v, width, height);
                 let text = side.lines().map(|l| l.trim_matches(['│', ' '])).collect::<Vec<_>>().join(" ");
-                assert!(text.contains("1200 tok/s writing") && text.contains("1043 end to end") && text.contains("1.5s to first token"), "all pace metrics must fit the fixed rail at {width}×{height}, live={live}: {side}");
+                assert!(text.contains("1200 t/s writing") && text.contains("1043 end to end") && text.contains("1.5 s to first token"), "all pace metrics must fit the fixed rail at {width}×{height}, live={live}: {side}");
                 let chart = areas.bars.unwrap().0;
                 assert!(chart.height >= 2, "keep both the upper value and zero axis labels at {width}×{height}, live={live}: {side}");
                 assert!(side.contains("out per call · #"), "keep the chart caption: {side}");
@@ -4704,7 +4769,7 @@ mod tests {
         let (side, areas) = render(&s, &v, 120, 34);
         assert!(areas.bars.unwrap().0.height >= 2, "keep the zero axis with three live tool types: {side}");
         let text = side.lines().map(|l| l.trim_matches(['│', ' '])).collect::<Vec<_>>().join(" ");
-        assert!(text.contains("1200 tok/s writing") && text.contains("1043 end to end") && text.contains("1.5s to first token"), "complete pace labels in a crowded live rail: {side}");
+        assert!(text.contains("1200 t/s writing") && text.contains("1043 end to end") && text.contains("1.5 s to first token"), "complete pace labels in a crowded live rail: {side}");
         assert_eq!(areas.tool_rows.len(), 3);
         for label in ["cache read", "cache write", "estimate (list prices)", "no file changed yet", "bash", "edit", "write"] {
             assert!(side.contains(label), "preserve other panel content ({label}): {side}");
@@ -4714,7 +4779,7 @@ mod tests {
             v.cursor = input.len();
             let (side, areas) = render(&s, &v, 120, 34);
             let text = side.lines().map(|l| l.trim_matches(['│', ' '])).collect::<Vec<_>>().join(" ");
-            assert!(areas.bars.unwrap().0.height >= 2 && side.contains("out per call · #") && text.contains("1.5s to first token"), "keep both axes, caption and pace with an extra composer row: {side}");
+            assert!(areas.bars.unwrap().0.height >= 2 && side.contains("out per call · #") && text.contains("1.5 s to first token"), "keep both axes, caption and pace with an extra composer row: {side}");
         }
         v.input.clear();
         v.cursor = 0;
@@ -4730,7 +4795,7 @@ mod tests {
         let mut s = Session::new("", "medium");
         let on = |s: &mut Session, e: serde_json::Value, at: f64| s.apply(&e, at);
         on(&mut s, serde_json::json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "c1", "name": "edit", "input": {"path": "main.rs", "old": "a", "new": "b"}}]}}), 1.0);
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         let render = |s: &Session, v: &View| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
             term.draw(|f| { draw(f, s, v); }).unwrap();
@@ -4770,7 +4835,7 @@ mod tests {
         let mut s = Session::new("", "medium");
         let on = |s: &mut Session, e: serde_json::Value, at: f64| s.apply(&e, at);
         on(&mut s, serde_json::json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "c1", "name": "edit", "input": {"path": "main.rs", "old": "old line", "new": "new line"}}]}}), 1.0);
-        let mut v = View { design: Design::Zen, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: Some("edit: main.rs".into()), mode: "ask".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+        let mut v = View { design: Design::Zen, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: Some("edit: main.rs".into()), mode: "ask".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         let render = |s: &Session, v: &View| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
             term.draw(|f| { draw(f, s, v); }).unwrap();
@@ -4820,7 +4885,7 @@ mod tests {
     #[test]
     fn a_question_marks_its_own_call_and_small_screens_keep_what_matters() {
         let on = |s: &mut Session, e: serde_json::Value, at: f64| s.apply(&e, at);
-        let view = |d: Design| View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "ask".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+        let view = |d: Design| View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "ask".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         let render = |s: &Session, v: &View, w: u16, h: u16| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
             term.draw(|f| { draw(f, s, v); }).unwrap();
@@ -4990,7 +5055,7 @@ mod tests {
         // a notice longer than NOTICE_CHARS: cut and clickable, opened all of it
         let mut s = Session::new("", "medium");
         s.blocks.push(Block::Notice { text: "x".repeat(300), error: false, ended: false });
-        let lines = |open: bool| block_lines(&s.blocks[0], 0, &s, &View { design: Design::Cockpit, expand_all: open, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false }, Design::Cockpit.theme(), &cockpit::OPTS, open, 400).iter().map(|(l, _)| l.to_string()).collect::<String>();
+        let lines = |open: bool| block_lines(&s.blocks[0], 0, &s, &View { design: Design::Cockpit, expand_all: open, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None }, Design::Cockpit.theme(), &cockpit::OPTS, open, 400).iter().map(|(l, _)| l.to_string()).collect::<String>();
         assert!(lines(false).contains("click to show") && !lines(true).contains("click to show"));
     }
 
@@ -5072,7 +5137,7 @@ mod tests {
     #[test]
     fn a_modal_fades_what_is_behind_it() {
         let s = Session::new("", "medium");
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None };
         let th = Design::Cockpit.theme();
         let cell = |v: &View| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
@@ -5256,7 +5321,7 @@ mod tests {
             let screen = rows.join("\n");
             let at = rows.iter().position(|r| r.contains("✓ Done")).unwrap();
             let change: Vec<&str> = rows[at..].iter().map(|r| r.trim()).take_while(|r| !r.is_empty()).collect();
-            assert!(change[0].starts_with("✓ Done  2 s  $0   main.rs +2 −1  NOTES.md +3"), "{w}: {screen}");
+            assert!(change[0].starts_with("✓ Done  2.0 s  $0   main.rs +2 −1  NOTES.md +3"), "{w}: {screen}");
             for item in ["src/components/settings/appearance.rs +1 −1", "config.rs rewritten", "+2 more", "ctrl-o diffs"] {
                 assert!(change.iter().any(|r| r.contains(item)), "{w}: {item} whole: {change:#?}");
             }

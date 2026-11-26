@@ -1018,8 +1018,11 @@ impl Live {
     /// built-in ones. Without them the window's menu held only /create and /agent before a first turn (the user,
     /// 2026-11-20).
     pub fn commands(&self, session: &[String]) -> Vec<String> {
-        let mut all = session.to_vec();
-        if self.provider.is_none() && session.iter().all(|c| crate::session::OWN_COMMANDS.contains(&c.as_str())) {
+        // on another provider tazuna's own only: claude's list stayed after a switch until the own loop's first init (/compact
+        // and skills under "Claude" on GLM, design review 14)
+        let mut all: Vec<String> = session.iter().filter(|c| self.provider.is_none() || crate::session::OWN_COMMANDS.contains(&c.as_str())).cloned().collect();
+        // (not without the claude CLI: nothing of Claude's runs then, design review 14)
+        if self.provider.is_none() && crate::accounts::claude_installed() && session.iter().all(|c| crate::session::OWN_COMMANDS.contains(&c.as_str())) {
             let kept = crate::labels::dir().ok().and_then(|d| claude_commands(&d.join(CLAUDE_COMMANDS), &self.cwd.to_string_lossy()));
             all.extend(kept.unwrap_or_else(|| crate::editor::CLAUDE_COMMON.map(String::from).to_vec()));
         }
@@ -1073,12 +1076,18 @@ impl Live {
             // the own loop takes a message only when the run before it has ended (it folds none into a running turn as
             // claude does): it waits here meanwhile, so the user's stop can give it back (`stop`, design review 13)
             || (self.provider.is_some() && !self.runs.is_empty());
-        if self.verifying || self.handoff.is_some() || behind {
+        let held = self.verifying || self.handoff.is_some() || behind;
+        if held {
             self.held.push_back((text.to_string(), attach, None));
         } else {
             self.start_run(text, attach, None)?;
         }
-        Ok(self.record(json!({"type": "harness_user", "text": text})))
+        // a held message is drawn as queued until it goes (`harness_held_start`, design review 14)
+        let mut e = json!({"type": "harness_user", "text": text});
+        if held {
+            e["queued"] = json!(true);
+        }
+        Ok(self.record(e))
     }
 
     /// `sent`: what the model gets instead of `text` (a handed-over turn's message with the chat's exchanges before it).
@@ -1714,18 +1723,19 @@ impl Live {
     /// folded into the running turn already (`isReplay`) is no longer queued: it stays with that turn.
     pub fn stop(&mut self) -> Option<(f64, Value)> {
         // the own loop's waiting messages, and the hand-offs the user typed (/agent); one a chat asked for stays
-        let mut back: Vec<(String, String)> = vec![];
+        // (the own loop's were drawn as queued: `queued`, so the screen takes them from there and from nowhere else)
+        let mut back: Vec<(String, String, bool)> = vec![];
         self.held.retain(|h| match &h.2 {
-            None => !{ back.push((h.0.clone(), h.0.clone())); true },
-            Some((_, line)) if *line == HANDOFF_SENT => !{ back.push((h.0.clone(), format!("/agent {}", h.0))); true },
+            None => !{ back.push((h.0.clone(), h.0.clone(), true)); true },
+            Some((_, line)) if *line == HANDOFF_SENT => !{ back.push((h.0.clone(), format!("/agent {}", h.0), false)); true },
             Some(_) => true,
         });
         // a second stop kills the process (`interrupt`), and claude's queue goes with it
         if self.interrupting.is_some() {
-            back.extend(self.drop_queued().into_iter().map(|t| (t.clone(), t)));
+            back.extend(self.drop_queued().into_iter().map(|t| (t.clone(), t, false)));
         }
-        for (text, draft) in back {
-            self.give_back(&text, draft);
+        for (text, draft, queued) in back {
+            self.give_back(&text, draft, queued);
         }
         // claude without cancel_queued runs its queue after the stop, as before (nothing is said to come back)
         let cancel = self.cancel_queued && self.provider.is_none();
@@ -1749,10 +1759,13 @@ impl Live {
 
     /// A queued message that will not run goes back to the box: `text` as the screen shows it, `draft` as the box takes it
     /// ("/agent …" for a hand-off).
-    fn give_back(&mut self, text: &str, draft: String) {
+    fn give_back(&mut self, text: &str, draft: String, queued: bool) {
         let mut e = json!({"type": "harness_unqueued", "text": text});
         if draft != text {
             e["draft"] = json!(draft);
+        }
+        if queued {
+            e["queued"] = json!(true);
         }
         let e = self.record(e);
         self.outbox.push(e);
@@ -1929,7 +1942,7 @@ impl Live {
                                 if let Some(i) = self.runs.iter().skip(stopped).rposition(|r| r.prompt == text) {
                                     self.runs.remove(i + stopped);
                                 }
-                                self.give_back(&text, text.clone());
+                                self.give_back(&text, text.clone(), false);
                             }
                             // no run behind the stopped one (or none at all): nothing else it may stop
                             if self.runs.len() < 2 && self.runs.front().is_none_or(|r| self.stop_wait.as_ref() == Some(&r.prompt)) {
@@ -2041,7 +2054,7 @@ impl Live {
                             if let Some(i) = self.checkpoints.iter().rposition(|c| c.text == text) {
                                 self.checkpoints.remove(i);
                             }
-                            self.give_back(&text, text.clone());
+                            self.give_back(&text, text.clone(), false);
                             out.append(&mut self.outbox);
                         }
                         if front.as_deref() != Some(stopped.as_str()) || cut || self.runs.len() < 2 {
@@ -2107,7 +2120,7 @@ impl Live {
         if self.interrupting.is_some_and(|t| t.elapsed().as_secs() >= 3) {
             // the restart drops claude's queue: what waited in it comes back to the box first (design review 13)
             for text in self.drop_queued() {
-                self.give_back(&text, text.clone());
+                self.give_back(&text, text.clone(), false);
             }
             out.append(&mut self.outbox);
             let who = if self.provider.is_some() { "the model" } else { "claude" };
@@ -2342,16 +2355,21 @@ impl Live {
             // later message waited until tazuna was restarted)
             let next = if busy { self.held.iter().position(|h| h.2.is_none()) } else { Some(0) };
             let Some((text, attach, agent)) = next.and_then(|i| self.held.remove(i)) else { break };
+            let typed = agent.is_none();
             let started = match agent {
                 // the chat's question under its line; its process gives way to the agent's
                 Some((sent, line)) => self.start_handoff(&text, &sent).map(|()| json!({"type": "harness_handoff", "text": line, "q": text})),
                 // its message was shown when it was sent; its work begins now
-                None => self.start_run(&text, attach, None).map(|()| json!({"type": "harness_held_start"})),
+                None => self.start_run(&text, attach, None).map(|()| json!({"type": "harness_held_start", "text": &text})),
             };
             match started {
                 Ok(e) => out.push(self.record(e)),
                 Err(e) => {
                     out.extend(self.hand_back());
+                    // a typed one that could not start goes back to the box, not left queued
+                    if typed {
+                        out.push(self.record(json!({"type": "harness_unqueued", "text": text, "queued": true})));
+                    }
                     out.push(self.record(json!({"type": "harness_notice", "text": format!("{e:#}"), "error": true})));
                 }
             }
@@ -3092,9 +3110,15 @@ mod tests {
         // once claude listed its own, the session's list stands
         let listed = [own.clone(), vec!["my-skill".to_string()]].concat();
         assert_eq!(live.commands(&listed).len(), listed.len());
-        // another provider: claude's commands do not run there
+        // another provider: claude's commands do not run there; nor without the claude CLI
+        let sorted = { let mut o = own.clone(); o.sort(); o };
+        crate::accounts::NO_CLAUDE.set(true);
+        assert_eq!(live.commands(&own), sorted);
+        crate::accounts::NO_CLAUDE.set(false);
         live.provider = Some(("https://api.example".into(), "KEY".into()));
-        assert_eq!(live.commands(&own), { let mut o = own.clone(); o.sort(); o });
+        assert_eq!(live.commands(&own), sorted);
+        // switched there from Claude: claude's list from its init is not the own loop's
+        assert_eq!(live.commands(&listed), sorted);
     }
 
     #[test]
@@ -3932,8 +3956,17 @@ mod tests {
         assert!(!stub::sent(&dir, "joke"), "not into the turn's conversation");
         std::fs::remove_file(dir.join("stdin")).ok();
         stub::feed(&live, json!({"type": "result", "subtype": "success", "is_error": false, "result": "12 °C and rain", "total_cost_usd": 0.0}));
-        let kinds: Vec<_> = live.poll().iter().map(|(_, e)| e["type"].as_str().unwrap_or_default().to_string()).collect();
+        let polled = live.poll();
+        let kinds: Vec<_> = polled.iter().map(|(_, e)| e["type"].as_str().unwrap_or_default().to_string()).collect();
         assert_eq!(kinds, ["harness_handoff", "result", "harness_process_end", "harness_held_start"]);
+        // drawn as queued, then a message of the transcript once it goes, after the hand-off's end (design review 14)
+        let mut s = crate::session::Session::new("", "");
+        s.apply(&e, 0.0);
+        assert_eq!(s.queued, ["and a joke about rain?"]);
+        for (t, ev) in &polled {
+            s.apply(ev, *t);
+        }
+        assert!(s.queued.is_empty() && matches!(s.blocks.last(), Some(crate::session::Block::Prompt(p)) if p == "and a joke about rain?"));
         let a = stub::started(&dir);
         assert_eq!((stub::flag(&a, "--resume").as_deref(), stub::flag(&a, "--tools").as_deref()), (Some("chat-1"), Some("")), "the chat's own: {a:?}");
         assert!(stub::sent(&dir, "You answered: 12 °C and rain\n\nThe new message: and a joke about rain?"));

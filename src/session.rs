@@ -427,6 +427,16 @@ pub struct Session {
     /// The open permission questions, oldest first, each as its tool and input: the screen marks the call the front one
     /// is about (with two calls in one message it marked the newest, and the question was about the first).
     pub asked: std::collections::VecDeque<(String, Value)>,
+    /// Since when a permission question has been open (None: none is), and how long questions were open in the run so far:
+    /// the wait is the user's, not the run's ("Done 21 s" for 2 s of work, design review 14).
+    asking_since: Option<f64>,
+    asked_ms: f64,
+    /// Messages typed while a run goes on that wait their turn (live.rs `held`): drawn as queued under it, and a message
+    /// of the transcript only once they are sent (`harness_held_start`). They were drawn as sent, amid the reply's retries
+    /// (design review 14).
+    pub queued: std::collections::VecDeque<String>,
+    /// The wall clock (Unix ms) at the session's 0 ms, as of the last retry: the window's countdown to the next try.
+    retry_epoch_ms: f64,
     /// Esc during verification: the run ends when the tests return, as stopped (the status said a green "✓ done").
     pub verify_cancelled: bool,
     /// Bumped whenever a new block appears or a tool finishes (effects key off it).
@@ -554,6 +564,10 @@ impl Session {
             cut_at: None,
             stopping: false,
             asked: Default::default(),
+            asking_since: None,
+            asked_ms: 0.0,
+            queued: Default::default(),
+            retry_epoch_ms: 0.0,
             verify_cancelled: false,
             new_blocks: 1,
             finished_tools: 0,
@@ -629,13 +643,14 @@ impl Session {
     /// Time the agent has spent working by `now_ms` (into the session): finished runs plus the one in progress. Next to
     /// the session's elapsed time, which includes the user's own.
     pub fn busy(&self, now_ms: f64) -> f64 {
-        self.busy_ms + self.run_since.map_or(0.0, |r| (now_ms - r).max(0.0))
+        self.busy_ms + self.working_for(now_ms)
     }
 
     /// How long the work in progress has been at it by `now_ms` (0 when nothing runs): since its message, the call that
-    /// began it, or the tests.
+    /// began it, or the tests; the waits for the user's answers left out (`clock_off`).
     pub fn working_for(&self, now_ms: f64) -> f64 {
-        self.run_since.map_or(0.0, |r| (now_ms - r).max(0.0))
+        let asked = self.asked_ms + self.asking_since.map_or(0.0, |t| (now_ms - t).max(0.0));
+        self.run_since.map_or(0.0, |r| (now_ms - r - asked).max(0.0))
     }
 
     /// The run in progress's output tokens so far: its finished calls' as reported, the one in flight's as estimated (the
@@ -647,16 +662,31 @@ impl Session {
     /// Work begins at `at_ms` (a message, a call, the tests, a fix round) unless some already runs.
     #[inline(never)]
     fn clock_on(&mut self, at_ms: f64) {
+        if self.run_since.is_none() {
+            // a run's own questions only: one asked between runs (a background agent's) is not this run's wait
+            (self.asked_ms, self.asking_since) = (0.0, (!self.asked.is_empty()).then_some(at_ms));
+        }
         self.run_since.get_or_insert(at_ms);
     }
 
     /// It stopped at `at_ms` (a result, the tests' end, a hard stop or the process gone): its time joins the work done
-    /// (`secs`: the process's own count of it, where it gave one).
+    /// (`secs`: the process's own count of it, where it gave one), less the time its permission questions waited for the
+    /// user ("Done 21 s" for 2 s of work, design review 14): the seconds it worked.
     #[inline(never)]
-    fn clock_off(&mut self, at_ms: f64, secs: f64) {
+    fn clock_off(&mut self, at_ms: f64, secs: f64) -> f64 {
+        self.answered(at_ms);
         let ran = if secs > 0.0 { secs * 1000.0 } else { self.run_since.map_or(0.0, |r| (at_ms - r).max(0.0)) };
+        let ran = (ran - std::mem::take(&mut self.asked_ms)).max(0.0);
         self.busy_ms += ran;
         self.run_since = None;
+        ran / 1000.0
+    }
+
+    /// The open questions are answered (or gone) at `at_ms`: their wait joins the run's time spent asking.
+    fn answered(&mut self, at_ms: f64) {
+        if let Some(t) = self.asking_since.take() {
+            self.asked_ms += (at_ms - t).max(0.0);
+        }
     }
 
     /// Real money (own-loop providers) and plan use at API prices (claude), both exact as reported.
@@ -724,11 +754,20 @@ impl Session {
             }
             // the app has no block of its own for it: a notice, an error once the run ended on it
             Block::News(n) => json!({"kind": "notice", "error": false, "text": crate::versions::news_text(&n.from, &n.to, &n.items)}),
-            Block::Retry(r) => json!({"kind": "notice", "error": r.gave_up, "text": format!("{}: {} {} failed{} ({})", r.why, r.tries,
-                if r.tries == 1 { "try" } else { "tries" }, if r.next_ms.is_some() { ", trying again" } else { "" }, r.raw)}),
+            // `retry_at` (Unix ms) while the next try is coming, for the window's countdown (design review 14)
+            Block::Retry(r) => {
+                let mut v = json!({"kind": "notice", "error": r.gave_up, "text": format!("{}: {} {} failed{} ({})", r.why, r.tries,
+                    if r.tries == 1 { "try" } else { "tries" }, if r.next_ms.is_some() { ", trying again" } else { "" }, r.raw), "tries": r.tries});
+                if let Some(t) = r.next_ms {
+                    v["retry_at"] = json!((self.retry_epoch_ms + t).round() as u64);
+                }
+                v
+            }
             Block::Verify(v) => json!({"kind": "verify", "cmd": v.cmd, "ok": v.ok, "secs": v.secs, "round": v.round, "no_tests": v.no_tests,
                 "timed_out": v.timed_out, "cannot_run": v.cannot_run, "output": cut(&v.output, 4000)}),
         }).collect();
+        // the messages waiting their turn, after what runs now
+        let blocks: Vec<Value> = blocks.into_iter().chain(self.queued.iter().map(|t| json!({"kind": "prompt", "text": t, "queued": true}))).collect();
         json!({"type": "view", "blocks": blocks, "model": self.model, "effort": self.effort, "cwd": self.cwd, "profile": self.profile,
             "mode": self.mode, "activity": format!("{:?}", self.activity), "cost": self.cost(), "usage": usage(&self.usage), "turns": self.turns,
             "context": self.context, "context_window": self.context_window, "limits": self.limits, "limits_at": self.limits_at, "limits_reset": self.limits_reset, "balance": self.balance,
@@ -1089,6 +1128,8 @@ impl Session {
                 let msg = s(&e["message"]);
                 let (raw, secs) = msg.rsplit_once(" · trying again in ").map_or((msg.as_str(), 0.0), |(w, t)| (w, t.trim_end_matches('s').parse().unwrap_or(0.0)));
                 let (why, raw, next_ms) = (retry_words(raw), shown(raw, 4000), Some(at_ms + secs * 1000.0));
+                let wall = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_millis() as f64);
+                self.retry_epoch_ms = wall - at_ms;
                 match self.retry.and_then(|i| self.blocks.get_mut(i)) {
                     Some(Block::Retry(r)) => (r.why, r.raw, r.next_ms, r.tries) = (why, raw, next_ms, r.tries + 1),
                     _ => {
@@ -1126,6 +1167,7 @@ impl Session {
                 };
                 self.push(Block::Notice { text: format!("{what} · {}", shown(&text, 4000)), error: false, ended: false });
             }
+            (Some("harness_user"), _) if e["queued"] == true => self.queued.push_back(s(&e["text"])),
             (Some("harness_user"), _) => {
                 self.clock_on(at_ms);
                 self.ready_at = Some(at_ms);
@@ -1139,10 +1181,18 @@ impl Session {
             // blocks after it keep their places (design review 13)
             (Some("harness_unqueued"), _) => {
                 let text = s(&e["text"]);
-                if let Some(i) = self.blocks.iter().rposition(|b| matches!(b, Block::Prompt(p) if *p == text)) {
-                    let first: String = text.lines().next().unwrap_or_default().chars().take(80).collect();
-                    let more = if first.chars().count() < text.trim_end().chars().count() { "…" } else { "" };
-                    self.blocks[i] = Block::Notice { text: format!("not sent, back in the box: {first}{more}"), error: false, ended: false };
+                let first: String = text.lines().next().unwrap_or_default().chars().take(80).collect();
+                let more = if first.chars().count() < text.trim_end().chars().count() { "…" } else { "" };
+                let said = Block::Notice { text: format!("not sent, back in the box: {first}{more}"), error: false, ended: false };
+                // one drawn as queued (not a block yet): said under the transcript, where it was; never in place of a message
+                // with the same words that did go
+                if e["queued"] == true {
+                    if let Some(q) = self.queued.iter().position(|q| *q == text) {
+                        self.queued.remove(q);
+                        self.push_aside(said);
+                    }
+                } else if let Some(i) = self.blocks.iter().rposition(|b| matches!(b, Block::Prompt(p) if *p == text)) {
+                    self.blocks[i] = said;
                     self.last_prompt = self.blocks.iter().rev().find_map(|b| if let Block::Prompt(p) = b { Some(p.clone()) } else { None }).unwrap_or_default();
                 }
             }
@@ -1249,6 +1299,9 @@ impl Session {
             }
             (Some("harness_permission"), _) => {
                 self.asked.push_back((s(&e["tool"]), e["input"].clone()));
+                if self.run_since.is_some() {
+                    self.asking_since.get_or_insert(at_ms);
+                }
                 // the question itself is drawn from live's queue; the transcript only gets the plan to approve
                 if e["tool"] == "ExitPlanMode" {
                     let plan: String = e["input"]["plan"].as_str().unwrap_or_default().chars().map(|c| if invisible(c) || (c.is_control() && c != '\n') { '�' } else { c }).collect();
@@ -1258,6 +1311,7 @@ impl Session {
             }
             (Some("harness_permission_cleared"), _) => {
                 self.asked.clear();
+                self.answered(at_ms);
                 self.push(Block::Notice { text: "open permission questions dropped: claude stopped".into(), error: false, ended: false });
             }
             (Some("harness_permission_done"), _) => {
@@ -1270,6 +1324,9 @@ impl Session {
                     t.started_ms = at_ms;
                 }
                 self.asked.pop_front();
+                if self.asked.is_empty() {
+                    self.answered(at_ms);
+                }
                 self.mode = mode_name(e["mode"].as_str().unwrap_or_default()).to_string();
                 let verb = match (e["allow"] == true, e["always"] == true) {
                     (true, true) => "allowed for this session:",
@@ -1340,6 +1397,18 @@ impl Session {
             (Some("harness_held_start"), _) => {
                 self.clock_on(at_ms);
                 self.ready_at = Some(at_ms);
+                // a message drawn as queued goes out now: a message of the transcript from here (by its text; a recording from
+                // before it was named: the first). One not drawn as queued is on screen already.
+                let at = match e["text"].as_str() {
+                    Some(t) => self.queued.iter().position(|q| q == t),
+                    None => (!self.queued.is_empty()).then_some(0),
+                };
+                if let Some(text) = at.and_then(|i| self.queued.remove(i)) {
+                    self.last_prompt = text.clone();
+                    self.push(Block::Prompt(text));
+                    self.activity = Activity::Waiting;
+                    self.verify_cancelled = false;
+                }
             }
             // the own loop's reasoning before a message: a thinking row like claude's, its size estimated (~4 characters a token)
             (Some("reasoning"), _) => self.push(Block::Thinking { tokens: (s(&e["text"]).chars().count() / 4) as u64, live: false, exact: false, text: s(&e["text"]) }),
@@ -1358,8 +1427,8 @@ impl Session {
             // a replayed recording's process ended there (`/resume` replays several, without their notices); a run it was
             // in ends with it, as after a hard stop
             (Some("harness_process_end"), _) => {
-                let (secs, cut) = (self.working_for(at_ms) / 1000.0, self.call_start.take().is_some());
-                self.clock_off(at_ms, 0.0);
+                let cut = self.call_start.take().is_some();
+                let secs = self.clock_off(at_ms, 0.0);
                 self.close_run(secs, false, cut);
                 self.close_process();
             }
@@ -1404,8 +1473,7 @@ impl Session {
                 let cut = std::mem::take(&mut self.call_start).is_some();
                 self.first_token = None;
                 // and no result either: its run ends here, or the next reply would count from the killed one's start
-                let secs = self.working_for(at_ms) / 1000.0;
-                self.clock_off(at_ms, 0.0);
+                let secs = self.clock_off(at_ms, 0.0);
                 self.push(Block::Notice { text: s(&e["text"]), error: e["error"].as_bool().unwrap_or(false), ended: false });
                 self.close_run(secs, stopped, cut);
                 // the process ended: its reported cost is final, the next one starts from $0
@@ -1544,8 +1612,7 @@ impl Session {
                     self.context_window = Some(w);
                 }
                 let ok = e["subtype"] == "success" && !e["is_error"].as_bool().unwrap_or(false);
-                let secs = e["duration_ms"].as_f64().unwrap_or(0.0) / 1000.0;
-                self.clock_off(at_ms, secs);
+                let secs = self.clock_off(at_ms, e["duration_ms"].as_f64().unwrap_or(0.0) / 1000.0);
                 let turns = e["num_turns"].as_u64().unwrap_or(0);
                 let stopped = std::mem::take(&mut self.stopping);
                 // why it failed, in the transcript: the result carried it but only "Failed" showed (a provider's content
@@ -2048,6 +2115,85 @@ mod tests {
         s.apply(&token, 8100.0);
         s.apply(&end, 11_500.0);
         assert_eq!(s.calls.iter().map(|c| (c.ttft_ms, c.total_ms)).collect::<Vec<_>>(), [(Some(400.0), 3800.0), (Some(800.0), 4200.0)]);
+    }
+
+    #[test]
+    fn a_retry_tells_the_window_when_the_next_try_is() {
+        let mut s = Session::new("", "medium");
+        s.apply(&json!({"type": "harness_user", "text": "go"}), 0.0);
+        let wall = |s: &Session| s.view()["blocks"].as_array().unwrap().last().cloned().unwrap();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as f64;
+        s.apply(&json!({"type": "system", "subtype": "call_retry", "message": "HTTP 429: busy · trying again in 30s"}), 1500.0);
+        s.apply(&json!({"type": "system", "subtype": "call_retry", "message": "HTTP 429: busy · trying again in 60s"}), 2000.0);
+        let b = wall(&s);
+        assert_eq!((b["kind"].as_str(), b["error"].as_bool(), b["text"].as_str(), b["tries"].as_u64()),
+            (Some("notice"), Some(false), Some("the provider is rate limiting this model: 2 tries failed, trying again (HTTP 429: busy)"), Some(2)));
+        let at = b["retry_at"].as_f64().unwrap();
+        assert!((at - (now + 60_000.0)).abs() < 5_000.0, "60 s from the try that failed, as Unix ms: {at} vs {now}");
+        // answered: no next try to count down to
+        s.apply(&json!({"type": "result", "subtype": "success", "result": "ok", "duration_ms": 3000}), 3000.0);
+        let b = s.view()["blocks"].as_array().unwrap().iter().find(|b| b["text"].as_str().is_some_and(|t| t.contains("tries failed"))).cloned().unwrap();
+        assert!(b.get("retry_at").is_none() && b["tries"] == 2, "{b}");
+    }
+
+    #[test]
+    fn a_message_waiting_its_turn_is_queued_until_it_goes() {
+        let mut s = Session::new("", "medium");
+        s.apply(&json!({"type": "harness_user", "text": "first"}), 0.0);
+        s.apply(&json!({"type": "system", "subtype": "call_retry", "message": "HTTP 429: busy · trying again in 8s"}), 1000.0);
+        s.apply(&json!({"type": "harness_user", "text": "second", "queued": true}), 2000.0);
+        s.apply(&json!({"type": "system", "subtype": "call_retry", "message": "HTTP 429: busy · trying again in 8s"}), 9000.0);
+        // not a message of the transcript yet, and the retries stay one block (it was split in two by the message: the line
+        // twice after esc, design review 14)
+        assert_eq!(s.blocks.iter().filter(|b| matches!(b, Block::Prompt(_))).count(), 1);
+        assert_eq!(s.blocks.iter().filter(|b| matches!(b, Block::Retry(_))).count(), 1);
+        assert_eq!(s.queued, ["second"]);
+        let v = s.view();
+        let last = v["blocks"].as_array().unwrap().last().unwrap();
+        assert!(last["kind"] == "prompt" && last["text"] == "second" && last["queued"] == true, "after what runs, for the window: {last}");
+        s.apply(&json!({"type": "result", "subtype": "success", "result": "ok", "duration_ms": 9500}), 9500.0);
+        // a hand-off's process ends before the held message starts (live.rs send_held): it stays queued until then
+        s.apply(&json!({"type": "harness_process_end"}), 9550.0);
+        s.apply(&json!({"type": "harness_held_start", "text": "second"}), 9600.0);
+        assert!(s.queued.is_empty() && matches!(s.blocks.last(), Some(Block::Prompt(p)) if p == "second"), "sent: after the reply");
+        // a held start names its message: one not drawn as queued (on screen already) leaves the queued one waiting
+        s.apply(&json!({"type": "harness_user", "text": "C", "queued": true}), 9650.0);
+        s.apply(&json!({"type": "harness_held_start", "text": "A"}), 9660.0);
+        assert!(s.queued == ["C"] && matches!(s.blocks.last(), Some(Block::Prompt(p)) if p == "second"));
+        // a stop gives a queued one back: said once, not left queued; never in place of a sent message with its words
+        s.apply(&json!({"type": "harness_user", "text": "second", "queued": true}), 9700.0);
+        s.apply(&json!({"type": "harness_unqueued", "text": "second", "queued": true}), 9800.0);
+        assert!(s.queued == ["C"] && matches!(s.blocks.last(), Some(Block::Notice { text, .. }) if text == "not sent, back in the box: second"));
+        assert_eq!(s.blocks.iter().filter(|b| matches!(b, Block::Prompt(p) if p == "second")).count(), 1, "the sent one stays");
+    }
+
+    #[test]
+    fn a_turns_time_leaves_out_the_wait_for_an_answer() {
+        let mut s = Session::new("", "medium");
+        s.apply(&json!({"type": "harness_user", "text": "push it"}), 0.0);
+        s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "c1", "name": "bash", "input": {"command": "git push"}}]}}), 1000.0);
+        s.apply(&json!({"type": "harness_permission", "tool": "bash", "input": {"command": "git push"}}), 1500.0);
+        s.apply(&json!({"type": "harness_permission_done", "tool": "bash", "allow": true, "mode": "default"}), 20_500.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "result": "pushed", "duration_ms": 21_000}), 21_000.0);
+        let Some(Block::Done(d)) = s.blocks.last() else { panic!() };
+        assert_eq!(d.secs, 2.0, "21 s less the 19 s the question waited");
+        assert_eq!(s.view()["blocks"].as_array().unwrap().last().unwrap()["secs"], 2.0);
+        assert_eq!(s.busy(25_000.0), 2_000.0, "the working clock as the Done line, not 21 s");
+        // a question between runs (a background agent's, 60 s) is no run's wait: the next run's 8 s stay 8 s
+        s.apply(&json!({"type": "harness_permission", "tool": "bash", "input": {"command": "ls"}}), 30_000.0);
+        s.apply(&json!({"type": "harness_permission_done", "tool": "bash", "allow": true, "mode": "default"}), 90_000.0);
+        s.apply(&json!({"type": "harness_user", "text": "again"}), 100_000.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "result": "ok", "duration_ms": 8000}), 108_000.0);
+        let Some(Block::Done(d)) = s.blocks.last() else { panic!() };
+        assert_eq!(d.secs, 8.0);
+        // a stopped run (no result): its question's wait is left out as well
+        s.apply(&json!({"type": "harness_user", "text": "push"}), 110_000.0);
+        s.apply(&json!({"type": "harness_permission", "tool": "bash", "input": {"command": "git push"}}), 111_000.0);
+        assert_eq!(s.working_for(131_000.0), 1_000.0, "the working row stands still while asked");
+        s.apply(&json!({"type": "harness_permission_done", "tool": "bash", "allow": false, "mode": "default"}), 131_000.0);
+        s.apply(&json!({"type": "harness_notice", "text": "stopped", "error": false}), 132_000.0);
+        let Some(Block::Done(d)) = s.blocks.iter().rev().find(|b| matches!(b, Block::Done(_))) else { panic!() };
+        assert_eq!(d.secs, 2.0);
     }
 
     #[test]

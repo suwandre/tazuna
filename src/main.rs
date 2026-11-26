@@ -666,7 +666,8 @@ fn main() -> Result<()> {
             let (mut lane, boss) = lane(&a, true)?;
             // `--model` naming a provider's model, or `-c` of an own-loop conversation: on that provider, as /model and /resume
             // pick it (`picked_route`); it went to claude, under that model's name (design review 13)
-            let picked = picked_route(&a, &base)?;
+            // without Claude to run, a model that can (design review 14)
+            let picked = picked_route(&a, &base)?.or_else(|| runnable_start(&a, &base));
             if let Some((c, effort)) = &picked {
                 // the model asked for, as /model gives it: no hand-over to the router's stronger lane
                 (lane.model, lane.effort, lane.escalate) = (models::resolve(c, effort), effort.clone(), None);
@@ -736,6 +737,12 @@ fn main() -> Result<()> {
             let _ = execute!(std::io::stdout(), DisableBracketedPaste, DisableMouseCapture, DisableFocusChange);
             // the pointer back to normal, in case the window closed over a link
             let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\x1b]22;default\x1b\\");
+            // what follows starts on a line of its own below the last frame where a terminal keeps that frame (no alternate
+            // screen): it was printed at the composer's cursor, over the frame (design review 14). With the alternate
+            // screen this line goes with it.
+            if let Ok((_, h)) = ratatui::crossterm::terminal::size() {
+                let _ = execute!(std::io::stdout(), ratatui::crossterm::cursor::MoveTo(0, h.saturating_sub(1)), ratatui::crossterm::style::Print("\r\n"));
+            }
             ratatui::restore();
             let (rec, sid) = (live.rec_path.clone(), live.session_id().map(String::from));
             let logged = live.logs.last().and_then(|l| l["meta"]["session_id"].as_str()).map(String::from);
@@ -804,6 +811,7 @@ fn continue_from(s: &mut Session, live: &mut live::Live, earlier: Option<std::pa
         }
         // a notice also closes the old process's cost: the resumed process reports from $0
         s.apply(&json!({"type": "harness_notice", "text": "── continued from here ──", "error": false}), 0.0);
+        s.queued.clear(); // held in a process that is gone: never sent
     }
 }
 
@@ -1491,12 +1499,20 @@ fn app_server(a: &Args) -> Result<()> {
     let mut live = live::Live::new("", "")?;
     live.user_settings = a.user_settings;
     live.connectors = a.connectors || labels::dir().is_ok_and(|d| d.join("connectors").exists());
-    let (lane, _) = lane(a, false)?;
+    let (mut lane, _) = lane(a, false)?;
+    // without Claude to run, a model that can, as the terminal starts (design review 14); the window's saved pick comes after
+    let start = labels::dir().ok().and_then(|b| runnable_start(a, &b));
+    if let Some((c, effort)) = &start {
+        (lane.model, lane.effort, lane.escalate) = (models::resolve(c, effort), effort.clone(), None);
+    }
     let route = live.set_lane(lane);
     live.verify = a.verify.clone();
     live.diagnostics = a.diagnostics;
     live.test_scope = a.test_scope;
     live.provider = a.provider.clone();
+    if let Some((url, key, price)) = start.and_then(|(c, _)| c.route) {
+        (live.provider, live.price) = (Some((url, key)), Some(price).filter(|p| !p.is_empty()));
+    }
     live.project_instructions = a.project_instructions;
     live.data_any = a.data_any;
     set_explorer(&mut live, a);
@@ -1540,7 +1556,12 @@ fn app_server(a: &Args) -> Result<()> {
     app_refresh_lists(lists, stale, &mut pending_lists, &tx);
     // the model servers on this machine, at each start (a refused port answers at once); claude's login, for the pickers
     std::thread::spawn(models::refresh_local);
-    accounts::recheck_claude_login(None, || {});
+    // claude signed out, found now: a session that has sent nothing goes on a model that can run (`signed_out_start`)
+    let login_tx = tx.clone();
+    std::thread::spawn(move || if accounts::refresh_claude_login() == Some(false) {
+        models::refresh_local();
+        let _ = login_tx.send(json!({"type": "tazuna_signed_out"}));
+    });
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
@@ -1613,6 +1634,7 @@ fn app_server(a: &Args) -> Result<()> {
     let mut turn: Option<(String, bool)> = None;
     let mut undo_note: Option<String> = None;
     let mut model_restore: Option<SavedModelRestore> = None;
+    let mut picked = false; // the window picked a model (its saved pick too)
     emit(&s, &untrusted, &live, model_restore.as_ref());
     let mut last_reply = String::new();
     let mut chat_last: Option<ChatLast> = None;
@@ -1976,6 +1998,10 @@ fn app_server(a: &Args) -> Result<()> {
                             }
                         }
                         Some("tazuna_chat_event") => chat_event(&mut live, &mut s, &cmd, &mut chat_last, &mut last_reply),
+                        // not over the window's own pick, saved or new
+                        Some("tazuna_signed_out") if !picked => if let Some((t, e)) = signed_out_start(&mut live, &s, a) {
+                            s.apply(&e, t);
+                        },
                         // the model picker: the catalog as the terminal's /model shows it, answered as a `models` line
                         // a provider's list arrived after its key was saved (login_save): the picker's rows again
                         Some("models" | "tazuna_lists" | "tazuna_list_finished" | "refresh_model_list" | "tazuna_fetch_list") => {
@@ -2016,6 +2042,7 @@ fn app_server(a: &Args) -> Result<()> {
                         // a model picked: {"op":"model","model":..,"url":..,"key_env":..,"effort":..} (url and key_env null for
                         // claude); the effort defaults as in the terminal's picker
                         Some("model") => {
+                            picked = true;
                             let cs = app_catalog()?;
                             if cmd["restore"] == true {
                                 model_restore = restore_saved_model(&mut live, &mut s, &cs, cmd, &pending_lists);
@@ -2569,7 +2596,7 @@ impl Fx {
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0, confirm: false, ask_risky: false, cant_run: None }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -2655,6 +2682,8 @@ fn answer_key_counts(shown_for: Duration, since_last: Option<Duration>) -> bool 
     shown_for >= Duration::from_millis(ANSWER_DELAY_MS) && since_last.is_none_or(|d| d >= Duration::from_millis(TYPING_GAP_MS))
 }
 const QUIT_MS: u128 = 0; // the quit dissolve went in design review 10: tazuna ends at once
+/// Ctrl-C's note after it cleared the box (it goes once the box holds text again).
+const QUIT_AGAIN: &str = "ctrl-c again quits";
 
 fn run_replay(term: &mut ratatui::DefaultTerminal, mut replay: Replay, a: &Args) -> Result<()> {
     let mut s = Session::new(&replay.prompt, &replay.effort);
@@ -2995,7 +3024,7 @@ fn tool_calls(s: &Session, name: &str) -> ui::ListPanel {
     let total: f64 = secs.iter().sum();
     let longest = secs.iter().copied().fold(0.0, f64::max);
     let rows = calls.iter().enumerate().map(|(i, t)| {
-        let took = t.secs().map_or("running".to_string(), |x| format!("{x:.1}s"));
+        let took = t.secs().map_or("running".to_string(), ui::tenths);
         let what: String = ui::plain(&ui::tool_summary(t, s)).chars().take(200).collect();
         (format!("{:>3}  {:>7}  {}  {what}", i + 1, took, if t.error { "✗" } else if t.done_ms.is_some() { "✓" } else { "…" }), if t.error { ui::Tone::Bad } else { ui::Tone::Plain })
     }).collect();
@@ -3008,7 +3037,7 @@ fn tool_calls(s: &Session, name: &str) -> ui::ListPanel {
         _ => ui::plain(&ui::tool_summary(t, s)),
     })).collect();
     ui::ListPanel {
-        title: format!("{name} ×{} · {:.1}s in all · {:.1}s a call · longest {longest:.1}s", calls.len(), total, total / secs.len().max(1) as f64),
+        title: format!("{name} ×{} · {} in all · {} a call · longest {}", calls.len(), ui::tenths(total), ui::tenths(total / secs.len().max(1) as f64), ui::tenths(longest)),
         head: format!("{:>3}  {:>7}     what", "#", "took"),
         rows,
         scroll: 0,
@@ -3116,7 +3145,7 @@ fn changelog_panel(entries: &[serde_json::Value]) -> ui::ListPanel {
 fn model_calls(s: &Session) -> ui::ListPanel {
     let rows = s.turn_usage.iter().enumerate().map(|(i, u)| {
         let c = s.call_time(i);
-        let first = c.and_then(|c| c.ttft_ms).map_or("-".to_string(), |ms| format!("{:.1}s", ms / 1000.0));
+        let first = c.and_then(|c| c.ttft_ms).map_or("-".to_string(), |ms| ui::tenths(ms / 1000.0));
         let rate = c.filter(|c| c.gen_ms > 0.0).map_or("-".to_string(), |c| format!("{:.0}", c.out as f64 / c.gen_ms * 1000.0));
         let e2e = c.filter(|c| c.total_ms > 0.0 && c.out > 0).map_or("-".to_string(), |c| format!("{:.0}", c.out as f64 / c.total_ms * 1000.0));
         (format!("{:>4}  {:>8}  {:>8}  {:>7}  {:>6}  {:>6}  {:>6}", i + 1, ui::human(u.input + u.cache_write), ui::human(u.cache_read), ui::human(u.output), first, rate, e2e), ui::Tone::Plain)
@@ -3125,7 +3154,7 @@ fn model_calls(s: &Session) -> ui::ListPanel {
         title: format!("model calls · {}", s.turn_usage.len()),
         // "new in": what the call added (written into the cache, or sent uncached); one column, it was twice (new in
         // and cache writes showed the same numbers on Claude)
-        head: format!("{:>4}  {:>8}  {:>8}  {:>7}  {:>6}  {:>6}  {:>6}", "#", "new in", "cached", "out", "first", "tok/s", "e2e"),
+        head: format!("{:>4}  {:>8}  {:>8}  {:>7}  {:>6}  {:>6}  {:>6}", "#", "new in", "cached", "out", "first", "t/s", "e2e"),
         rows,
         scroll: 0,
         links: vec![],
@@ -3545,6 +3574,7 @@ fn restart_session(live: &mut live::Live, s: &mut Session, earlier: Option<&Earl
                 }
             }
         }
+        s.queued.clear(); // held in a process that is gone: never sent
         // the turns undone in a window that sent nothing after (undone_kept), as many as the recordings lack (an undo they
         // have, applied again, marked a later turn with the same tree)
         let names = labels::dir().map(|d| conversation_names(&d)).unwrap_or_default();
@@ -3621,6 +3651,10 @@ fn run_live(
     s.cwd = std::env::current_dir()?.to_string_lossy().into_owned();
     s.apply(&route.1, route.0);
     s.mode = session::mode_name(&live.permission_mode).to_string();
+    let claude_here = accounts::claude_installed(); // read once: the status asks every frame (`cant_run`)
+    // the start looked for another model and found none (it was free to: no --model, -c): "pick a model"; else, on
+    // Claude, why Claude cannot (a local model may well run, design review 14)
+    let mut none_runs = may_pick_start(a);
     if !live::in_git_repo() && !a.allow_non_git {
         s.apply(&note("not a git repo: edits ask first, since git cannot show or undo them here (shift-tab changes the mode)", false), 0.0);
     }
@@ -3651,7 +3685,9 @@ fn run_live(
     if live.provider.is_none() {
         let tx = status_tx.clone();
         std::thread::spawn(move || if accounts::refresh_claude_login() == Some(false) {
-            let _ = tx.send(json!({"type": "tazuna_update", "text": "Claude isn't signed in: run `claude auth login` in a terminal, or /model for another model"}));
+            models::refresh_local(); // for the start pick it may make (`signed_out_start`)
+            let _ = tx.send(json!({"type": "tazuna_update", "text": "Claude isn't signed in: run `claude auth login` in a terminal, or /model for another model",
+                "signed_out": true}));
         });
     }
     // the models SubRouter lets SUBROUTER_API_KEY use, for the picker to grey out the rest
@@ -3805,6 +3841,10 @@ fn run_live(
             made = Some(dir);
         }
         if v.input != ed.text || v.cursor != ed.cursor {
+            // text back in the box (↑): "ctrl-c again quits" is no longer so
+            if !ed.text.is_empty() && v.toast.as_ref().is_some_and(|t| t.0 == QUIT_AGAIN) {
+                v.toast = None;
+            }
             let (start, token) = ed.token();
             // the box holds only `/...`: the command menu over it; anything else: the one-line hints (`@` files)
             // the user's own commands (behave.rs) too, with their descriptions, on every model
@@ -3830,6 +3870,8 @@ fn run_live(
         }
         v.mode = s.mode.clone();
         v.bg_running = live.bg.iter().filter(|t| t.ended.is_none()).count();
+        none_runs &= live.provider.is_none();
+        v.cant_run = cant_run(live.provider.is_none(), claude_here, accounts::claude_logged_in() == Some(false), none_runs);
         v.cold = if s.cache_left(v.clock_ms) == Some(0.0) { s.rebuild().map_or(0, |r| r.0) } else { 0 };
         if tasks_open && outputs_read.elapsed() > Duration::from_secs(1) {
             live.read_task_outputs();
@@ -3953,7 +3995,12 @@ fn run_live(
                 Some("tazuna_chat_event") => chat_event(live, &mut s, &e, &mut chat_last, &mut last_reply),
                 Some("tazuna_balance") => s.balance = e["usd"].as_f64(),
                 Some("tazuna_credits") => take_credits(&mut s, &e["v"]),
-                Some("tazuna_update") => s.apply(&json!({"type": "harness_info", "text": e["text"]}), live.elapsed_ms()),
+                Some("tazuna_update") => {
+                    s.apply(&json!({"type": "harness_info", "text": e["text"]}), live.elapsed_ms());
+                    if e["signed_out"] == true && let Some((t, e)) = signed_out_start(live, &s, a) {
+                        s.apply(&e, t);
+                    }
+                }
                 Some("tazuna_news") => s.apply(&json!({"type": "harness_news", "from": e["from"], "to": e["to"], "items": e["items"]}), live.elapsed_ms()),
                 Some("tazuna_changelog") => match e["entries"].as_array().filter(|a| !a.is_empty()) {
                     Some(list) => v.list = Some(changelog_panel(list)),
@@ -4663,17 +4710,26 @@ fn run_live(
             }
         }
         match key.code {
+            // an open question first: shift-tab changed the mode under it (auto to ask, design review 14)
+            KeyCode::BackTab if !live.pending.is_empty() => v.toast = Some(("answer first: y allows, n declines".into(), Instant::now())),
             KeyCode::BackTab => {
                 let cur = pending_mode.as_ref().map(|p| p.0.clone()).unwrap_or_else(|| if live.reviewer { "review".into() } else { live.permission_mode.clone() });
                 choose_mode(&live, &mut s, &mut pending_mode, next_mode(&cur));
             }
-            // ctrl-c stops a run in progress; when idle it quits
+            // ctrl-c stops a run in progress; when idle it clears the box (its text kept for ↑: it quit with the text lost,
+            // design review 14), and quits once the box is empty
             KeyCode::Char('c') if ctrl => match busy(&s).then(|| live.stop()).flatten() {
                 Some((t, e)) => s.apply(&e, t),
+                None if !ed.text.is_empty() => {
+                    ed.shelve();
+                    v.toast = Some((QUIT_AGAIN.into(), Instant::now()));
+                }
                 None => {
                     quit_at = Some(Instant::now());
                 }
             },
+            // ctrl-d quits from an empty box only; with text it deletes forward, as in readline
+            KeyCode::Char('d') if ctrl && !ed.text.is_empty() => ed.delete(),
             KeyCode::Char('d') if ctrl => {
                 quit_at = Some(Instant::now());
             }
@@ -5669,6 +5725,90 @@ fn resume_on(sid: &str, e: &Earlier, cs: &[models::Choice]) -> Result<Option<mod
 
 /// The model catalog for the app's picker (the terminal's /model list, without a SubRouter key's model list: those rows
 /// show as usable and a refusal comes from SubRouter).
+/// A new session's model where Claude cannot run (claude not installed, or known signed out, read only where it is known
+/// already): one that can, with /model's effort for it (`start_pick`). A new user without Claude started on Sonnet beside a
+/// free local model, and the first message failed (design review 14). None: the lane's model stays (`--model`, `--provider`,
+/// `-c` decide themselves; the window's saved pick is applied after this).
+#[inline(never)]
+fn runnable_start(a: &Args, base: &Path) -> Option<(models::Choice, String)> {
+    if !may_pick_start(a) || (accounts::claude_installed() && accounts::claude_logged_in() != Some(false)) {
+        return None;
+    }
+    models::refresh_local(); // the local servers' list as it is now (a first start has none yet; a refused port answers at once)
+    start_choice(base)
+}
+
+/// What the status says in place of "ready" on Claude when Claude cannot run: "pick a model" where the start looked for
+/// another and found none it may take on its own (`none_runs`: no free model, no history; a paid one is the user's choice), else why Claude cannot (`--model claude-…` or `-c` beside a local model that runs).
+fn cant_run(on_claude: bool, installed: bool, signed_out: bool, none_runs: bool) -> Option<&'static str> {
+    match (on_claude && (!installed || signed_out), none_runs, installed) {
+        (false, ..) => None,
+        (true, true, _) => Some("pick a model · /model"),
+        (true, false, true) => Some("Claude isn't signed in · /model"),
+        (true, false, false) => Some("Claude isn't installed · /model"),
+    }
+}
+
+/// The command line leaves the start's model to tazuna: no `--model`, `--provider` or `-c`.
+fn may_pick_start(a: &Args) -> bool {
+    a.model.is_none() && a.provider.is_none() && a.resume.is_none()
+}
+
+/// `start_pick` over the model list as it is, with /model's effort for it.
+fn start_choice(base: &Path) -> Option<(models::Choice, String)> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let cs = app_catalog().ok()?;
+    let c = start_pick(&cs, &labels::runs(base), now)?.clone();
+    let effort = c.efforts.get(models::start_effort(&c, "", "")).cloned().unwrap_or_default();
+    Some((c, effort))
+}
+
+/// Claude found signed out after the start (that check runs off the start's path, and the start knew nothing yet): a session
+/// that has sent nothing, given no model by the command line or the window, goes on one that can run (design review 14).
+#[inline(never)]
+fn signed_out_start(live: &mut live::Live, s: &Session, a: &Args) -> Option<(f64, serde_json::Value)> {
+    if !may_pick_start(a) || live.provider.is_some() || !s.queued.is_empty() || s.blocks.iter().any(|b| matches!(b, session::Block::Prompt(_))) {
+        return None;
+    }
+    let (c, effort) = start_choice(&labels::dir().ok()?)?;
+    apply_choice(live, &c, Some(effort)).ok()
+}
+
+/// Of the rows that can be picked now (a sign-in's never: tazuna does not put a plan login forward on its own): the own-loop
+/// model used most in the user's live runs of the last 30 days, on the provider and key it ran on (Mistral Vibe's rows
+/// have Mistral's per-token ids, Z.ai's Coding Plan Z.ai's: by id alone a plan's user could start on the billed key), as
+/// `resume_in` matches them; else the first free one (a local server's first); never a paid one nobody chose.
+fn start_pick<'a>(cs: &'a [models::Choice], runs: &[serde_json::Value], now: u64) -> Option<&'a models::Choice> {
+    let ok = |c: &&models::Choice| c.route.is_some() && models::why_not(c).is_none() && models::login_of(c).is_none_or(|l| l.sign_in().is_empty());
+    let mut used: Vec<((String, String, String), usize)> = vec![];
+    for r in runs.iter().filter(|r| r["meta"]["mode"] == "live" && r["ts"].as_u64().is_some_and(|t| t + 30 * 86_400 >= now)) {
+        let m = &r["meta"];
+        // the own loop names its provider; claude's runs name none, or who billed them (no key variable then)
+        let (Some(model), Some(provider)) = (m["model"].as_str(), m["provider"].as_str()) else { continue };
+        let var = m["key_env"].as_str().unwrap_or_default();
+        if var.is_empty() && model.starts_with("claude") {
+            continue;
+        }
+        // logged as "Mistral" before Mistral Vibe was a provider (0.1.198): the Vibe key, as resume_in takes it
+        let (provider, var) = if var.is_empty() && provider == "Mistral" { ("Mistral Vibe", "") } else { (provider, var) };
+        let key = (model.to_string(), provider.to_string(), var.to_string());
+        match used.iter_mut().find(|u| u.0 == key) {
+            Some(u) => u.1 += 1,
+            None => used.push((key, 1)),
+        }
+    }
+    used.sort_by(|a, b| b.1.cmp(&a.1));
+    // its model (an OmniRoute level's id is its row's) on its provider and key
+    let ran_on = |c: &models::Choice, (m, p, var): &(String, String, String)| models::same_model(c, m)
+        && c.route.as_ref().is_some_and(|r| models::provider_name(&r.0, &r.1) == *p && (var.is_empty() || r.1 == *var));
+    let free = |c: &&models::Choice| c.price == "free";
+    used.iter().find_map(|(k, _)| cs.iter().filter(ok).find(|c| ran_on(c, k)))
+        .or_else(|| cs.iter().filter(ok).filter(free).find(|c| c.route.as_ref().is_some_and(|r| models::local_server(&r.0))))
+        .or_else(|| cs.iter().filter(ok).find(free))
+    // no free model and no history: never a paid model the user did not choose; the lane's model stays and the window
+    // says why it cannot run (design review 14)
+}
+
 fn app_catalog() -> Result<Vec<models::Choice>> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     Ok(models::catalog(&labels::dir()?.join("routes.json"), trusted_host, &models::KeyModels::new(), now))
@@ -6269,6 +6409,56 @@ mod tests {
         assert!(!rows[1]["why_not"].as_str().unwrap().contains("/login"), "no terminal command in the window");
         // the provider's terms once, warning: the account may be at risk
         assert_eq!((cautions.len(), cautions["Z.ai Coding Plan"]["warn"].as_bool()), (1, Some(true)));
+    }
+
+    #[test]
+    fn without_claude_a_new_session_starts_on_a_model_that_can_run() {
+        let row = |model: &str, url: &str, var: &str, price: &str, state: models::State| models::Choice { model: model.into(), label: model.into(),
+            route: (!url.is_empty()).then(|| (url.into(), var.into(), "0,0,0".into())), place: String::new(), efforts: vec!["low".into(), "high".into()],
+            price: price.into(), note: String::new(), stale: false, state, bench: String::new(), aa: String::new(), pins: vec![] };
+        let mistral = "https://api.mistral.ai/v1";
+        let cs = [row("claude-sonnet-5-5", "", "", "plan", models::State::NoKey),
+            row("gpt-6", "https://api.openai.com/v1", "TAZUNA_SIGNIN_CHATGPT", "plan", models::State::Ready),
+            row("glm-5", "https://api.z.ai/api/paas/v4", "ZAI_API_KEY", "1 / 3", models::State::Ready),
+            row("kimi-k3", "https://api.moonshot.ai/v1", "MOONSHOT_API_KEY", "2 / 8", models::State::NoKey),
+            row("devstral-3", mistral, "MISTRAL_API_KEY", "0.4 / 2", models::State::Ready),
+            row("devstral-3", mistral, "MISTRAL_VIBE_API_KEY", "plan", models::State::Ready),
+            row("gemini-4-argon", "http://localhost:20128/v1", "OMNIROUTE_API_KEY", "plan", models::State::Ready),
+            row("free-hosted", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY", "free", models::State::Ready),
+            row("mock-coder-7b", "http://127.0.0.1:1234/v1", "LM_STUDIO_API_KEY", "free", models::State::Ready)];
+        let now = 100 * 86_400;
+        let run = |model: &str, provider: &str, var: &str, days_ago: u64, mode: &str| json!({"ts": now - days_ago * 86_400,
+            "meta": {"model": model, "provider": if provider.is_empty() { json!(null) } else { json!(provider) }, "key_env": if var.is_empty() { json!(null) } else { json!(var) }, "mode": mode}});
+        let pick = |runs: &[serde_json::Value]| super::start_pick(&cs, runs, now).map(|c| c.route.as_ref().map(|r| format!("{} {}", c.model, r.1)).unwrap_or_default());
+        // nothing used before: the local server's free model, before a hosted free one and a paid one
+        assert_eq!(pick(&[]).as_deref(), Some("mock-coder-7b LM_STUDIO_API_KEY"));
+        // the own-loop model used most in the last 30 days, live runs only, when it can be picked now
+        let lm = |d| run("mock-coder-7b", "LM Studio", "LM_STUDIO_API_KEY", d, "live");
+        let mut runs = vec![run("glm-5", "Z.ai", "ZAI_API_KEY", 2, "live"), run("glm-5", "Z.ai", "ZAI_API_KEY", 3, "live"), lm(1), lm(40), lm(40)];
+        for _ in 0..3 {
+            runs.extend([run("free-hosted", "OpenRouter", "OPENROUTER_API_KEY", 1, "headless"), run("kimi-k3", "Moonshot", "MOONSHOT_API_KEY", 1, "live"),
+                run("gpt-6", "ChatGPT", "TAZUNA_SIGNIN_CHATGPT", 1, "live"), run("claude-sonnet-5-5", "", "", 1, "live"), run("claude-opus-5-5", "Anthropic API", "", 1, "live")]);
+        }
+        assert_eq!(pick(&runs).as_deref(), Some("glm-5 ZAI_API_KEY"), "no key, a sign-in, Claude, a bench's runs and older runs do not count");
+        // on the provider and key it ran on: a Vibe user stays on the Vibe key, not Mistral's billed one with the same id
+        // (a run logged as "Mistral" with no key variable, before Vibe was a provider, too); an OmniRoute level's id finds its row
+        let vibe = [run("devstral-3", "Mistral Vibe", "MISTRAL_VIBE_API_KEY", 1, "live"), run("devstral-3", "Mistral", "", 1, "live"), run("devstral-3", "Mistral Vibe", "MISTRAL_VIBE_API_KEY", 1, "live")];
+        assert_eq!(pick(&vibe).as_deref(), Some("devstral-3 MISTRAL_VIBE_API_KEY"));
+        assert_eq!(pick(&[run("devstral-3", "Mistral", "MISTRAL_API_KEY", 1, "live")]).as_deref(), Some("devstral-3 MISTRAL_API_KEY"));
+        assert_eq!(pick(&[run("gemini-4-argon-high", "OmniRoute", "OMNIROUTE_API_KEY", 1, "live")]).as_deref(), Some("gemini-4-argon OMNIROUTE_API_KEY"));
+        // no free one and no history: no paid model the user did not choose; a sign-in's never
+        assert!(super::start_pick(&cs[..4], &[], now).is_none(), "a key alone does not pick a paid model");
+        assert!(super::start_pick(&cs[..2], &[], now).is_none(), "nothing can run: the lane's model stays");
+    }
+
+    #[test]
+    fn the_status_says_why_claude_cannot_run() {
+        assert_eq!(super::cant_run(true, true, false, true), None, "Claude runs: ready");
+        assert_eq!(super::cant_run(false, false, false, false), None, "another model runs");
+        assert_eq!(super::cant_run(true, false, false, true), Some("pick a model · /model"), "the start found none");
+        assert_eq!(super::cant_run(true, true, true, true), Some("pick a model · /model"), "signed out, and none found then");
+        assert_eq!(super::cant_run(true, false, false, false), Some("Claude isn't installed · /model"), "--model claude, -c: a local model may run");
+        assert_eq!(super::cant_run(true, true, true, false), Some("Claude isn't signed in · /model"));
     }
 
     #[test]
