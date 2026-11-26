@@ -15,6 +15,20 @@ const to = <T = unknown>(cmd: string, args: Record<string, unknown> = {}) => inv
 type Tagged<T> = { tid: string; msg: T & { type?: string } };
 const on = <T,>(type: string, cb: (m: T, tid: string) => void) =>
   listen<Tagged<T>>("tazuna-view", (e) => { if (e.payload.msg.type === type) cb(e.payload.msg, e.payload.tid); });
+/** The newest `seq` applied per thread and kind of usage reply (usage_sources, accounts_credits: the core numbers each op's
+ * replies); a thread's core started again counts from the start. */
+const seqs = new Map<string, number>();
+/** Whether a reply is to be applied: not one older than a reply already applied (two quick switches answered out of order
+ * put back the first). Every listener of the same reply gets it (equal passes). */
+export function newer(seen: Map<string, number>, key: string, seq: number | undefined) {
+  if (seq == null) return true;
+  if (seq < (seen.get(key) ?? -Infinity)) return false;
+  seen.set(key, seq);
+  return true;
+}
+const forgetSeqs = (tid: string) => { for (const k of [...seqs.keys()]) if (k.startsWith(`${tid}\n`)) seqs.delete(k); };
+/** A usage reply's listener: replies older than one applied are dropped. */
+const onSeq = <T extends { seq?: number },>(type: string, cb: (m: T, tid: string) => void) => on<T>(type, (m, tid) => { if (newer(seqs, `${tid}\n${type}`, m.seq)) cb(m, tid); });
 
 export type ViewBlock =
   /** `queued`: a message the core holds while a reply (or its checks) runs, drawn at the end until it starts (core 0.1.228) */
@@ -141,8 +155,22 @@ export type ModelChoice = {
 export type Accounts = {
   plan: { label: string; used: number; resets: string }[] | null; plan_notes: string[];
   credits: { provider: string; left: string | null; page: string }[];
+  /** the providers the user does not track (core usage sources, review 14): nothing of theirs on the status bar or the usage page */
+  untracked?: string[];
   omniroute: { provider: string; name: string; plan: string | null; status: string; windows: { group: string; window: string; used: number | null; resets: string | null; unlimited: boolean | null }[] }[];
 };
+/** How a provider's usage can be read (core usage_sources, review 14): its documented API, the API once the key has a
+ * permission, an admin key, its CLI, its console in a sign-in window of tazuna's (experimental), tazuna's own count against
+ * an allowance, or not at all; `steps` what it takes in words, `ready` whether it works now, `why` what is missing. */
+export type UsageMethod = { id: "api" | "api_scope" | "admin_key" | "cli" | "console" | "local" | "none"; steps: string; link: string; ready: boolean; why: string | null };
+/** What a provider allows per period, for tazuna's own count: `reset` the day it starts again (a month's day 1-31, past the
+ * month's end its last day; a week's 0 Sunday to 6 Saturday; a day's 0 or null, at midnight). */
+export type Allowance = { amount: number; unit: "tokens" | "usd" | "requests"; period: "day" | "week" | "month"; reset: number | null };
+/** A provider's ways to read its usage, and the user's choice: tracked or not, and how. */
+export type UsageSource = { provider: string; has_key: boolean; methods: UsageMethod[]; track: { on: boolean; method: string }; allowance: Allowance | null };
+/** What the console reader's first visit found (main.rs console_learned): the usage page's path, its usage-like fields; and
+ * whether its window's store (the sign-in) is there. */
+export type Learned = { page: string | null; fields: number; at: number | null; store?: boolean };
 export type Models = { choices: ModelChoice[]; rebuild: string | null;
   /** each provider's terms in one line, once (`Provider.note` and `warn`), shown on its group in the picker */
   cautions?: Record<string, { note: string; warn: boolean }>;
@@ -163,9 +191,9 @@ export const core = {
   use: (tid: string) => { current = tid; },
   /** Starts thread `tid`'s core; resolves to the folder it runs in. */
   start: (tid: string, cwd?: string, profile?: string, savedModel?: Pick<ModelChoice, "model" | "url" | "key_env"> | null) =>
-    invoke<string>("start", { tid, cwd, profile, savedModel }),
+    (forgetSeqs(tid), invoke<string>("start", { tid, cwd, profile, savedModel })),
   /** Ends thread `tid`'s core. */
-  stop: (tid: string) => (forgetDiffs(tid), invoke("stop", { tid })),
+  stop: (tid: string) => (forgetDiffs(tid), forgetSeqs(tid), invoke("stop", { tid })),
   /** Resumes a conversation in thread `tid` (right after its start, before it is the current one). */
   resumeIn: (tid: string, id: string) => (forgetDiffs(tid), invoke("op", { tid, msg: { op: "resume", id } })),
   /** A message to thread `tid` whether or not it is on screen (creator mode's first message). */
@@ -286,6 +314,23 @@ export const core = {
   /** what each account has left (src/accounts.rs): Claude's plan from claude's own /usage (no model call), the providers'
    * credits, OmniRoute's connected accounts; takes a few seconds */
   accounts: () => to("op", { msg: { op: "accounts" } }),
+  /** every provider's ways to read its usage and the user's choice (answered as `usage_sources`); tracking one, or its
+   * allowance, answers with them again and a new accounts reading */
+  usageSources: () => to("op", { msg: { op: "usage_sources" } }),
+  usageTrack: (provider: string, on: boolean, method: string) => to("op", { msg: { op: "usage_track", provider, on, method } }),
+  usageAllowance: (provider: string, allowance: Allowance | null) => to("op", { msg: { op: "usage_allowance", provider, allowance } }),
+  onUsageSources: (cb: (s: UsageSource[], error?: string) => void) => onSeq<{ providers: UsageSource[]; error?: string; seq?: number }>("usage_sources", (m) => cb(m.providers, m.error)),
+  /** the credits again after a change of tracking or allowance (no full reading): merged into the reading held */
+  onAccountsCredits: (cb: (a: Pick<Accounts, "credits" | "untracked">) => void) =>
+    onSeq<Pick<Accounts, "credits" | "untracked"> & { seq?: number }>("accounts_credits", (m) => cb({ credits: m.credits, untracked: m.untracked })),
+  /** the console reader (main.rs): the provider's console in a sign-in window (`learn`: its first visit, shapes only), its
+   * sign-in forgotten, a reading in a hidden window ("read", "signed_out" or "skipped"), what the first visit found */
+  consoleOpen: (provider: string, learn: boolean) => invoke("console_open", { provider, learn }),
+  consoleForget: (provider: string) => invoke("console_forget", { provider }),
+  consoleRefresh: (provider: string) => invoke<string>("console_refresh", { provider }),
+  consoleLearned: (provider: string) => invoke<Learned | null>("console_learned", { provider }),
+  /** a console window closed (Done, its own close, a reading's end) */
+  onConsoleClosed: (cb: (provider: string) => void) => listen<string>("console-closed", (e) => cb(e.payload)),
   /** a subagent's own conversation, by the call that started it (the step's id): answered as an `agent` line */
   agentIn: (tid: string, call: string) => invoke("op", { tid, msg: { op: "agent", call } }),
   onAgent: (cb: (a: { call: string; view: View }, tid: string) => void) => on<{ call: string; view: View }>("agent", cb),
@@ -352,3 +397,11 @@ export const defaultHotkey = typeof navigator !== "undefined" && navigator.userA
 
 /** On macOS in the app the menu bar owns the shortcuts (its items send `menu`); elsewhere the window's key handlers do. */
 export const menuKeys = inTauri && navigator.userAgent.includes("Mac");
+
+/** A check: newer() drops a reply older than one applied, per key, and lets every listener of the same reply through. */
+export function demoSeq() {
+  const seen = new Map<string, number>();
+  const got = [newer(seen, "a", 2), newer(seen, "a", 2), newer(seen, "a", 1), newer(seen, "a", 3), newer(seen, "b", 1), newer(seen, "a", undefined)].join();
+  if (got !== "true,true,false,true,true,true") throw new Error(`newer: ${got}`);
+  console.log("seq ok");
+}

@@ -94,7 +94,8 @@ localStorage.setItem("tazuna.projects", JSON.stringify([PROJ]));
 
 // Settings' providers as the core lists them since 0.1.196 (models.rs LOGINS): three with a key, a model server running
 // here, the rest without one; their terms, in the warning colour where the account may be at risk or tazuna refused
-const KEYS = { SubRouter: "managed key (tazuna subrouter --manage)", DeepSeek: "key in the environment", Groq: "logged in", "Mistral Vibe": "logged in" };
+const KEYS = { SubRouter: "managed key (tazuna subrouter --manage)", DeepSeek: "key in the environment", Groq: "logged in", "Mistral Vibe": "logged in",
+  "Cheaper Inference": "logged in", "Qwen Cloud Token Plan": "logged in" };
 const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera.cloud"], ["OpenRouter", "openrouter.ai", "sk-or-v1-..."], ["Kenari", "kenari.id"],
   ["Mistral", "api.mistral.ai"], ["Mistral Vibe", "api.mistral.ai"], ["Cheaper Inference", "api.cheaperinference.com"], ["OmniRoute", "localhost:20128"], ["DeepSeek", "api.deepseek.com", "sk-..."],
   ["Moonshot", "api.moonshot.ai", "sk-..."], ["Kimi Code", "api.kimi.ai", "", "Kimi may refuse tazuna as a client: check before buying the plan"],
@@ -121,7 +122,8 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
   ["OpenCode Zen", "opencode.ai", "sk-...", "OpenCode's terms keep Zen's free models for OpenCode itself; its paid models work from other tools"],
   ["OpenCode Go", "opencode.ai", "sk-...", "OpenCode Go asks coding agents for a session header tazuna does not send; OpenCode watches its traffic for abuse"],
   ["ClinePass", "api.cline.bot", "sk_..."], ["Command Code", "api.commandcode.ai", "user_..."], ["Charm Hyper", "hyper.charm.land", "sk-hyper-..."], ["Qianfan", "qianfan.baidubce.com", "bce-v3/ALTAK-..."],
-  ["Helmcode", "api.helmcode.com", "sk-..."], ["Otari", "api.otari.ai", "tk_..."], ["SingularityAPI", "api.singularityapi.dev", "sk-sapi-..."]]
+  ["Helmcode", "api.helmcode.com", "sk-..."], ["Otari", "api.otari.ai", "tk_..."], ["SingularityAPI", "api.singularityapi.dev", "sk-sapi-..."],
+  ["Qwen Cloud Token Plan", "token-plan.maas.qwencloudapi.com", "sk-sp-..."], ["Caffeine", "inference.caffeine.ai"]]
   .map(([name, host, example = "", note = ""]) => ({ name, host, example, note, warn: /at risk|refuse|suspended|blocked|revoked/.test(note), key: KEYS[name] ?? "", trusted: !!KEYS[name],
     page: `https://${host}`, place: `${name}'s console (API keys)` }))
   // sign-ins (core oauth.rs, 2026-11-22): ChatGPT's own flow, four that send another app's identity behind a warning
@@ -132,6 +134,50 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
     ["Antigravity", "daily-cloudcode-pa.googleapis.com", "antigravity", "Google's terms forbid signing in to Antigravity from other tools, and Google has suspended accounts that did. tazuna signs in as Antigravity: you do this at your own risk."]]
     .map(([name, host, sign_in, note]) => ({ name, host, example: "", note, warn: /own risk/.test(note), key: "", trusted: false, page: `https://${host}`, place: `${name}'s settings`, sign_in, confirmed: false })))
   .concat([{ name: "Ollama", host: "localhost:11434", example: "", note: "", warn: false, key: "running on this machine", trusted: true, page: "", place: "", local: true }]);
+
+// Usage sources (core usage_sources, review 14) as the core builds them: the API where one tells usage, Cheaper Inference's
+// with account:read, Qwen Cloud's CLI and console, Mistral Vibe's admin key and console, Caffeine's console; every provider
+// can be counted here (an admin key never tracked: information only); Caffeine without a key, read by its console all the
+// same; each reply numbered (`seq`), a change answered with the sources and the credits again (accounts_credits); and the
+// console reader's commands (main.rs), its first visit found on Qwen Cloud
+(() => { const T = window.__TAURI_INTERNALS__, inv = T.invoke.bind(T);
+  const M = (id, ready, why = null, steps = "", link = "") => ({ id, ready, why, steps, link });
+  const local = M("local", true, null, "tazuna counts its own use against the allowance you enter.");
+  const api = M("api", true, null, "Read from the provider's usage API with your key.");
+  const SOURCES = window.__SOURCES__ = [
+    { provider: "SubRouter", has_key: true, methods: [api, local], track: { on: true, method: "api" }, allowance: null },
+    { provider: "Mistral Vibe", has_key: true, methods: [M("admin_key", false, "an Admin key tells this month's spend only, not the Vibe plan's use", "Make an Admin key in Mistral's console.", "https://admin.mistral.ai"),
+      M("console", false, null, "Sign in to Mistral's console in tazuna's window once."), local], track: { on: true, method: "local" }, allowance: { amount: 150, unit: "usd", period: "month", reset: 1 } },
+    { provider: "Cheaper Inference", has_key: true, methods: [M("api_scope", false, "needs account:read", "Turn on account:read for this key on its keys page.", "https://platform.cheaperinference.com/keys"), local], track: { on: true, method: "api_scope" }, allowance: null },
+    { provider: "DeepSeek", has_key: true, methods: [api, local], track: { on: true, method: "api" }, allowance: null },
+    { provider: "Groq", has_key: true, methods: [local, M("none", false, "Groq's API tells no usage", "", "https://console.groq.com/settings/billing")], track: { on: false, method: "local" }, allowance: null },
+    { provider: "Qwen Cloud Token Plan", has_key: true, methods: [M("cli", false, "qwencloud isn't installed", "Install Qwen's CLI with `npm install -g @qwencloud/qwencloud-cli`, then sign in with `qwencloud auth login`."),
+      M("console", false, null, "Sign in to Qwen Cloud's console in tazuna's window once."), local], track: { on: true, method: "console" }, allowance: null },
+    { provider: "Caffeine", has_key: false, methods: [M("console", false, null, "Sign in to Caffeine's console in tazuna's window once."), local, M("none", false, null, "", "https://caffeine.ai/inference")], track: { on: false, method: "console" }, allowance: null },
+  ];
+  let SEQ = 0;
+  const LEARNED = { "Qwen Cloud Token Plan": { page: "/usage", fields: 3, at: Math.floor(Date.now() / 1000) - 600, store: true } };
+  T.invoke = async (cmd, args) => {
+    const m = (msg) => setTimeout(() => T.emit("tazuna-view", { tid: args.tid, msg }), 20);
+    const seq = ++SEQ, sources = () => m({ type: "usage_sources", seq, providers: JSON.parse(JSON.stringify(SOURCES)) });
+    const credits = () => { const off = SOURCES.filter((x) => !x.track.on).map((x) => x.provider);
+      m({ type: "accounts_credits", seq, credits: window.__ACCOUNTS__.credits.filter((c) => !off.includes(c.provider)), untracked: off }); };
+    const op = cmd === "op" ? args.msg.op : null, src = op && SOURCES.find((x) => x.provider === args.msg.provider);
+    if (/^usage_(sources|track|allowance)$/.test(op) || cmd.startsWith("console_")) window.__SENT__.push([cmd, args]);
+    if (op === "usage_sources") { sources(); return null; }
+    // a refusal comes back as the sources unchanged, with its error (Caffeine counted here: a settings file it cannot write)
+    if (op === "usage_track" && src && src.provider === "Caffeine" && args.msg.method === "local") { m({ type: "usage_sources", seq, providers: JSON.parse(JSON.stringify(SOURCES)), error: "Not saved: ~/.config/tazuna/usage.json is read-only" }); return null; }
+    if (op === "usage_track" && src) { src.track = { on: args.msg.on, method: args.msg.method }; sources(); credits(); return null; }
+    if (op === "usage_allowance" && src) { src.allowance = args.msg.allowance; sources(); credits(); return null; }
+    if (cmd === "console_learned") return LEARNED[args.provider] ?? null;
+    // the window can't open here: Done at once, with nothing found on a provider never visited
+    if (cmd === "console_open") { LEARNED[args.provider] ??= { page: null, fields: 0, at: Math.floor(Date.now() / 1000), store: true }; setTimeout(() => T.emit("console-closed", args.provider), 300); return null; }
+    // the window's store goes; the learn file (shapes only) stays, as main.rs keeps it
+    if (cmd === "console_forget") { if (LEARNED[args.provider]) LEARNED[args.provider].store = false; return null; }
+    if (cmd === "console_refresh") return "skipped";
+    return inv(cmd, args);
+  };
+})();
 
 (() => { const T = window.__TAURI_INTERNALS__, inv = T.invoke.bind(T);
   const diff = "diff --git a/tests/retry.test.ts b/tests/retry.test.ts\n--- a/tests/retry.test.ts\n+++ b/tests/retry.test.ts\n@@ -12,9 +12,15 @@ describe(\"retry\", () => {\n   it(\"retries once after a failure\", async () => {\n-    const fn = vi.fn().mockRejectedValueOnce(new Error(\"boom\"));\n-    await retry(fn);\n-    await sleep(100);\n+    vi.useFakeTimers();\n+    const fn = vi.fn().mockRejectedValueOnce(new Error(\"boom\")).mockResolvedValue(\"ok\");\n+    const p = retry(fn);\n+    // the backoff is 80 ms with up to 25% jitter: past its longest\n+    await vi.advanceTimersByTimeAsync(100);\n+    await p;\n     expect(fn).toHaveBeenCalledTimes(2);\n+    vi.useRealTimers();\n   });\n";

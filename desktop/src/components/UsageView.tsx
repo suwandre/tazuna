@@ -1,10 +1,10 @@
 import { Check, ChevronDown, ChevronRight, ExternalLink, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { core, type Accounts, type ClaudeSetup, type ModelChoice } from "../lib/tazuna";
+import { core, type Accounts, type ClaudeSetup, type ModelChoice, type UsageSource } from "../lib/tazuna";
 import { useDialog } from "../lib/dialog";
 import { RANGES, barName, fieldOf, floorTo, fromField, needOf, perUnit, planName, rangeWords, spanOf, summarize, used, type Bar, type Choice, type Row, type Unit } from "../lib/usage";
 import { modelLabel, pct1, pctText, usd } from "../lib/types";
-import { creditLevel, exactly, fallbackCredit, parseReset, whenReset, type Credit } from "../lib/health";
+import { creditLevel, exactly, fallbackCredit, parseReset, trackedOnly, whenReset, type Credit } from "../lib/health";
 import { Sep } from "./Sep";
 import { MenuRule, PopMenu, Segmented, dialogShell, menuItem, quietButton } from "./Controls";
 
@@ -76,7 +76,9 @@ function Figure({ label, value, caption, more = [], quiet }: { label: string; va
   );
 }
 
-export function UsageView({ onClose, limits, balance, choices = [], claude }: { onClose: () => void; limits?: [number, number] | null; balance?: number | null;
+export function UsageView({ onClose, limits, balance, choices = [], claude, sources = null }: { onClose: () => void; limits?: [number, number] | null; balance?: number | null;
+  /** which providers the user tracks (Settings › Providers, Usage): the others show nothing here */
+  sources?: UsageSource[] | null;
   /** Claude Code as setup found it: why there is no plan reading, said truly (not installed, not signed in) */
   claude?: ClaudeSetup | null;
   /** the model catalog: names the provider of an API run the run log did not record (one recorded since 0.1.182) */
@@ -119,11 +121,15 @@ export function UsageView({ onClose, limits, balance, choices = [], claude }: { 
       else if (since > a.since && !mine.current.has(since)) ask(want.current);
     });
     const minute = setInterval(() => setTick((n) => n + 1), 60_000);
-    const offAcc = core.onAccounts(setAcc);
+    // the reading asked here started before a change of tracking that came since: that change's credits stay
+    const askedAcc = Date.now();
+    let creditsAt = 0;
+    const offAcc = core.onAccounts((a) => setAcc((old) => (old && creditsAt > askedAcc ? { ...a, credits: old.credits, untracked: old.untracked } : a)));
+    const offCredits = core.onAccountsCredits((c) => { creditsAt = Date.now(); setAcc((a) => (a ? { ...a, ...c } : a)); });
     core.accounts().catch(() => setAcc(null));
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") close.current(); };
     window.addEventListener("keydown", esc);
-    return () => { off.then((f) => f()); offAcc.then((f) => f()); window.removeEventListener("keydown", esc); clearInterval(minute); };
+    return () => { off.then((f) => f()); offAcc.then((f) => f()); offCredits.then((f) => f()); window.removeEventListener("keydown", esc); clearInterval(minute); };
   }, []);
   useEffect(() => { const a = asked.current; if (need < a.since || (fold && !a.signals)) ask({ since: need, signals: fold }); }, [need, fold]);
   const runs = useMemo(() => (got ? used(got.rows) : null), [got]);
@@ -159,7 +165,7 @@ export function UsageView({ onClose, limits, balance, choices = [], claude }: { 
         <div className="overflow-auto bg-main px-6 pb-7 pt-5">
           {/* in words for anyone: it named "your OmniRoute accounts" to a new user (design review 14) */}
           <Section title="Right now" note="How much of each plan and account is used, and the credit left with each provider.">
-            <RightNow acc={acc} limits={limits} balance={balance} claude={claude} />
+            <RightNow acc={acc && trackedOnly(acc, sources)} limits={limits} balance={balance} claude={claude} />
           </Section>
 
           {/* the range by the sections it changes, not in the page's header: there it read as changing "Right now" too,

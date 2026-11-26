@@ -808,6 +808,63 @@ const log = [];
     }
     if (process.env.ONLY === "v12" || process.env.ONLY === "v13") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok"); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
   }
+  // review 14, usage sources (ONLY=sources: these alone): Settings › Providers' usage line for each way of reading (the API,
+  // a key's permission, an admin key, the CLI's commands, the console's sign-in and what its first visit found, the allowance
+  // form, none), the Track switch on and off, and an untracked provider gone from the status bar and the usage page
+  if (!process.env.ONLY || process.env.ONLY === "sources") {
+    const ok = (c, what) => { if (!c) throw new Error(what); };
+    for (const theme of ["dark", "light"]) {
+      const T = `src-${theme[0]}`, [ctx, p] = await ctxOf({ theme });
+      const row = (name) => p.getByRole("switch", { name: `Track ${name}'s usage` }).locator("xpath=ancestor::div[contains(@class,'py-3')][1]");
+      const shot = async (name, file) => { await row(name).scrollIntoViewIfNeeded(); await p.waitForTimeout(250); await row(name).screenshot({ path: `${OUT}/${T}-${file}.png` }); };
+      const said = async (name) => (await row(name).innerText()).replace(/\s+/g, " ");
+      const before = await p.getByText("$12.40", { exact: false }).count();
+      await step(p, `${T}-providers`, async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(600); await p.getByRole("button", { name: "Providers", exact: true }).click(); await p.waitForTimeout(400);
+        ok(await p.getByRole("switch", { name: /^Track / }).count() === 6, `usage lines: ${await p.getByRole("switch", { name: /^Track / }).count()}`); });
+      await step(p, `${T}-providers-lower`, async () => { await row("Qwen Cloud Token Plan").scrollIntoViewIfNeeded(); });
+      await step(p, `${T}-api`, async () => { await shot("SubRouter", "row-api"); ok((await said("SubRouter")).includes("read automatically"), await said("SubRouter")); });
+      await step(p, `${T}-api-scope`, async () => { await shot("Cheaper Inference", "row-api-scope");
+        ok(await row("Cheaper Inference").getByRole("button", { name: "Turn on account:read for this key" }).count() === 1 && (await said("Cheaper Inference")).includes("needs account:read"), await said("Cheaper Inference")); });
+      await step(p, `${T}-console`, async () => { await shot("Qwen Cloud Token Plan", "row-console");
+        ok((await said("Qwen Cloud Token Plan")).includes("found usage data on /usage (3 fields)") && (await said("Qwen Cloud Token Plan")).includes("Automated reading may break its terms"), await said("Qwen Cloud Token Plan")); });
+      await step(p, `${T}-cli`, async () => { await row("Qwen Cloud Token Plan").getByRole("radio", { name: "CLI" }).click(); await shot("Qwen Cloud Token Plan", "row-cli");
+        ok(await row("Qwen Cloud Token Plan").locator("code").count() === 2 && await row("Qwen Cloud Token Plan").getByRole("button", { name: "Check again" }).count() === 1, await said("Qwen Cloud Token Plan")); });
+      await step(p, `${T}-local-form`, async () => { const r = row("Qwen Cloud Token Plan"); await r.getByRole("radio", { name: "Count here" }).click();
+        await r.getByLabel("Qwen Cloud Token Plan's allowance").fill("2000000"); await r.getByLabel("Period").selectOption("week"); await r.getByLabel("Resets on").selectOption("3");
+        await shot("Qwen Cloud Token Plan", "row-local-form"); });
+      await step(p, `${T}-local-saved`, async () => { await row("Qwen Cloud Token Plan").getByRole("button", { name: "Save" }).click(); await p.waitForTimeout(300); await shot("Qwen Cloud Token Plan", "row-local-saved");
+        ok((await said("Qwen Cloud Token Plan")).includes("counting tazuna's own use, 2,000,000 tokens a week"), await said("Qwen Cloud Token Plan"));
+        const sent = await p.evaluate(() => window.__SENT__.filter(([c, a]) => c === "op" && a.msg.op === "usage_allowance").map(([, a]) => a.msg).pop());
+        ok(JSON.stringify(sent) === JSON.stringify({ op: "usage_allowance", provider: "Qwen Cloud Token Plan", allowance: { amount: 2000000, unit: "tokens", period: "week", reset: 3 } }), JSON.stringify(sent)); });
+      await step(p, `${T}-vibe-local`, async () => { await shot("Mistral Vibe", "row-local-vibe"); ok((await said("Mistral Vibe")).includes("$150 a month"), await said("Mistral Vibe")); });
+      // an admin key: information beside the ways, never one of them
+      await step(p, `${T}-admin-key`, async () => { await shot("Mistral Vibe", "row-admin-key");
+        ok(await row("Mistral Vibe").getByRole("radio", { name: "Admin key" }).count() === 0 && (await said("Mistral Vibe")).includes("Admin key: an Admin key tells this month's spend only"), await said("Mistral Vibe")); });
+      // a console without a key (More providers): its switch all the same
+      await step(p, `${T}-console-no-key`, async () => { await p.getByRole("button", { name: /^More providers/ }).click(); await p.getByLabel("Search providers").fill("caffeine"); await p.waitForTimeout(300);
+        await shot("Caffeine", "row-console-no-key"); ok(await row("Caffeine").getByRole("switch").getAttribute("aria-checked") === "false", await said("Caffeine")); });
+      await step(p, `${T}-console-new`, async () => { await row("Caffeine").getByRole("switch").click(); await p.waitForTimeout(300); await shot("Caffeine", "row-console-new");
+        ok((await said("Caffeine")).includes("sign in once to find its usage page") && await row("Caffeine").getByRole("button", { name: "Forget sign-in" }).count() === 0, await said("Caffeine")); });
+      await step(p, `${T}-console-done`, async () => { await row("Caffeine").getByRole("button", { name: "Sign in…" }).click(); await p.waitForTimeout(600); await shot("Caffeine", "row-console-done");
+        ok((await said("Caffeine")).includes("nothing usage-like yet"), await said("Caffeine"));
+        ok(await p.evaluate(() => JSON.stringify(window.__SENT__.filter(([c]) => c === "console_open").pop()[1])) === JSON.stringify({ provider: "Caffeine", learn: true }), "console_open"); });
+      await step(p, `${T}-refused`, async () => { await row("Caffeine").getByRole("radio", { name: "Count here" }).click(); await p.waitForTimeout(400); await shot("Caffeine", "row-refused");
+        ok((await said("Caffeine")).includes("Not saved: ~/.config/tazuna/usage.json is read-only") && await row("Caffeine").getByRole("radio", { name: "Console" }).getAttribute("aria-checked") === "true", await said("Caffeine")); });
+      await step(p, `${T}-none`, async () => { await row("Groq").getByRole("switch").click(); await p.waitForTimeout(300); await row("Groq").getByRole("radio", { name: "None" }).click(); await p.waitForTimeout(300);
+        await shot("Groq", "row-none"); ok((await said("Groq")).includes("Groq's API tells no usage"), await said("Groq")); });
+      await step(p, `${T}-track-off`, async () => { await row("SubRouter").getByRole("switch").click(); await p.waitForTimeout(300); await shot("SubRouter", "row-off");
+        ok(!(await said("SubRouter")).includes("read automatically") && await row("SubRouter").getByRole("radio").count() === 0, await said("SubRouter")); });
+      await esc(p);
+      await step(p, `${T}-usage-untracked`, async () => { await p.keyboard.press("Control+Shift+U"); await p.waitForTimeout(900);
+        const after = await p.getByText("$12.40", { exact: false }).count();
+        log.push(`${theme} SubRouter's "$12.40" on screen: ${before} tracked, ${after} untracked`);
+        ok(after === 0, `an untracked provider still shows: ${after}`); });
+      if (p.errs.length) log.push(`FAIL ${T} page errors: ${p.errs.join(" | ")}`);
+      await ctx.close();
+    }
+    if (process.env.ONLY === "sources") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok"); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
+  }
+
   // design review 14 (ONLY=r14: these alone): a row's menu (PopMenu) by pointer and keyboard, focus back after Esc; the
   // header's "Open in" (its editors under a rule); best-of's check rows by Space; a retry's countdown with Stop and Change
   // model, the live status above a message the core holds (`queued`) and kept in place when one comes; the picker's

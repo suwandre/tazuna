@@ -1,0 +1,22 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "console",
+  "description": "The console reader's windows (main.rs, console_open): a provider's own pages, which may call only plugin:console|report, and only from that provider's sites; the command checks the window, the site and the payload again",
+  "windows": [
+    "console-*"
+  ],
+  "local": false,
+  "remote": {
+    "urls": [
+      "https://home.qwencloud.com",
+      "https://chat.mistral.ai",
+      "https://console.mistral.ai",
+      "https://admin.mistral.ai",
+      "https://caffeine.ai",
+      "https://www.caffeine.ai"
+    ]
+  },
+  "permissions": [
+    "console:allow-report"
+  ]
+}

@@ -34,7 +34,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import * as demo from "./lib/demo";
 import { asked, askedInput, changedCount, clockOf, heldTurn, messages as viewMessages, promptsIn, queued, readableError, replyOut, resetIn, sessionIds, standingAt, unsaved, usage as viewUsage, went, type Clock } from "./lib/fromView";
 import { modelLabel, shortTitle, titleFrom, type Usage } from "./lib/types";
-import { items as accountItems, mine as accountOf, withLive } from "./lib/health";
+import { dueConsoles, items as accountItems, mine as accountOf, trackedOnly, withLive } from "./lib/health";
 import { Parts } from "./components/Sep";
 
 /** What is open over the window or the box that Esc should shut before the work panel over the conversation: menus and
@@ -49,7 +49,7 @@ const PANEL_W = "tazuna.panel-width";
 const ROUTE_LINE = typeof localStorage !== "undefined" && localStorage.getItem("tazuna.route-line") === "on";
 const NO_USAGE: Usage = { contextPct: 0, contextUsed: "0", contextMax: "", plan5h: null, plan5hReset: "", planWeek: null, threadCost: 0, threadTurns: 0, cachedPct: 0, saved: 0, today: 0, todayTurns: 0, todaySeries: [], balance: null };
 import { ACCENT, ACCENTS, NUMBERS, THEME, accentNow, applyLooks, darkNow, look, useLook } from "./lib/chrome";
-import { HOTKEY, composed, core, defaultHotkey, inTauri, menuKeys, type Accounts, type ClaudeSetup, type Diff, type ModelChoice, type Models, type SendDraft, type SessionRow, type View } from "./lib/tazuna";
+import { HOTKEY, composed, core, defaultHotkey, inTauri, menuKeys, type Accounts, type ClaudeSetup, type Diff, type ModelChoice, type Models, type SendDraft, type SessionRow, type UsageSource, type View } from "./lib/tazuna";
 import { listen } from "@tauri-apps/api/event";
 import { MenuRule, PopMenu, accentButton, menuItem, quietButton } from "./components/Controls";
 
@@ -820,12 +820,16 @@ export default function App() {
   const [accounts, setAccounts] = useState<Accounts | null>(null);
   // when the reading came, and whether one is on its way (it gives up waiting after 45 s: the core may not answer)
   const [acct, setAcct] = useState<{ at?: number; busy: boolean }>({ busy: false });
+  const creditsAt = useRef(0);
   useEffect(() => {
     if (!inTauri) return;
-    const off = core.onAccounts((a) => { setAccounts(a); setAcct({ at: Date.now(), busy: false }); });
+    // a full reading asked before the last change of tracking keeps that change's credits (it read the old choice)
+    const off = core.onAccounts((a) => { setAccounts((old) => (old && creditsAt.current > askedAt.current ? { ...a, credits: old.credits, untracked: old.untracked } : a)); setAcct({ at: Date.now(), busy: false }); });
     // the plan comes first, about a second in: the bar has it then, the other accounts as they were until theirs come
     const offPlan = core.onAccountsPlan((p) => { setAccounts((a) => ({ credits: [], omniroute: [], ...a, ...p })); setAcct({ at: Date.now(), busy: false }); });
-    return () => { off.then((f) => f()); offPlan.then((f) => f()); };
+    // the credits alone after a change of tracking (Settings › Providers, Usage), merged the same way
+    const offCredits = core.onAccountsCredits((c) => { creditsAt.current = Date.now(); setAccounts((a) => ({ plan: null, plan_notes: [], omniroute: [], ...a, ...c })); });
+    return () => { off.then((f) => f()); offPlan.then((f) => f()); offCredits.then((f) => f()); };
   }, []);
   const askedAt = useRef(0);
   /** `auto`: one the window asks for by itself, at most once a minute. */
@@ -851,9 +855,42 @@ export default function App() {
     window.addEventListener("focus", back);
     return () => window.removeEventListener("focus", back);
   }, []);
-  const accountsNow = withLive(accounts, acct.at, planView);
+  // which providers the user tracks and how (Settings › Providers, Usage; core usage sources): the bar and the usage page
+  // leave the others out, and the console reader reads the ones tracked by their console
+  const [sources, setSources] = useState<UsageSource[] | null>(null);
+  useEffect(() => {
+    if (!inTauri) return;
+    const off = core.onUsageSources((s) => setSources(s));
+    return () => { off.then((f) => f()); };
+  }, []);
+  useEffect(() => { if (haveView) core.usageSources().catch(() => {}); }, [haveView]);
+  // the console reader (D4): each provider tracked by its console read in a hidden window at most every 15 minutes while the
+  // app runs, and when the usage page opens; one at a time (the shell skips one with no learned page or no extractor); a
+  // reading that came, or a sign-in page, is a new accounts reading. None while no provider is tracked that way.
+  const consoleAt = useRef<Record<string, number>>({}), consoleBusy = useRef(false);
+  const readConsoles = async () => {
+    if (!inTauri || !sources || consoleBusy.current) return;
+    const due = dueConsoles(sources, consoleAt.current);
+    if (!due.length) return;
+    consoleBusy.current = true;
+    let news = false;
+    for (const p of due) {
+      consoleAt.current[p] = Date.now();
+      news = (await core.consoleRefresh(p).catch(() => "skipped")) !== "skipped" || news;
+    }
+    consoleBusy.current = false;
+    if (news) readAccounts();
+  };
+  useEffect(() => {
+    if (!sources?.some((s) => s.track.on && s.track.method === "console")) return;
+    readConsoles();
+    const t = setInterval(readConsoles, 15 * 60_000);
+    return () => clearInterval(t);
+  }, [sources]);
+  useEffect(() => { if (overlay === "usage") readConsoles(); }, [overlay]);
+  const accountsNow = trackedOnly(withLive(accounts, acct.at, planView), sources);
   // when the numbers on screen were read: the full reading, or a conversation's newer one
-  const readAt = accountsNow === accounts ? acct.at : (planView!.limits_at ?? 0) * 1000;
+  const readAt = withLive(accounts, acct.at, planView) === accounts ? acct.at : (planView!.limits_at ?? 0) * 1000;
   const usage = { ...(view ? viewUsage(view) : inTauri ? NO_USAGE : demo.usage),
     ...(planView?.limits ? { plan5h: Math.round(planView.limits[0]), planWeek: Math.round(planView.limits[1]), plan5hReset: resetIn(planView.limits_reset) } : {}) };
   const accts = accountItems(accountsNow, { plan5h: usage.plan5h, planWeek: usage.planWeek, resetAt: planView?.limits_reset, balance: view?.balance });
@@ -1208,7 +1245,7 @@ export default function App() {
       <Toaster />
       {showPr && inTauri && <PrView pr={pr ?? null} worktree={inWorktree} onClose={() => setShowPr(false)} onRefresh={() => core.prIn(active).catch(() => {})}
         onSend={(text) => { setShowPr(false); say(text); }} onRemoveWorktree={() => { setShowPr(false); setWt({ remove: { path: folder! } }); }} />}
-      {overlay === "usage" && inTauri && <UsageView onClose={() => setOverlay(null)} limits={view?.limits} balance={view?.balance} choices={models?.choices} claude={claude} />}
+      {overlay === "usage" && inTauri && <UsageView onClose={() => setOverlay(null)} limits={view?.limits} balance={view?.balance} choices={models?.choices} claude={claude} sources={sources} />}
       {overlay === "setup" && inTauri && <Setup onSettings={() => { localStorage.setItem(SETUP, "1"); localStorage.setItem("tazuna.settings.tab", "Providers"); setOverlay("settings"); }}
         onClose={() => { localStorage.setItem(SETUP, "1"); setOverlay(null); }} />}
       {overlay === "settings" && inTauri && <SettingsView onClose={() => setOverlay(null)} focus={keyFocus} items={userWidgets} onEdit={editPanel} chat={!folder}

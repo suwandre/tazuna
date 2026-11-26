@@ -770,6 +770,14 @@ Claude, plus an anti-AI-slop round; the visual proposals wait in mockups/v12.htm
   windows as meters; "$0.17 below zero" everywhere; OpenRouter's free requests come back tomorrow; stopped accounts lead.
 - No flash when a receipt or the steps fold (Qwen's fix, reviewed); the cache's share to one decimal everywhere.
 
+0.1.133 (with tazuna 0.1.232): usage sources. Settings › Providers gives each provider a Usage line: a Track switch, how
+it is read and what it needs (an action: a key permission, Qwen's CLI commands to copy, an allowance to count against, or
+the console). The console reader (experimental, off by default, macOS 14+): "Sign in…" opens the provider's own console
+in a tazuna window with a store of its own; a learn visit records only field names and shapes so a reader can be written
+(phase 2: none yet, so no hidden window runs); only those sites' exact hosts may send one bounded report; popups for
+sign-in open in child windows without it; Forget sign-in clears the store and the reading. The status bar and usage page
+show tracked providers only. Also: closing a window other than the main one no longer stops every core.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

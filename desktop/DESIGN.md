@@ -269,7 +269,15 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   are set in, the Stats as tiles or rows, where the conversation's numbers stand, Live stats on or off; its rows have no line under them, the
   labels and controls say it: design review 14); a provider's key field shows when asked for. Claude is the first of your providers: signed in, or how to sign
   in (`claude auth login` with Copy, and Check again), or its install page; the first-run dialog ticks it only when it is
-  signed in.
+  signed in. A provider's row has a Usage line under it (review 14, usage sources): the Track switch and, while it is on,
+  how the usage is read (a Segmented where there are several: API, Admin key, CLI, Console, Count here, None), its state in
+  a few words (the method's steps on hover) and the one action for that way: none for an API that reads by itself; "Turn on
+  account:read for this key" and Check again; the CLI's commands with Copy each, and Check again;
+  Sign in… and Forget sign-in for the console, with its one sentence on the terms (the one line under a control here, asked
+  for: reading a provider's page by machine may break its terms); the allowance on one line (an amount, the system's own
+  menus for the unit, the period and the day it starts, Save; three Segmented ran it onto two). An admin key is never one of
+  the ways (it tells a month's spend, not the plan's use): a faint line, "Admin key: …", with its page. Untracked, the switch
+  alone. On your providers' rows, on a console's without a key (it reads with a sign-in), and on any row while tracked.
 - Scrolled up from the end of a conversation, a round button over the message box goes back down.
 - A new conversation before its first message is the start screen (prototype `mockups/v3.html`): the mark (40 px, so its pixels land on whole screen pixels), a serif
   question, the day's ledger from the run log ("Today 14 runs | $0.41 paid | 94.2% from the cache"; a click opens the usage
@@ -301,6 +309,8 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - The transcript fades under the header and over the message box (`.tz-doc-edges`: two gradients in the sheet's colour
   over the scroller, clear of its scrollbar, never a mask on the scroller); its padding is as tall as the fades, so
   nothing is faded at its top or end, and a message jumped to starts under the fade. The way back down stands over the lower fade, which is deeper while it shows.
+- The status bar and the usage page show tracked providers only (Settings › Providers, Usage; the accounts reading's
+  `untracked`, and a switch turned since: `trackedOnly`, lib/health.ts); an untracked one is not there at all.
 - The usage page speaks Settings' language: sections (Right now, Spending), each a card of rows; every account's windows
   as meters (amber from 75%); accounts with nothing used fold into one line ("4 windows at 0%"), and so do providers
   whose API tells no balance (their pages inside); a zero is a quiet line, not a big number; the bars stack the plan
@@ -432,7 +442,8 @@ in it, lib/chrome.ts, only after the pointer really moves onto its element: a ro
 none); answer copy; error card (the provider's message in words, with a capital, its error codes left to the raw reply, said once even when the answer repeats it; Retry runs
 the last failed turn again without a second message, on the last reply only; its raw reply on request); code
 block with its language and copy; code row (components/DiffView.tsx `CodeRow`: a diff's or a file's line, its gutter, sign,
-colours, marks and hanging indent; the review's and every step's) and path label (`PathLabel`, Step.tsx); work panel section (Stats, Changes, Checks, Pull request), the panel's edge (`PanelEdge`, Rail.tsx), sparkline, stat tile and
+colours, marks and hanging indent; the review's and every step's) and path label (`PathLabel`, Step.tsx); work panel section (Stats, Changes, Checks, Pull request), the panel's edge (`PanelEdge`, Rail.tsx), a provider's usage line
+(`UsageLine`, SettingsView.tsx), the console's learn bar (console.js), sparkline, stat tile and
 stat row (components/Stats.tsx: a sparkline is one 2 px line, its last point marked, a tip "call N · value" on hover or the
 arrows; a row's line is 56 × 14 px with no mark), usage bar, status bar. Reuse these before adding new ones; add new ones here when they are made.
 
@@ -499,6 +510,12 @@ arrows; a row's line is 56 × 14 px with no mark), usage bar, status bar. Reuse 
   headers (their titles too: `data-tauri-drag-region="deep"`, which leaves the controls in them clickable) and the desk
   between the parts move the window. Native menus.
 - A shortcut is written the Mac's way in the code and shown through `keysOf` (lib/types.ts): "Ctrl+K" on Windows and Linux.
+- The console reader's window (review 14; main.rs `console_window`): a normal window, "<Provider> usage — tazuna", on the
+  provider's own page with its sign-in in a store of its own; the page is the provider's, and tazuna draws nothing on it but
+  the first visit's bar (src-tauri/src/console.js): a fixed bar at the top, paper text on ink (#23221e, light's `ink`;
+  the dark accent's Done), its words saying what it keeps ("Only names of fields are kept."), then what it found; "Move
+  down" takes it off the page's own header. Reading in the background is a hidden window, one at a time, none at all while
+  no provider is tracked by its console.
 - One clock (`clock`, lib/health.ts): "9:39pm". A tooltip repeats nothing the control already shows whole; a cut title's
   tooltip is the whole title (the first message), never the cut one.
 

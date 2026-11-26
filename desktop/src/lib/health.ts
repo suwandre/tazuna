@@ -1,7 +1,7 @@
 // Every account's standing for the status bar (desktop 0.1.79, prototype mockups/v5.html variant A): fine, running low or
 // stopped, with what to say about it. A state per account, not one score: 93% of a week and $12.40 left do not add up to
 // a number anyone can act on, and a total hides the account that is about to stop you (design review 6).
-import type { Accounts, ModelChoice } from "./tazuna";
+import type { Accounts, Allowance, Learned, ModelChoice, UsageSource } from "./tazuna";
 import { usd } from "./types";
 
 export type Level = "ok" | "low" | "out" | "unknown";
@@ -186,6 +186,30 @@ export function mine(all: Item[], choice: ModelChoice | undefined, model: string
   return all.filter((i) => i.key === `credit:${provider}`);
 }
 
+/** The accounts reading without the providers the user does not track (Settings › Providers, Usage): they show nothing in the
+ * status bar or on the usage page. The reading names them (`untracked`); a switch turned since, by the sources. From a core
+ * before either, every row. */
+export function trackedOnly(acc: Accounts | null, sources: UsageSource[] | null): Accounts | null {
+  if (!acc) return acc;
+  const off = new Set(acc.untracked ?? []);
+  for (const s of sources ?? []) if (s.track.on) off.delete(s.provider); else off.add(s.provider);
+  return off.size ? { ...acc, credits: acc.credits.filter((c) => !off.has(c.provider)) } : acc;
+}
+
+/** The providers tracked by their console whose last reading (`last`, ms by provider) is 15 minutes old or more: the console
+ * reader reads them in a hidden window, one at a time (App.tsx). */
+export const dueConsoles = (sources: UsageSource[], last: Record<string, number>, now = Date.now()) =>
+  sources.filter((s) => s.track.on && s.track.method === "console" && now - (last[s.provider] ?? 0) >= 15 * 60_000).map((s) => s.provider);
+
+/** The commands a usage method's steps name in backticks ("run `qwencloud auth login`"), for Settings' Copy. */
+export const commandsIn = (steps: string) => [...steps.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+/** An allowance said short: "2,000,000 tokens a month", "$150 a month", "1 request a day". */
+export const allowanceWords = (a: Allowance) =>
+  `${a.unit === "usd" ? `$${a.amount.toLocaleString("en-US")}` : `${a.amount.toLocaleString("en-US")} ${a.amount === 1 ? a.unit.replace(/s$/, "") : a.unit}`} a ${a.period}`;
+/** What the console reader's first visit found, in words (Settings › Providers). */
+export const learnedWords = (l: Learned | null | undefined) =>
+  l == null ? "sign in once to find its usage page" : l.page && l.fields ? `found usage data on ${l.page} (${l.fields} field${l.fields === 1 ? "" : "s"})` : "nothing usage-like yet";
+
 export const worst = (xs: Item[]): Level => (xs.some((i) => i.level === "out") ? "out" : xs.some((i) => i.level === "low") ? "low" : "ok");
 
 /** A check: `npx tsx -e 'import("./src/lib/health.ts").then(m => m.demo())'`. */
@@ -246,6 +270,19 @@ export function demo() {
     && mine(all, { provider: "OmniRoute" } as ModelChoice, "agy/gemini-4-hydrogen-high")[0]?.name === "OmniRoute agy, Gemini"
     && all.find((i) => i.key === "credit:OpenRouter")!.short === "OpenRouter $0.17 below zero";
   if (!ok) throw new Error(`health: ${JSON.stringify(all.map((i) => [i.key, i.level, i.short]))}`);
+  // untracked providers show nothing; before the sources come, every row; the console reader's due list, 15 minutes apart
+  const src = (provider: string, on: boolean, method = "api") => ({ provider, has_key: true, methods: [], track: { on, method }, allowance: null }) as UsageSource;
+  const sources = [src("SubRouter", true), src("OpenRouter", false), src("Qwen Cloud Token Plan", true, "console"), src("Caffeine", false, "console")];
+  const names = (a: Accounts | null) => a!.credits.map((c) => c.provider).join();
+  if (names(trackedOnly(acc, sources)) !== "SubRouter,Mortera" || trackedOnly(acc, null) !== acc || trackedOnly(null, sources) !== null
+    || names(trackedOnly({ ...acc, untracked: ["Mortera"] }, null)) !== "SubRouter,OpenRouter" || names(trackedOnly({ ...acc, untracked: ["OpenRouter"] }, [src("OpenRouter", true)])) !== "SubRouter,OpenRouter,Mortera"
+    || dueConsoles(sources, {}, t0).join() !== "Qwen Cloud Token Plan" || dueConsoles(sources, { "Qwen Cloud Token Plan": t0 - 14 * 60_000 }, t0).length
+    || dueConsoles(sources, { "Qwen Cloud Token Plan": t0 - 15 * 60_000 }, t0).length !== 1) throw new Error("tracked providers");
+  const words = [commandsIn("Run `npm install -g @qwencloud/qwencloud-cli`, then `qwencloud auth login`.").join("|"), allowanceWords({ amount: 2_000_000, unit: "tokens", period: "month", reset: 1 }),
+    allowanceWords({ amount: 150, unit: "usd", period: "month", reset: 1 }), allowanceWords({ amount: 1, unit: "requests", period: "day", reset: 0 }),
+    learnedWords(null), learnedWords({ page: "/usage", fields: 3, at: 1 }), learnedWords({ page: "/usage", fields: 1, at: 1 }), learnedWords({ page: null, fields: 0, at: 1 })].join("|");
+  if (words !== "npm install -g @qwencloud/qwencloud-cli|qwencloud auth login|2,000,000 tokens a month|$150 a month|1 request a day|sign in once to find its usage page"
+    + "|found usage data on /usage (3 fields)|found usage data on /usage (1 field)|nothing usage-like yet") throw new Error(`usage words: ${words}`);
   console.log("health ok");
 }
 

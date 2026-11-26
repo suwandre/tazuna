@@ -304,10 +304,13 @@ fn ui_log(msg: String) {
     eprintln!("tazuna desktop (page): {}", msg.chars().take(500).collect::<String>());
 }
 
+fn home_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_else(|_| ".".into()))
+}
+
 /// The desktop app's own folder: ~/.config/tazuna/desktop (under the user's profile on Windows).
 fn desktop_dir() -> std::path::PathBuf {
-    let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_else(|_| ".".into());
-    std::path::Path::new(&home).join(".config/tazuna/desktop")
+    home_dir().join(".config/tazuna/desktop")
 }
 
 /// The user's panels and plugins (docs/PLUGINS.md), one folder each: a panel has index.html, a plugin plugin.js.
@@ -783,7 +786,7 @@ fn op(core: State<Core>, tid: String, msg: serde_json::Value) -> Result<(), Stri
 }
 
 fn is_window_op(msg: &serde_json::Value) -> bool {
-    msg.get("type").is_none() && matches!(msg["op"].as_str(), Some("models" | "refresh_model_list" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route" | "full" | "rename" | "hide" | "rewind" | "mcp" | "mcp_on" | "mcp_add" | "mcp_remove" | "mcp_check" | "hook" | "setup" | "gallery" | "gallery_get" | "accounts" | "review" | "piece" | "allow_root" | "fork" | "usage" | "spend_cap" | "worktree_new" | "worktrees" | "worktree_remove" | "pr" | "create" | "create_enable" | "create_discard" | "retry" | "complete" | "agent" | "task_stop"))
+    msg.get("type").is_none() && matches!(msg["op"].as_str(), Some("models" | "refresh_model_list" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route" | "full" | "rename" | "hide" | "rewind" | "mcp" | "mcp_on" | "mcp_add" | "mcp_remove" | "mcp_check" | "hook" | "setup" | "gallery" | "gallery_get" | "accounts" | "review" | "piece" | "allow_root" | "fork" | "usage" | "spend_cap" | "worktree_new" | "worktrees" | "worktree_remove" | "pr" | "create" | "create_enable" | "create_discard" | "retry" | "complete" | "agent" | "task_stop" | "usage_sources" | "usage_track" | "usage_allowance"))
 }
 
 #[tauri::command]
@@ -799,6 +802,521 @@ fn new_chat(core: State<Core>, tid: String) -> Result<(), String> {
 #[tauri::command]
 fn set_profile(core: State<Core>, tid: String, name: String) -> Result<(), String> {
     write(&core, &tid, serde_json::json!({"op": "profile", "name": name}))
+}
+
+// The console reader (usage sources, review 14; experimental, off by default): a provider's own usage page, read in a window
+// of tazuna's with the user's own sign-in, for the providers whose API tells no usage. The window's initialization script
+// (console.js) watches the JSON the page itself gets and reports through one command (`report`) that checks everything again
+// and writes under ~/.local/share/tazuna, where the core reads it: console-learn/<provider>.json (shapes only, from the first
+// visit) and console/<provider>.json (the numbers). tazuna keeps no password: the sign-in lives in the window's own store.
+
+/// A provider whose usage page tazuna may read: its name as the core says it, the page its window opens on (its LOGINS
+/// page), the exact hosts of its console (capabilities/console.json lists the same; sign-in pages elsewhere get no script
+/// and no command), and its
+/// extractor: a JS function (path, json) => {left, total, unit, used_pct, resets} | null, written from its learn file
+/// (Phase 2; until then none, and nothing is read in the background).
+struct Console {
+    name: &'static str,
+    start: &'static str,
+    sites: &'static [&'static str],
+    read: Option<&'static str>,
+}
+
+const CONSOLES: [Console; 3] = [
+    Console { name: "Qwen Cloud Token Plan", start: "https://home.qwencloud.com/api-keys?region=ap-southeast-1", sites: &["home.qwencloud.com"], read: None },
+    Console { name: "Mistral Vibe", start: "https://chat.mistral.ai/code/extensions", sites: &["chat.mistral.ai", "console.mistral.ai", "admin.mistral.ai"], read: None },
+    Console { name: "Caffeine", start: "https://caffeine.ai/inference/api-keys", sites: &["caffeine.ai", "www.caffeine.ai"], read: None },
+];
+
+const CONSOLE_JS: &str = include_str!("console.js");
+
+/// The console windows' state: whether a hidden reading runs (one at a time), and who waits for its report.
+#[derive(Default)]
+struct Consoles {
+    hidden: std::sync::atomic::AtomicBool,
+    waiting: Mutex<Option<(String, std::sync::mpsc::Sender<&'static str>)>>,
+    /// held around a learn file's read, merge and write: reports arrive on several threads at once
+    learning: Mutex<()>,
+}
+
+fn console_of(provider: &str) -> Option<&'static Console> {
+    CONSOLES.iter().find(|c| c.name == provider)
+}
+
+/// A provider's name in a file or window name, as the core names its credits files: "Qwen-Cloud-Token-Plan".
+fn slug(name: &str) -> String {
+    name.replace(|c: char| !c.is_ascii_alphanumeric(), "-")
+}
+
+fn label_of(name: &str) -> String {
+    format!("console-{}", slug(name))
+}
+
+/// tazuna's data, as the core has it: ~/.local/share/tazuna.
+fn share_dir() -> std::path::PathBuf {
+    home_dir().join(".local/share/tazuna")
+}
+
+/// A URL over https on one of `sites`, exactly (no host under it: any subdomain could otherwise write a reading).
+fn on_site(sites: &[&str], url: &str) -> bool {
+    let Ok(u) = tauri::Url::parse(url) else { return false };
+    u.scheme() == "https" && u.port().is_none() && sites.contains(&u.host_str().unwrap_or_default())
+}
+
+/// A report comes from a window opened for that provider: `console-<provider>`, or its background reading's
+/// `console-<provider>-read` (a label of its own: a sign-in window opening never waits on one closing).
+fn caller_ok(label: &str, provider: &str) -> bool {
+    console_of(provider).is_some() && (label == label_of(provider) || label == format!("{}-read", label_of(provider)))
+}
+
+// no "token": accessToken is a sign-in, not usage
+const USAGE_WORDS: [&str; 9] = ["quota", "usage", "remain", "balance", "credit", "limit", "used", "total", "plan"];
+
+/// A name that may be a value (console.js valueLike has the same rules): a UUID, five digits or sixteen hex digits in a row, a
+/// run of 8+ letters and digits mixed or of 8+ with a third of it capitals, a prefixed id ("cus_NffrFeUf", "sk-AbCdEf").
+fn value_like(s: &str) -> bool {
+    let run = |f: fn(char) -> bool| s.split(|c: char| !f(c)).map(str::len).max().unwrap_or(0);
+    let uuid = s.split(|c: char| !(c.is_ascii_hexdigit() || c == '-')).any(|r| {
+        let g: Vec<&str> = r.split('-').collect();
+        g.windows(5).any(|w| w.iter().map(|x| x.len()).eq([8, 4, 4, 4, 12]))
+    });
+    let mixed = s.split(|c: char| !c.is_ascii_alphanumeric()).any(|t| {
+        let caps = t.chars().filter(char::is_ascii_uppercase).count();
+        t.len() >= 8 && ((t.chars().any(|c| c.is_ascii_digit()) && t.chars().any(|c| c.is_ascii_alphabetic()))
+            || (t.chars().any(|c| c.is_ascii_lowercase()) && caps >= 2 && caps * 3 >= t.len()))
+    });
+    // [a-z]{2,6}[_-] after a start or a non-alphanumeric, then 6+ letters and digits with a capital or a digit
+    let b = s.as_bytes();
+    let prefixed = (0..b.len()).filter(|&i| b[i] == b'_' || b[i] == b'-').any(|i| {
+        let pre = b[..i].iter().rev().take_while(|c| c.is_ascii_lowercase()).count();
+        let before_ok = i == pre || !b[i - pre - 1].is_ascii_alphanumeric();
+        let rest: Vec<u8> = b[i + 1..].iter().copied().take_while(u8::is_ascii_alphanumeric).collect();
+        (2..=6).contains(&pre) && before_ok && rest.len() >= 6 && rest.iter().any(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    });
+    uuid || mixed || prefixed || run(|c| c.is_ascii_digit()) >= 5 || run(|c| c.is_ascii_hexdigit()) >= 16
+}
+
+/// A field name as console.js keeps it: "*" (one that may be a value), or a letter, "_" or "$" and then those and digits (a
+/// dot, a dash or an @ makes it a value: john.smith, acme-prod).
+fn key_ok(k: &str) -> bool {
+    k == "*" || (k.len() <= 64 && k.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_' || c == '$')
+        && k.chars().all(|c| c.is_ascii_alphanumeric() || "_$".contains(c)) && !value_like(k))
+}
+
+/// A path as console.js makes it: "/a/:id/b", its query's keys alone ("?region&lang"); a dot only in a file's name (api.json).
+fn path_ok(p: &str) -> bool {
+    let (path, query) = p.split_once('?').unwrap_or((p, ""));
+    let file = |s: &str| s.split_once('.').is_some_and(|(n, ext)| n.len() <= 41 && n.starts_with(|c: char| c.is_ascii_alphabetic())
+        && n.chars().all(|c| c.is_ascii_alphabetic() || c == '-') && ["json", "php", "html", "htm", "asp", "aspx", "do"].contains(&ext));
+    let part = |s: &str| s.is_empty() || s == ":id" || (s.len() <= 64 && s.starts_with(|c: char| c.is_ascii_alphabetic())
+        && (s.chars().all(|c| c.is_ascii_alphanumeric() || "_-".contains(c)) || file(s)) && !value_like(s));
+    p.len() <= 512 && path.starts_with('/') && path.split('/').all(part) && (query.is_empty() || query.split('&').all(key_ok))
+}
+
+/// A shape and nothing more: type names as leaves ("string", "number", "boolean", "null"), objects of field names, arrays
+/// of one item at most. A number, a boolean, null or any other string is a value and fails.
+fn shape_ok(v: &serde_json::Value, depth: usize) -> bool {
+    use serde_json::Value as V;
+    depth <= 12 && match v {
+        V::String(s) => matches!(s.as_str(), "string" | "number" | "boolean" | "null"),
+        V::Array(a) => a.len() <= 1 && a.iter().all(|x| shape_ok(x, depth + 1)),
+        V::Object(o) => o.len() <= 100 && o.iter().all(|(k, x)| key_ok(k) && shape_ok(x, depth + 1)),
+        _ => false,
+    }
+}
+
+/// The usage-like field names in a shape.
+fn usage_keys(v: &serde_json::Value, out: &mut Vec<String>) {
+    match v {
+        serde_json::Value::Array(a) => a.iter().for_each(|x| usage_keys(x, out)),
+        serde_json::Value::Object(o) => for (k, x) in o {
+            let low = k.to_ascii_lowercase();
+            if USAGE_WORDS.iter().any(|w| low.contains(w)) && !out.contains(k) {
+                out.push(k.clone());
+            }
+            usage_keys(x, out);
+        },
+        _ => {}
+    }
+}
+
+/// What a console page reported, checked.
+#[derive(Debug, PartialEq)]
+enum Report {
+    /// a response's shape for the learn file: {path, method, status, shape, usage, page?}
+    Learn(serde_json::Value),
+    /// the numbers for the reading: {left, total, unit, used_pct, resets}, each there (null where not known)
+    Read(serde_json::Value),
+    SignedOut,
+    /// the learn bar's Done: the window closes
+    Done,
+}
+
+/// A console page's report, checked: it is the provider's page talking, and any script on it can call the command. From its
+/// own window (`console-<provider>`) on that provider's sites, 64 KB at most, and only a shape (learn: field names and type
+/// names, a cleaned path, a page on its sites only where usage-like fields appeared) or numbers (read: finite numbers or
+/// null, one unit of four).
+fn check_report(label: &str, url: &str, provider: &str, kind: &str, payload: &serde_json::Value) -> Result<Report, String> {
+    let c = console_of(provider).ok_or("not a console reader's provider")?;
+    if !caller_ok(label, provider) {
+        return Err(format!("not {provider}'s console window: {label}"));
+    }
+    if !on_site(c.sites, url) {
+        return Err(format!("not on {provider}'s console: {url}"));
+    }
+    if payload.to_string().len() > 64 * 1024 {
+        return Err("a report over 64 KB".into());
+    }
+    let fields = |allowed: &[&str]| payload.as_object().filter(|o| o.keys().all(|k| allowed.contains(&k.as_str())));
+    match kind {
+        "learn" => {
+            let o = fields(&["path", "method", "status", "shape", "page"]).ok_or("not a learn report")?;
+            let path = o.get("path").and_then(|p| p.as_str()).filter(|p| path_ok(p)).ok_or("not a cleaned path")?;
+            let method = o.get("method").and_then(|m| m.as_str())
+                .filter(|m| matches!(*m, "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS")).ok_or("not a method")?;
+            let status = o.get("status").and_then(|s| s.as_u64()).filter(|s| (100..600).contains(s)).ok_or("not a status")?;
+            let shape = o.get("shape").filter(|s| s.is_object() || s.is_array()).filter(|s| shape_ok(s, 0)).ok_or("not a shape")?;
+            let mut keys = vec![];
+            usage_keys(shape, &mut keys);
+            let page = match o.get("page") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(p) => {
+                    let p = p.as_str().filter(|p| on_site(c.sites, p)).ok_or("not a page on its console")?;
+                    let path = tauri::Url::parse(p).map(|u| u.path().to_string()).unwrap_or_default();
+                    if p.contains(['?', '#']) || !path_ok(&path) || keys.is_empty() {
+                        return Err("not a usage page".into());
+                    }
+                    Some(p)
+                }
+            };
+            let mut entry = serde_json::json!({"path": path, "method": method, "status": status, "shape": shape, "usage": !keys.is_empty()});
+            if let Some(p) = page {
+                entry["page"] = serde_json::json!(p);
+            }
+            Ok(Report::Learn(entry))
+        }
+        "read" if c.read.is_none() => Err(format!("no reader for {provider} yet")),
+        "read" => check_numbers(payload),
+        "signed_out" | "done" if payload.is_null() => Ok(if kind == "done" { Report::Done } else { Report::SignedOut }),
+        _ => Err(format!("not a report: {kind}")),
+    }
+}
+
+/// A reading's numbers: the five fields, finite numbers or null, one unit of four, at least one number.
+fn check_numbers(payload: &serde_json::Value) -> Result<Report, String> {
+    let fields = |allowed: &[&str]| payload.as_object().filter(|o| o.keys().all(|k| allowed.contains(&k.as_str())));
+    {
+        {
+            let n = fields(&["numbers"]).and_then(|o| o.get("numbers")).and_then(|n| n.as_object())
+                .filter(|n| n.keys().all(|k| ["left", "total", "unit", "used_pct", "resets"].contains(&k.as_str()))).ok_or("not a reading")?;
+            // the core's own limits (src/accounts.rs console_check): finite and under 1e15, a total over 0, a share 0-1000, a
+            // reset in epoch seconds (1e9 to 1e10: not milliseconds, not seconds from now)
+            let num = |k: &str| match n.get(k) {
+                None | Some(serde_json::Value::Null) => Ok(serde_json::Value::Null),
+                Some(v) if v.as_f64().is_some_and(|f| f.is_finite() && f.abs() < 1e15) => Ok(v.clone()),
+                Some(_) => Err(format!("{k} is not a number")),
+            };
+            let (left, total, used_pct, resets) = (num("left")?, num("total")?, num("used_pct")?, num("resets")?);
+            if total.as_f64().is_some_and(|t| t <= 0.0) || used_pct.as_f64().is_some_and(|p| !(0.0..=1000.0).contains(&p))
+                || resets.as_f64().is_some_and(|r| !(1e9..1e10).contains(&r)) {
+                return Err("a total, a share or a reset out of range".into());
+            }
+            let unit = n.get("unit").and_then(|u| u.as_str()).filter(|u| matches!(*u, "usd" | "tokens" | "credits" | "percent")).ok_or("not a unit")?;
+            if left.is_null() && total.is_null() && used_pct.is_null() {
+                return Err("a reading with no number".into());
+            }
+            Ok(Report::Read(serde_json::json!({"left": left, "total": total, "unit": unit, "used_pct": used_pct, "resets": resets})))
+        }
+    }
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// A file written whole or not at all (the core may read it at any moment).
+fn write_atomic(path: &std::path::Path, v: &serde_json::Value) -> Result<(), String> {
+    std::fs::create_dir_all(path.parent().ok_or("no folder")?).map_err(|e| e.to_string())?;
+    static N: AtomicU64 = AtomicU64::new(0);
+    let tmp = path.with_extension(format!("tmp{}-{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
+    std::fs::write(&tmp, serde_json::to_vec_pretty(v).unwrap_or_default()).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+}
+
+/// The learn file with one more response: one entry per method and path (the newest), the usage page where the most
+/// usage-like fields appeared (a chat page that mentions a plan does not replace /usage), 1 MB at most (the oldest go first).
+fn merge_learn(mut old: serde_json::Value, entry: serde_json::Value, now: u64) -> serde_json::Value {
+    let mut list: Vec<serde_json::Value> = old["responses"].as_array().cloned().unwrap_or_default();
+    list.retain(|e| !(e["path"] == entry["path"] && e["method"] == entry["method"]));
+    if entry["page"].is_string() {
+        let mut keys = vec![];
+        usage_keys(&entry["shape"], &mut keys);
+        if keys.len() as u64 >= old["page_fields"].as_u64().unwrap_or(0) {
+            old["page"] = entry["page"].clone();
+            old["page_fields"] = serde_json::json!(keys.len());
+        }
+    }
+    list.push(entry);
+    while list.len() > 1 && (list.len() > 200 || serde_json::to_string(&list).map_or(0, |s| s.len()) > 1 << 20) {
+        list.remove(0);
+    }
+    serde_json::json!({"at": now, "page": old["page"], "page_fields": old["page_fields"], "responses": list})
+}
+
+/// What the first visit found, for Settings: the usage page's path, the usage-like field names on it, when.
+fn learned_summary(l: &serde_json::Value) -> serde_json::Value {
+    let mut keys = vec![];
+    for e in l["responses"].as_array().into_iter().flatten().filter(|e| e["usage"] == true) {
+        usage_keys(&e["shape"], &mut keys);
+    }
+    let page = l["page"].as_str().and_then(|p| tauri::Url::parse(p).ok()).map(|u| u.path().to_string());
+    serde_json::json!({"page": page, "fields": keys.len(), "at": l["at"]})
+}
+
+fn learn_file(root: &std::path::Path, provider: &str) -> std::path::PathBuf {
+    root.join("console-learn").join(format!("{}.json", slug(provider)))
+}
+
+fn read_json(path: &std::path::Path) -> Option<serde_json::Value> {
+    std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok())
+}
+
+/// A reading for the core: {"at", "status": "ok" | "signed_out" | "error", "numbers" (null unless ok), "source": "console"}.
+fn write_reading(root: &std::path::Path, provider: &str, status: &str, numbers: serde_json::Value) -> Result<(), String> {
+    let v = serde_json::json!({"at": now_secs(), "status": status, "numbers": numbers, "source": "console"});
+    write_atomic(&root.join("console").join(format!("{}.json", slug(provider))), &v)
+}
+
+/// The console reader's one command, plugin:console|report (capabilities/console.json grants it to the console windows on
+/// their providers' sites, and nothing else to them): the report checked, then written, the waiting reading told, or the
+/// window closed (Done).
+#[tauri::command]
+async fn report(app: AppHandle, webview: tauri::Webview, provider: String, kind: String, payload: serde_json::Value) -> Result<(), String> {
+    let url = webview.url().map_err(|e| e.to_string())?;
+    let r = check_report(webview.label(), url.as_str(), &provider, &kind, &payload);
+    if let Err(e) = &r {
+        eprintln!("tazuna desktop: console report refused: {e}");
+    }
+    take_report(&app, &webview, &provider, r?)
+}
+
+#[inline(never)]
+fn take_report(app: &AppHandle, webview: &tauri::Webview, provider: &str, r: Report) -> Result<(), String> {
+    let root = share_dir();
+    let tell = |kind: &'static str| {
+        if let Some((p, tx)) = app.state::<Consoles>().waiting.lock().unwrap().as_ref() {
+            if p == provider {
+                let _ = tx.send(kind);
+            }
+        }
+    };
+    match r {
+        Report::Learn(entry) => {
+            let file = learn_file(&root, provider);
+            let consoles = app.state::<Consoles>();
+            let _one = consoles.learning.lock().unwrap();
+            write_atomic(&file, &merge_learn(read_json(&file).unwrap_or_default(), entry, now_secs()))
+        }
+        Report::Read(numbers) => write_reading(&root, provider, "ok", numbers).map(|_| tell("read")),
+        Report::SignedOut => write_reading(&root, provider, "signed_out", serde_json::Value::Null).map(|_| tell("signed_out")),
+        Report::Done => webview.window().destroy().map_err(|e| e.to_string()),
+    }
+}
+
+/// The macOS data store of a provider's console window (macOS 14 on; before it, WebKit's one default store): a fixed id per
+/// provider, FNV-1a of its name (std's hasher may change between Rust releases, and the sign-in would be lost).
+#[cfg(target_os = "macos")]
+fn store_id(name: &str) -> [u8; 16] {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in name.bytes() {
+        h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
+    }
+    let mut id = *b"tazuna-c\0\0\0\0\0\0\0\0";
+    id[8..].copy_from_slice(&h.to_be_bytes());
+    id
+}
+
+/// Elsewhere, its data folder under the app's own: …/console/<provider>.
+#[cfg(not(target_os = "macos"))]
+fn console_store(app: &AppHandle, c: &Console) -> Result<std::path::PathBuf, String> {
+    Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("console").join(slug(c.name)))
+}
+
+/// macOS 14 or later: before it WebKit has no store of a window's own, and a console window would share the main window's.
+#[cfg(target_os = "macos")]
+fn own_stores() -> Result<(), String> {
+    let v = Command::new("/usr/bin/sw_vers").arg("-productVersion").output().ok().and_then(|o| String::from_utf8(o.stdout).ok()).unwrap_or_default();
+    if v.split('.').next().and_then(|m| m.trim().parse::<u32>().ok()).unwrap_or(0) < 14 {
+        return Err("Reading a provider's console needs macOS 14 or later.".into());
+    }
+    Ok(())
+}
+
+/// A provider's console window on `url`: its own store, the script only on its sites, https only.
+#[inline(never)]
+fn console_window(app: &AppHandle, c: &Console, mode: &str, url: &str, visible: bool) -> Result<tauri::WebviewWindow, String> {
+    let label = if visible { label_of(c.name) } else { format!("{}-read", label_of(c.name)) };
+    #[cfg(target_os = "macos")]
+    own_stores()?;
+    let cfg = serde_json::json!({"provider": c.name, "mode": mode, "sites": c.sites});
+    let script = format!("{CONSOLE_JS}(window, {cfg}, {});", c.read.unwrap_or("null"));
+    let url = tauri::Url::parse(url).map_err(|e| e.to_string())?;
+    let b = tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::External(url))
+        .title(format!("{} usage — tazuna", c.name))
+        .inner_size(1100.0, 780.0)
+        .visible(visible)
+        .initialization_script(script)
+        .on_navigation(|u| u.scheme() == "https" || u.as_str() == "about:blank");
+    // a sign-in in a popup (window.open: Google's, Internet Identity's): a window of its own, outside console-* (no report),
+    // on the opener's webview configuration (its store), https only
+    let (handle, owner) = (app.clone(), c.name);
+    let b = b.on_new_window(move |url, features| popup(&handle, owner, url, features));
+    #[cfg(target_os = "macos")]
+    let b = b.data_store_identifier(store_id(c.name));
+    #[cfg(not(target_os = "macos"))]
+    let b = b.data_directory(console_store(app, c)?);
+    b.build().map_err(|e| e.to_string())
+}
+
+#[inline(never)]
+fn popup(app: &AppHandle, owner: &str, url: tauri::Url, features: tauri::webview::NewWindowFeatures) -> tauri::webview::NewWindowResponse<tauri::Wry> {
+    static N: AtomicU64 = AtomicU64::new(0);
+    if url.scheme() != "https" {
+        return tauri::webview::NewWindowResponse::Deny;
+    }
+    let label = format!("popup-{}-{}", slug(owner), N.fetch_add(1, Ordering::SeqCst));
+    let built = tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::External("about:blank".parse().expect("about:blank")))
+        .window_features(features)
+        .title(format!("{owner} sign-in — tazuna"))
+        .on_navigation(|u| u.scheme() == "https" || u.as_str() == "about:blank")
+        .build();
+    match built {
+        Ok(window) => tauri::webview::NewWindowResponse::Create { window },
+        Err(_) => tauri::webview::NewWindowResponse::Deny,
+    }
+}
+
+/// "Sign in…" (Settings › Providers): the provider's console in a window of its own, learning (the first visit: its bar,
+/// shapes only) or reading. One already open comes to the front.
+#[tauri::command]
+async fn console_open(app: AppHandle, provider: String, learn: bool) -> Result<(), String> {
+    let c = console_of(&provider).ok_or_else(|| format!("no console reader for {provider}"))?;
+    if let Some(w) = app.get_webview_window(&label_of(c.name)) {
+        return w.set_focus().map_err(|e| e.to_string());
+    }
+    console_window(&app, c, if learn { "learn" } else { "read" }, c.start, true).map(|_| ())
+}
+
+async fn pause(ms: u64) {
+    let _ = tauri::async_runtime::spawn_blocking(move || std::thread::sleep(std::time::Duration::from_millis(ms))).await;
+}
+
+/// "Forget sign-in": the window closed, its store deleted (its cookies, its sign-in) and its reading with it. The learn file
+/// stays: shapes only.
+#[tauri::command]
+async fn console_forget(app: AppHandle, consoles: State<'_, Consoles>, provider: String) -> Result<(), String> {
+    let c = console_of(&provider).ok_or_else(|| format!("no console reader for {provider}"))?;
+    for label in [label_of(c.name), format!("{}-read", label_of(c.name))] {
+        if let Some(w) = app.get_webview_window(&label) {
+            let _ = w.destroy();
+        }
+    }
+    // a background reading ends first (it is told nothing: its window is gone; at most its 30 s)
+    for _ in 0..130 {
+        if !consoles.hidden.load(Ordering::SeqCst) {
+            break;
+        }
+        pause(250).await;
+    }
+    // the webview lets go of its store a moment after its window: a few tries
+    let mut last = Err(String::new());
+    for _ in 0..4 {
+        pause(400).await;
+        #[cfg(target_os = "macos")]
+        {
+            own_stores()?;
+            last = app.remove_data_store(store_id(c.name)).await.map_err(|e| e.to_string());
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            last = match std::fs::remove_dir_all(console_store(&app, c)?) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+                _ => Ok(()),
+            };
+        }
+        if last.is_ok() {
+            break;
+        }
+    }
+    match std::fs::remove_file(share_dir().join("console").join(format!("{}.json", slug(c.name)))) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.to_string()),
+        _ => {}
+    }
+    last
+}
+
+/// A reading in a hidden window (D4: the window asks at most every 15 minutes while a provider is tracked by its console):
+/// the learned usage page, until a report or 30 s; no report in that time is "error" (a sign-in page says "signed_out" itself).
+/// Only where the provider has an extractor and a usage page was learned, never beside an open console window or another
+/// reading. Says what it did: "read", "signed_out", "error", or "skipped".
+#[tauri::command]
+async fn console_refresh(app: AppHandle, consoles: State<'_, Consoles>, provider: String) -> Result<String, String> {
+    let c = console_of(&provider).ok_or_else(|| format!("no console reader for {provider}"))?;
+    let page = read_json(&learn_file(&share_dir(), c.name)).and_then(|l| l["page"].as_str().map(str::to_string)).filter(|p| !p.contains(":id"));
+    let Some(page) = page.filter(|_| c.read.is_some()) else { return Ok("skipped".into()) };
+    if app.get_webview_window(&label_of(c.name)).is_some() || consoles.hidden.swap(true, Ordering::SeqCst) {
+        return Ok("skipped".into());
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    *consoles.waiting.lock().unwrap() = Some((c.name.to_string(), tx));
+    let got = match console_window(&app, c, "read", &page, false) {
+        Ok(w) => {
+            let got = tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(30)).ok()).await.ok().flatten();
+            let _ = w.destroy();
+            Ok(got)
+        }
+        Err(e) => Err(e),
+    };
+    *consoles.waiting.lock().unwrap() = None;
+    consoles.hidden.store(false, Ordering::SeqCst);
+    let got = got?;
+    if got.is_none() {
+        write_reading(&share_dir(), c.name, "error", serde_json::Value::Null)?;
+    }
+    Ok(got.unwrap_or("error").into())
+}
+
+/// What the first visit found, for Settings ("found usage data on /usage (3 fields)"), and whether the window's store (its
+/// sign-in) is there, for Forget: {page, fields, at, store}, or null with neither.
+#[tauri::command]
+async fn console_learned(app: AppHandle, provider: String) -> Result<Option<serde_json::Value>, String> {
+    let Some(c) = console_of(&provider) else { return Ok(None) };
+    #[cfg(target_os = "macos")]
+    let store = own_stores().is_ok() && app.fetch_data_store_identifiers().await.is_ok_and(|ids| ids.contains(&store_id(c.name)));
+    #[cfg(not(target_os = "macos"))]
+    let store = console_store(&app, c).is_ok_and(|d| d.exists());
+    let learned = read_json(&learn_file(&share_dir(), c.name)).map(|l| learned_summary(&l));
+    Ok(match learned {
+        Some(mut l) => { l["store"] = serde_json::json!(store); Some(l) }
+        None if store => Some(serde_json::json!({"page": null, "fields": 0, "at": null, "store": true})),
+        None => None,
+    })
+}
+
+/// A window gone: the main one takes the cores and the console windows with it (until the console reader, any window's end
+/// stopped every core); a console window's end tells Settings, which shows what was learned.
+#[inline(never)]
+fn window_gone(w: &tauri::Window) {
+    if w.label() == "main" {
+        stop_all(&w.state::<Core>());
+        for (label, cw) in w.app_handle().webview_windows() {
+            if label.starts_with("console-") || label.starts_with("popup-") {
+                let _ = cw.destroy();
+            }
+        }
+    } else if let Some(c) = CONSOLES.iter().find(|c| w.label().strip_suffix("-read").unwrap_or(w.label()) == label_of(c.name)) {
+        let _ = w.app_handle().emit_to("main", "console-closed", c.name);
+    }
 }
 
 /// The macOS menu bar: the system's own items (Quit, Hide, the Edit menu that copy and paste need) and tazuna's (new chat,
@@ -833,7 +1351,11 @@ fn menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
 
 fn main() {
     tauri::Builder::default()
-        .register_uri_scheme_protocol("tzwidget", |_ctx, req| {
+        .register_uri_scheme_protocol("tzwidget", |ctx, req| {
+            // the main window's alone (a panel's frame is inside it): a console page gets nothing
+            if ctx.webview_label() != "main" {
+                return tauri::http::Response::builder().status(403).body(Vec::new()).unwrap_or_default();
+            }
             let path = req.uri().path().to_string();
             let p = path.trim_matches('/');
             // a plugin's code for its dry run is JavaScript; the dry-run page may load it from this scheme; panels may not
@@ -850,8 +1372,8 @@ fn main() {
             tauri::http::Response::builder().status(status).header("Content-Type", kind).header("Content-Security-Policy", csp)
                 .body(body.into_bytes()).unwrap_or_default()
         })
-        .register_uri_scheme_protocol("tzplugin", |_ctx, req| {
-            let (status, body) = plugin_code(req.uri().path());
+        .register_uri_scheme_protocol("tzplugin", |ctx, req| {
+            let (status, body) = if ctx.webview_label() == "main" { plugin_code(req.uri().path()) } else { (403, String::new()) };
             tauri::http::Response::builder().status(status)
                 .header("Content-Type", "text/javascript; charset=utf-8")
                 // the window imports it from its own origin
@@ -863,6 +1385,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri::plugin::Builder::<tauri::Wry, ()>::new("console").invoke_handler(tauri::generate_handler![report]).build())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
@@ -876,10 +1399,11 @@ fn main() {
             Ok(())
         })
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, image_data, paste_image, paste_clipboard_image, open_key_page, open_link, open_in, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, plugins_export, plugins_import, plugins_import_file, hotkey, update_check, update_install, interrupt, new_chat, set_profile])
+        .manage(Consoles::default())
+        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, image_data, paste_image, paste_clipboard_image, open_key_page, open_link, open_in, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, plugins_export, plugins_import, plugins_import_file, hotkey, update_check, update_install, interrupt, new_chat, set_profile, console_open, console_forget, console_refresh, console_learned])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
-                stop_all(&w.state::<Core>());
+                window_gone(w);
             }
         })
         .run(tauri::generate_context!())
@@ -984,6 +1508,131 @@ mod tests {
         let odd = serde_json::json!({"tazuna_plugin": 1, "id": "../../x", "files": {"manifest.json": "{}", "index.html": "<p>"}}).to_string();
         assert_eq!(super::import_into(&root, &odd).unwrap(), "shared", "an id that is not a folder name is not used");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A console page's report: from its own window, on its provider's sites, a shape or numbers and nothing else.
+    #[test]
+    fn a_console_report_is_checked() {
+        use super::{check_report, Report};
+        use serde_json::json;
+        let (q, label, url) = ("Qwen Cloud Token Plan", "console-Qwen-Cloud-Token-Plan", "https://home.qwencloud.com/usage");
+        let shape = json!({"data": {"remaining": "number", "totalQuota": "number", "plan": "string", "items": [{"name": "string"}], "*": "boolean"}, "ok": "boolean"});
+        let learn = json!({"path": "/api/usage/:id?region&lang", "method": "GET", "status": 200, "shape": shape, "page": "https://home.qwencloud.com/usage"});
+        let Ok(Report::Learn(e)) = check_report(label, url, q, "learn", &learn) else { panic!("{:?}", check_report(label, url, q, "learn", &learn)) };
+        assert_eq!((&e["usage"], &e["page"], &e["shape"]), (&json!(true), &json!("https://home.qwencloud.com/usage"), &shape));
+        // exactly what console.js reports for review/console.cjs's response full of values (SHOW=1 prints it)
+        let from_js: serde_json::Value = serde_json::from_str(r#"{"path":"/api/usage?region","method":"GET","status":200,"shape":{"user":{"email":"string","id":"number","token":"string"},"quota":{"remaining":"number","total":"number","resetAt":"string","plan":"string"},"items":[{"name":"string","used":"number"}],"*":{"x":"number"},"flags":[],"nothing":"null"},"page":"https://home.qwencloud.com/usage/:id"}"#).unwrap();
+        assert!(matches!(check_report(label, url, q, "learn", &from_js), Ok(Report::Learn(_))), "{:?}", check_report(label, url, q, "learn", &from_js));
+        // the label: another provider's window, the main window, a provider without a console
+        assert!(super::caller_ok(label, q) && !super::caller_ok("console-Caffeine", q) && !super::caller_ok("main", q) && !super::caller_ok("console-OpenRouter", "OpenRouter"));
+        assert!(super::caller_ok("console-Qwen-Cloud-Token-Plan-read", q) && !super::caller_ok("popup-Qwen-Cloud-Token-Plan-0", q));
+        for l in ["console-Caffeine", "main", "console-Qwen-Cloud-Token-Plan-2", "popup-Qwen-Cloud-Token-Plan-0"] {
+            assert!(check_report(l, url, q, "learn", &learn).is_err(), "{l}");
+        }
+        // the site: another one, plain http, a look-alike host
+        for u in ["https://evil.example/usage", "http://home.qwencloud.com/usage", "https://qwencloud.com.evil.example/", "https://evilqwencloud.com/", "tauri://localhost/"] {
+            assert!(check_report(label, u, q, "learn", &learn).is_err(), "{u}");
+        }
+        assert!(super::on_site(&["chat.mistral.ai"], "https://chat.mistral.ai/code/usage") && super::on_site(&["caffeine.ai"], "https://caffeine.ai/"));
+        assert!(!super::on_site(&["caffeine.ai"], "https://evil.caffeine.ai/") && !super::on_site(&["caffeine.ai"], "https://caffeine.ai:8443/"), "exact hosts only");
+        // values the security review found kept: ids, keys, names in field names and paths; real field names stay
+        let uuid_l = "e29b41d4-a716-4466-8554-446655440000";
+        for k in [uuid_l, "acme-prod", "john.smith", "key_2aBcD9eFgH1jK", "cus_NffrFeUfNV2Hib", "AbCdEfGhIjKl", "user9f8e7d6c", "a@b"] {
+            assert!(!super::key_ok(k), "{k}");
+        }
+        for k in ["used_tokens", "totalQuota", "remaining", "plan_limit", "resetAt", "v1", "creditsRemaining", "*"] {
+            assert!(super::key_ok(k), "{k}");
+        }
+        for p in ["/v1/customers/cus_NffrFeUfNV2Hib/keys/x", "/keys/sk-AbCdEfGhIjKlMnOp", &format!("/u/{uuid_l}"), "/users/john.smith/usage"] {
+            assert!(!super::path_ok(p), "{p}");
+        }
+        assert!(super::path_ok("/v1/customers/:id/keys/:id/:id/api.json") && super::path_ok("/api-keys/token-plan"));
+        // a value anywhere in the shape, or a key that may be one
+        for bad in [json!({"a": 12}), json!({"a": "sk-secret"}), json!({"a": true}), json!({"a": null}), json!({"a": ["string", "number"]}),
+            json!({"someone@example.com": "string"}), json!({"1234567": "string"}), json!({"user_123456": "string"}), json!({"a b": "string"}), json!("string")] {
+            let r = check_report(label, url, q, "learn", &json!({"path": "/api", "method": "GET", "status": 200, "shape": bad}));
+            assert!(r.is_err(), "{bad}");
+        }
+        // a path with a query value or an id; an odd method or status; a field it does not know
+        for (k, v) in [("path", json!("/api/usage?region=sg")), ("path", json!("/api/users/1234567/usage")), ("path", json!("api/usage")), ("path", json!("/a/b@c")),
+            ("method", json!("get; rm")), ("status", json!(42)), ("cookie", json!("string"))] {
+            let mut p = learn.clone();
+            p[k] = v;
+            assert!(check_report(label, url, q, "learn", &p).is_err(), "{k}");
+        }
+        // a page: only on its sites, without a query, and only where usage-like fields came
+        for page in ["https://evil.example/usage", "https://home.qwencloud.com/usage?token=abc", "https://home.qwencloud.com/u/12345678"] {
+            let mut p = learn.clone();
+            p["page"] = json!(page);
+            assert!(check_report(label, url, q, "learn", &p).is_err(), "{page}");
+        }
+        assert!(check_report(label, url, q, "learn", &json!({"path": "/api/me", "method": "GET", "status": 200, "shape": {"name": "string"}, "page": url})).is_err());
+        // 64 KB at most
+        let big: serde_json::Map<String, serde_json::Value> = (0..100).map(|i| (format!("k{i}_{}", "x".repeat(50)), json!([{"a": "string"}]))).collect();
+        let deep = (0..15).fold(json!("string"), |s, _| json!({"a": s}));
+        assert!(check_report(label, url, q, "learn", &json!({"path": "/", "method": "GET", "status": 200, "shape": deep})).is_err(), "too deep");
+        let huge = json!({"path": "/", "method": "GET", "status": 200, "shape": (0..20).map(|i| (format!("g{i}"), json!(big))).collect::<serde_json::Map<_, _>>()});
+        assert!(huge.to_string().len() > 64 * 1024 && check_report(label, url, q, "learn", &huge).unwrap_err().contains("64 KB"));
+        // a reading: finite numbers or null in its five fields, one unit of four, at least one number
+        let read = json!({"numbers": {"left": 1500.25, "total": 2000, "unit": "credits", "used_pct": 25, "resets": 1764500000}});
+        // no reading while the provider has no extractor (Phase 2 writes them)
+        assert!(check_report(label, url, q, "read", &read).unwrap_err().contains("no reader"));
+        let check_report = |_: &str, _: &str, _: &str, _: &str, p: &serde_json::Value| super::check_numbers(p);
+        assert_eq!(check_report(label, url, q, "read", &read), Ok(Report::Read(read["numbers"].clone())));
+        assert_eq!(check_report(label, url, q, "read", &json!({"numbers": {"used_pct": 30, "unit": "percent"}})),
+            Ok(Report::Read(json!({"left": null, "total": null, "unit": "percent", "used_pct": 30, "resets": null}))));
+        for bad in [json!({"numbers": {"left": "1500", "unit": "usd"}}), json!({"numbers": {"left": 1, "unit": "EUR"}}), json!({"numbers": {"left": 1}}),
+            json!({"numbers": {"unit": "usd"}}), json!({"numbers": {"left": 1, "unit": "usd", "email": "a@b"}}), json!({"numbers": {"used_pct": 1400, "unit": "percent"}}), json!({"numbers": {"total": 0, "unit": "usd"}}), json!({"numbers": {"left": 1e15, "unit": "usd"}}),
+            json!({"numbers": {"left": 1, "unit": "usd", "resets": 1764500000000u64}}), json!({"numbers": {"left": 1, "unit": "usd", "resets": 3600}}),
+            json!({"numbers": {"left": 1, "unit": "usd"}, "html": "x"}), json!([1, 2])] {
+            assert!(check_report(label, url, q, "read", &bad).is_err(), "{bad}");
+        }
+        let check_report = super::check_report;
+        assert_eq!(check_report(label, url, q, "signed_out", &json!(null)), Ok(Report::SignedOut));
+        assert_eq!(check_report(label, url, q, "done", &json!(null)), Ok(Report::Done));
+        assert!(check_report(label, url, q, "signed_out", &json!({"x": 1})).is_err() && check_report(label, url, q, "write", &json!(null)).is_err());
+    }
+
+    /// The learn file keeps one entry per call, the usage page, and its size; Settings reads what it found from it; a reading
+    /// is written whole where the core reads it.
+    #[test]
+    fn a_learn_file_keeps_shapes_and_says_what_it_found() {
+        use serde_json::json;
+        let usage = json!({"path": "/api/usage", "method": "GET", "status": 200, "usage": true, "shape": {"data": {"remain": "number", "total": "number", "usedPct": "number", "name": "string"}}, "page": "https://home.qwencloud.com/usage"});
+        let me = json!({"path": "/api/me", "method": "GET", "status": 200, "usage": false, "shape": {"name": "string"}});
+        let l = super::merge_learn(json!(null), usage.clone(), 10);
+        let l = super::merge_learn(l, me.clone(), 11);
+        let l = super::merge_learn(l, me, 11);
+        // a page with fewer usage fields later (a chat page naming a plan) keeps /usage
+        let l = super::merge_learn(l, json!({"path": "/api/chat", "method": "GET", "status": 200, "usage": true, "shape": {"planName": "string"}, "page": "https://home.qwencloud.com/chat/:id"}), 12);
+        assert_eq!((l["responses"].as_array().unwrap().len(), &l["page"], &l["at"]), (3, &json!("https://home.qwencloud.com/usage"), &json!(12)));
+        assert_eq!(super::learned_summary(&l), json!({"page": "/usage", "fields": 4, "at": 12}));
+        assert_eq!(super::learned_summary(&super::merge_learn(json!(null), json!({"path": "/x", "method": "GET", "usage": false, "shape": {}}), 5)), json!({"page": null, "fields": 0, "at": 5}));
+        let many = (0..250).fold(json!(null), |l, i| super::merge_learn(l, json!({"path": format!("/p{i}"), "method": "GET", "shape": {}}), i));
+        assert_eq!((many["responses"].as_array().unwrap().len(), &many["responses"][0]["path"]), (200, &json!("/p50")));
+        let root = std::env::temp_dir().join(format!("tazuna-console-{}", std::process::id()));
+        super::write_reading(&root, "Qwen Cloud Token Plan", "signed_out", json!(null)).unwrap();
+        let r = super::read_json(&root.join("console/Qwen-Cloud-Token-Plan.json")).unwrap();
+        assert_eq!((&r["status"], &r["numbers"], &r["source"]), (&json!("signed_out"), &json!(null), &json!("console")));
+        assert!(super::learn_file(&root, "Mistral Vibe").ends_with("console-learn/Mistral-Vibe.json"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The console windows reach one command, from their providers' sites alone, and the main window's capability is its own.
+    #[test]
+    fn the_console_capability_reaches_only_the_consoles() {
+        use serde_json::json;
+        let cap: serde_json::Value = serde_json::from_str(include_str!("../capabilities/console.json")).unwrap();
+        let want: Vec<String> = super::CONSOLES.iter().flat_map(|c| c.sites.iter().map(|s| format!("https://{s}"))).collect();
+        assert_eq!((&cap["windows"], &cap["local"], &cap["permissions"], &cap["remote"]["urls"]), (&json!(["console-*"]), &json!(false), &json!(["console:allow-report"]), &json!(want)));
+        let main: serde_json::Value = serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+        assert_eq!(main["windows"], json!(["main"]));
+        for c in &super::CONSOLES {
+            assert!(super::on_site(c.sites, c.start), "{}", c.name);
+            assert!(super::label_of(c.name).chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-'), "a window label: {}", c.name);
+        }
+        // the script ends in the function main.rs calls
+        assert!(super::CONSOLE_JS.trim_end().ends_with("})") && super::CONSOLE_JS.contains("plugin:console|report"));
     }
 
     /// The dry run's page for a plugin, written to TAZUNA_DRYRUN_OUT for a browser to run (the window's own check).
