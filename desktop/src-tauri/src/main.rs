@@ -185,6 +185,119 @@ fn open_link(url: String) -> Result<(), String> {
     r.map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// The editors "Open in" offers where they are installed (design review 14), by id: the macOS app's name (in /Applications or
+/// ~/Applications), the command on the PATH elsewhere, and on Windows the program under %LOCALAPPDATA%\Programs.
+const EDITORS: [(&str, &str, &[&str], &str); 4] = [
+    ("vscode", "Visual Studio Code", &["code"], "Microsoft VS Code\\Code.exe"),
+    ("cursor", "Cursor", &["cursor"], "cursor\\Cursor.exe"),
+    ("zed", "Zed", &["zed", "zeditor"], "Zed\\Zed.exe"),
+    ("windsurf", "Windsurf", &["windsurf"], "Windsurf\\Windsurf.exe"),
+];
+/// The terminals tried on Linux, in order: the first on the PATH opens in the folder (its working directory).
+#[cfg(all(unix, not(target_os = "macos")))]
+const TERMINALS: [&str; 9] = ["x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal", "kitty", "alacritty", "wezterm", "foot", "xterm"];
+/// Package folders macOS opens as one thing (`open Calculator.app` launches it): never a project folder.
+#[cfg(target_os = "macos")]
+const PACKAGES: [&str; 12] = ["app", "bundle", "framework", "plugin", "kext", "pkg", "mpkg", "xpc", "appex", "prefpane", "qlgenerator", "saver"];
+
+/// The PATH an opened app gets: the login shell's (as the cores get it) or the app's own, without its relative entries
+/// ("." or an empty one), so nothing in a project's folder stands in for a program or a helper a launcher script runs.
+#[inline(never)]
+fn absolute_path_var() -> Option<std::ffi::OsString> {
+    #[cfg(unix)]
+    let path = PATH.get_or_init(login_path).clone().or_else(|| std::env::var("PATH").ok())?;
+    #[cfg(not(unix))]
+    let path = std::env::var("PATH").ok()?;
+    std::env::join_paths(std::env::split_paths(&path).filter(|d| d.is_absolute())).ok()
+}
+
+/// A program on that PATH, by name, as an absolute path.
+#[cfg(all(unix, not(target_os = "macos")))]
+#[inline(never)]
+fn on_path(name: &str) -> Option<std::path::PathBuf> {
+    std::env::split_paths(&absolute_path_var()?).map(|d| d.join(name)).find(|p| p.is_file())
+}
+
+/// How app `id` starts on this machine (the program, by its absolute path, and its arguments before the folder), None where
+/// it is not here. Never a bare name: the terminal runs in the project's folder, and one could be found there first (a
+/// repository with its own cmd.bat; security review of design review 14).
+#[inline(never)]
+fn open_in_command(id: &str) -> Option<(String, Vec<String>)> {
+    #[cfg(target_os = "macos")]
+    {
+        let s = |x: &str| x.to_string();
+        if id == "files" { return Some((s("/usr/bin/open"), vec![])); }
+        if id == "terminal" { return Some((s("/usr/bin/open"), vec![s("-a"), s("Terminal")])); }
+        let (_, app, _, _) = EDITORS.iter().find(|e| e.0 == id)?;
+        let home = std::env::var("HOME").unwrap_or_default();
+        let found = [std::path::PathBuf::from("/Applications"), std::path::Path::new(&home).join("Applications")].iter().any(|d| d.join(format!("{app}.app")).is_dir());
+        found.then(|| (s("/usr/bin/open"), vec![s("-a"), s(app)]))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let s = |x: &str| x.to_string();
+        let root = std::env::var("SystemRoot").unwrap_or_else(|_| s(r"C:\Windows"));
+        if id == "files" { return Some((format!(r"{root}\explorer.exe"), vec![])); }
+        // the shell itself in a console of its own (open_in), no `start`: the folder is its working directory
+        if id == "terminal" { return Some((std::env::var("ComSpec").unwrap_or_else(|_| format!(r"{root}\System32\cmd.exe")), vec![])); }
+        let (_, _, _, exe) = EDITORS.iter().find(|e| e.0 == id)?;
+        let p = std::path::Path::new(&std::env::var("LOCALAPPDATA").ok()?).join("Programs").join(exe);
+        p.is_file().then(|| (p.to_string_lossy().into_owned(), vec![]))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if id == "files" { return on_path("xdg-open").map(|p| (p.to_string_lossy().into_owned(), vec![])); }
+        if id == "terminal" { return TERMINALS.iter().find_map(|t| on_path(t)).map(|p| (p.to_string_lossy().into_owned(), vec![])); }
+        let (_, _, names, _) = EDITORS.iter().find(|e| e.0 == id)?;
+        names.iter().find_map(|n| on_path(n)).map(|p| (p.to_string_lossy().into_owned(), vec![]))
+    }
+}
+
+/// A project's folder in the file manager, a terminal or an editor ("Open in", design review 14). Without `app`: the apps
+/// there are on this machine, by id ("files", "terminal", then the editors installed). With it: only an app of that list,
+/// only an existing folder given whole (an absolute path, so never read as an option; on macOS no package), started
+/// without a shell, with a PATH of absolute entries; only the terminal starts in the folder, the others are given it.
+#[tauri::command]
+fn open_in(path: Option<String>, app: Option<String>) -> Result<Vec<String>, String> {
+    let Some(app) = app else {
+        return Ok(["files", "terminal"].into_iter().chain(EDITORS.iter().map(|e| e.0)).filter(|id| open_in_command(id).is_some()).map(str::to_string).collect());
+    };
+    let dir = std::path::PathBuf::from(path.unwrap_or_default());
+    if !dir.is_absolute() || !dir.is_dir() {
+        return Err(format!("not a folder: {}", dir.display()));
+    }
+    #[cfg(target_os = "macos")]
+    if dir.extension().and_then(|e| e.to_str()).is_some_and(|e| PACKAGES.contains(&e.to_ascii_lowercase().as_str())) {
+        return Err(format!("not a project folder: {}", dir.display()));
+    }
+    let Some((program, args)) = open_in_command(&app) else { return Err(format!("not an app to open in: {app}")) };
+    let terminal = app == "terminal";
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    if let Some(p) = absolute_path_var() {
+        cmd.env("PATH", p);
+    }
+    if terminal {
+        // its working directory is the folder (on Windows and Linux its only way in); its console is its own
+        cmd.current_dir(&dir);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+            cmd.creation_flags(CREATE_NEW_CONSOLE);
+        }
+    } else {
+        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    }
+    if !terminal || cfg!(target_os = "macos") {
+        cmd.arg(&dir);
+    }
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    // reaped off this thread: a terminal or an editor runs on
+    std::thread::spawn(move || { let _ = child.wait(); });
+    Ok(vec![])
+}
+
 /// A line from the page on stderr ("loaded", a script error): where the window stops shows in a terminal or a CI log.
 #[tauri::command]
 fn ui_log(msg: String) {
@@ -763,7 +876,7 @@ fn main() {
             Ok(())
         })
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, image_data, paste_image, paste_clipboard_image, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, plugins_export, plugins_import, plugins_import_file, hotkey, update_check, update_install, interrupt, new_chat, set_profile])
+        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, image_data, paste_image, paste_clipboard_image, open_key_page, open_link, open_in, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, plugins_export, plugins_import, plugins_import_file, hotkey, update_check, update_install, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
                 stop_all(&w.state::<Core>());
@@ -791,6 +904,37 @@ mod tests {
         assert!(ops.len() > 20, "{ops:?}");
         for op in ops {
             assert!(super::is_window_op(&serde_json::json!({"op": op})), "the window sends {op:?} and the bridge refuses it");
+        }
+    }
+
+    /// "Open in" takes an existing folder given whole and an app of its own list, nothing else.
+    #[test]
+    fn open_in_takes_only_a_folder_and_an_app_it_knows() {
+        // whatever this machine has (a Linux box without xdg-open lists no "files"), only from the list
+        let apps = super::open_in(None, None).unwrap();
+        assert!(apps.iter().all(|a| ["files", "terminal", "vscode", "cursor", "zed", "windsurf"].contains(&a.as_str())), "{apps:?}");
+        let here = std::env::temp_dir().to_string_lossy().into_owned();
+        assert!(super::open_in(Some(here.clone()), Some("sh".into())).is_err());
+        assert!(super::open_in(Some(here), Some("vscode; rm -rf ~".into())).is_err());
+        assert!(super::open_in(Some("relative/dir".into()), Some("files".into())).is_err());
+        assert!(super::open_in(Some("/no/such/folder".into()), Some("files".into())).is_err());
+        // a macOS package is a folder `open` launches, not a project
+        #[cfg(target_os = "macos")]
+        {
+            let pkg = std::env::temp_dir().join("tz-open-in-test.app");
+            std::fs::create_dir_all(&pkg).unwrap();
+            let r = super::open_in(Some(pkg.to_string_lossy().into_owned()), Some("files".into()));
+            let _ = std::fs::remove_dir(&pkg);
+            assert!(r.is_err(), "{r:?}");
+        }
+        // the PATH it gives has no relative entry
+        if let Some(p) = super::absolute_path_var() {
+            assert!(std::env::split_paths(&p).all(|d| d.is_absolute()), "{p:?}");
+        }
+        // never a bare name, which the project's folder could shadow
+        for a in &apps {
+            let (program, _) = super::open_in_command(a).unwrap();
+            assert!(std::path::Path::new(&program).is_absolute(), "{a}: {program}");
         }
     }
 

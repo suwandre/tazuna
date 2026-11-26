@@ -73,15 +73,18 @@ export type Message =
       failure?: Failure;
       /** errors the reply met and went on past, as the core wrote them */
       notes?: string[];
-      /** a call being tried again while the reply runs, as the core says it ("…: 2 tries failed, trying again (HTTP 429…)") */
-      retrying?: string;
+      /** a call being tried again while the reply runs, as the core says it ("…: 2 tries failed, trying again (HTTP 429…)");
+       * `retryAt` (epoch ms) and `tries` where the core sends them (old cores send neither: no countdown) */
+      retrying?: string; retryAt?: number; tries?: number;
       /** what the core says about the conversation itself, not an error: a saved one whose model cannot run here now */
       info?: string[] }
   /** what the core says between turns: a model switch that went on in a new session ("continued on X"), a quiet divider */
   | { role: "notice"; text: string };
 /** `text` is the error's message alone ("[404]: … not found."), `raw` the notice as the core wrote it; both empty for a
  * reply you stopped without an error */
-export type Failure = { text: string; raw: string; stopped: boolean; /** the message it answered, for Retry */ ask: string };
+export type Failure = { text: string; raw: string; stopped: boolean; /** the message it answered, for Retry */ ask: string;
+  /** stopped by you while a call was being tried again */
+  retrying?: boolean };
 export type Usage = { contextPct: number; contextUsed: string; contextMax: string; plan5h: number | null; plan5hReset: string; planWeek: number | null;
   threadCost: number; threadTurns: number; cachedPct: number; saved: number; today: number; todayTurns: number; todaySeries: number[];
   /** SubRouter's balance in dollars, where a key is set */
@@ -102,6 +105,9 @@ const HYPHENED = new Set(["GPT", "GLM"]);
 export function modelLabel(id?: string | null): string {
   if (!id) return "";
   let m = id.trim().split(/\s/)[0];
+  // an OpenRouter alias ("~anthropic/claude-opus-latest"): the family, and that it follows the latest ("Claude Opus (latest)")
+  const alias = m.match(/^~[\w.-]+\/(.+?)(-latest)?$/);
+  if (alias) return `${modelLabel(alias[1])}${alias[2] ? " (latest)" : ""}`;
   const c = m.match(/^(?:claude-)?(opus|sonnet|haiku|fable)-(\d+)(?:[-.](\d+))?/i);
   // a thinking variant (Antigravity's "claude-opus-4-6-thinking") says so: it sat beside its plain sibling as the same name
   if (c) return `${c[1][0].toUpperCase()}${c[1].slice(1).toLowerCase()} ${c[2]}${c[3] ? `.${c[3]}` : ""}${/-thinking(?:-|$)/i.test(m) ? " thinking" : ""}`;
@@ -135,6 +141,7 @@ export const MODEL_NAMES: [string, string][] = [
   ["baidu/ernie-5.5-flash-preview:free", "ERNIE 5.5 Flash Preview (free)"], ["ernie-5-5-flash-preview", "ERNIE 5.5 Flash Preview"],
   ["nemotron-3.5-super-vl", "Nemotron 3.5 Super VL"], ["qwen3.8-flash-next-unsloth-ud-iq3_xxs", "Qwen3.8 Flash Next Unsloth UD IQ3_XXS"],
   ["qwen3-8-omni-flash", "Qwen3.8 Omni Flash"], ["gemma-3-4b-it", "Gemma 3 4B IT"], ["codestral-2508 off 0.3,0.03,0.9", "Codestral 2508"], ["zai-glm-5.3", "Z.ai GLM-5.3"],
+  ["~anthropic/claude-opus-latest", "Claude Opus (latest)"], ["~openai/gpt-latest", "GPT (latest)"],
 ];
 export function demoTitles() {
   const got = [titleFrom("github.com/acme/app/pull/1476 good to approve now?"), titleFrom("https://acme.atlassian.net/browse/T-1214\nwhat is this about?"), titleFrom("acme.atlassian.net/T-1214")];
@@ -145,6 +152,9 @@ export function demoTitles() {
     ["what is your model name", "What is your model name"], ["hey, could you fix the login page", "Fix the login page"],
     ["Bump the TLS library to the latest minor", "Bump the TLS library to the latest minor"], ["test", "Test"],
     ["Refactor the session store so that every write goes through one queue and the reads never block on a disk flush", "Refactor the session store so that every write goes through…"],
+    ["change the greeting in main.rs to hello, tazuna and add a notes file", "Change the greeting in main.rs to hello, tazuna and add a notes file"],
+    ["Change the greeting in main.rs to hello, tazuna and add a notes file listing every command we ran today", "Change the greeting in main.rs to hello, tazuna and add a…"],
+    [`Change the greeting in main.rs to hello, tazuna and add a ${"x".repeat(80)}`, "Change the greeting in main.rs to hello, tazuna and add a…"],
   ];
   for (const [from, want] of short) if (shortTitle(from) !== want) throw new Error(`shortTitle(${from}): ${shortTitle(from)}, wanted ${want}`);
   if (shortTitle("my lowercase name", true) !== "my lowercase name") throw new Error("a given name stays");
@@ -244,19 +254,38 @@ export function shortTitle(text?: string | null, named = false): string {
   for (let i = 0; i < 4 && filler.test(s); i++) s = s.replace(filler, "");
   // the first sentence: up to ". ", "? " or "! " (the question mark stays, a full stop goes)
   s = s.split(/(?<=[.?!])\s+/)[0].replace(/\.$/, "").trim() || t;
-  if (s.length > 60) s = `${s.slice(0, 60).replace(/\s+\S*$/, "")}…`;
+  // cut at a word past 60 characters; a short rest stays, so the title is the whole first sentence ("…and add a… — notes
+  // file" said it in two halves, design review 14): 24 characters, or 4 words in 32, and 84 in all at most (one long word
+  // let a 145-character title through)
+  const cut = s.slice(0, 60).replace(/\s+\S*$/, ""), rest = s.slice(cut.length).trim();
+  const short = (rest.length <= 24 || (rest.split(/\s+/).length <= 4 && rest.length <= 32)) && s.length <= 84;
+  if (s.length > 60 && !short) s = `${cut}…`;
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-/** Dollars as tazuna shows them: cents from ten cents up ($0.41, $10.13), three decimals below ($0.042), two significant
- * digits below a tenth of a cent ($0.00012) so a cheap turn does not read as free, and $0 for nothing. Until desktop 0.1.77
- * always three decimals: "$10.127" (design review 5). */
-export const usd = (n: number) => (n <= 0 ? "$0" : n < 0.001 ? `$${n.toPrecision(2)}` : n < 0.1 ? `$${n.toFixed(3)}` : `$${n.toFixed(2)}`);
+/** Dollars where room is short (the receipt line, the status bar, the line under the composer, Stats, the start page's
+ * ledger, a slip's sums): $0 for nothing, "<$0.001" under a tenth of a cent, four decimals under a cent, three under a
+ * dollar, then cents; zeros past the cents go ($0.005, $0.50). Until design review 14 two significant digits below a tenth
+ * of a cent: "this chat $0.000060". A slip's own cells and tooltips keep the exact figure (`usdExact`). */
+export const usd = (n: number) => (n <= 0 ? "$0" : n < 0.001 ? "<$0.001" : `$${n.toFixed(n < 0.01 ? 4 : n < 1 ? 3 : 2).replace(/(\.\d\d\d*?)0+$/, "$1")}`);
+/** Dollars as they are: cents from ten cents up ($0.41), three decimals below ($0.042), two significant digits below a
+ * tenth of a cent ($0.000019) so a cheap call does not read as free; $0 for nothing. */
+export const usdExact = (n: number) => (n <= 0 ? "$0" : n < 0.001 ? `$${n.toPrecision(2)}` : n < 0.1 ? `$${n.toFixed(3)}` : `$${n.toFixed(2)}`);
+/** Seconds to a tenth ("2.4 s"), "<0.1 s" under a tenth: a step, a call's time to first token, never "0.0 s". */
+export const tenths = (s: number) => (s < 0.1 ? "<0.1 s" : `${s.toFixed(1)} s`);
+export function demoNumbers() {
+  const got = [0, 0.000019, 0.00006, 0.001, 0.0012, 0.005, 0.0099999, 0.042, 0.1, 0.5, 0.9996, 1, 10.127].map(usd).join(" ");
+  if (got !== "$0 <$0.001 <$0.001 $0.001 $0.0012 $0.005 $0.01 $0.042 $0.10 $0.50 $1.00 $1.00 $10.13") throw new Error(`usd: ${got}`);
+  if (usdExact(0.000019) !== "$0.000019" || [0, 0.04, 0.1, 2.345].map(tenths).join(" ") !== "<0.1 s <0.1 s 0.1 s 2.3 s") throw new Error("usdExact, tenths");
+  console.log("numbers ok");
+}
 
 const onMac = typeof navigator !== "undefined" && navigator.userAgent.includes("Mac");
 /** A shortcut as this machine's keyboard says it: written the Mac's way in the code ("⌘⇧U"), "Ctrl+Shift+U" on Windows
  * and Linux, where the window showed ⌘ on keyboards that have none (design review 11). */
 export const keysOf = (k: string, mac = onMac) => (mac ? k : k.replace(/⌘/g, "Ctrl+").replace(/⇧/g, "Shift+").replace(/↵/g, "Enter"));
+/** The file manager as this system names it: "Finder", "Explorer", the file manager elsewhere ("Open in Finder"). */
+export const filesApp = typeof navigator === "undefined" ? "Finder" : onMac ? "Finder" : navigator.userAgent.includes("Windows") ? "Explorer" : "the file manager";
 export function demoKeys() {
   const got = [keysOf("⌘⇧U", false), keysOf("⌘K", false), keysOf("⇧Tab", false), keysOf("⌘↵", false), keysOf("⌘\\", true)].join(" ");
   if (got !== "Ctrl+Shift+U Ctrl+K Shift+Tab Ctrl+Enter ⌘\\") throw new Error(`keys: ${got}`);

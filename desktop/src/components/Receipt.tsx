@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { median, modelLabel, paidTo, pct, usd, writing, type Billing, type Meta, type ToolStep } from "../lib/types";
+import { median, modelLabel, paidTo, pct, tenths, usd, usdExact, writing, type Billing, type Meta, type ToolStep } from "../lib/types";
 import { Mark } from "./Mark";
 
 // The receipt (design review 11, variant A of mockups/v8.html): what an answer cost, itemised, on a slip of paper with a
@@ -17,8 +17,8 @@ export function withoutCache(t: { cost: number | null; cached?: number; billing?
 }
 
 /** A price in words: "about" where it is tazuna's estimate (nobody reported one), "not known" where nobody can tell (never
- * $0 for that). */
-export const priceSaid = (cost: number | null, estimate?: boolean) => (cost == null ? "not known" : `${estimate ? "about " : ""}${usd(cost)}`);
+ * $0 for that). `exact`: a slip's own cell, the figure as it is (`usdExact`); else said short (`usd`). */
+export const priceSaid = (cost: number | null, estimate?: boolean, exact = false) => (cost == null ? "not known" : `${estimate ? "about " : ""}${(exact ? usdExact : usd)(cost)}`);
 
 /** Why a total is "about" or not known, and what is not in it: calls whose cost is not known, tries the provider may have
  * billed. */
@@ -85,7 +85,7 @@ export const tok = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 
 /** "41 s", "2 min 5 s"; "<1 s" under a second: the core's time is its own run's, without the model's start, and a quick
  * local answer of 0.25 s read "0 s" (design review 12) */
 export const dur = (secs: number) => { if (secs < 1) return "<1 s"; const s = Math.round(secs); return s < 60 ? `${s} s` : s % 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s / 60} min`; };
-const took = (ms: number | null) => (ms == null ? "" : ms < 10_000 ? `${(ms / 1000).toFixed(1)} s` : dur(Math.round(ms / 1000)));
+const took = (ms: number | null) => (ms == null ? "" : ms < 10_000 ? tenths(ms / 1000) : dur(Math.round(ms / 1000)));
 
 const th = "border-b border-line pb-[5px] text-[11.5px] font-medium text-faint";
 const num = "whitespace-nowrap pl-3 pt-1 text-right", head = "whitespace-nowrap pl-3 text-right", first = "truncate pt-1";
@@ -135,10 +135,14 @@ export const refless = (b?: Billing) => b?.plan === true && !!b.provider && !b.p
  * nothing was billed, to a provider what it was paid, and what the cache saved where that can be told. A turn that does
  * not say (older data) has its total alone: nothing is taken from the conversation's model of now. An estimate says
  * "about", a cost nobody can tell is no amount, and what is not in the total is said under it. */
-function Sums({ meta, note }: { meta: Meta; /** why the rows above do not add up to the total */ note?: string }) {
+function Sums({ meta, note, rows }: { meta: Meta; /** why the rows above do not add up to the total */ note?: string;
+  /** the rows' own totals row says the price already: a bare "Total" under it would say it twice (design review 14) */
+  rows?: boolean }) {
   const { cost, billing } = meta, bare = withoutCache(meta);
   // a provider that reported no usage for any call: not "Paid to X $0"
   const said = cost === 0 && meta.unknownCalls ? "not reported" : priceSaid(cost, meta.estimate);
+  const notes = [note, ...gaps(meta)].filter(Boolean), cheaper = bare != null && cost != null && bare > cost * 1.005;
+  if (rows && billing?.plan !== true && !paidTo(billing) && !notes.length && !cheaper) return null;
   return <>
     <Rule />
     {/* any plan as Claude's (mockups/v11.html, the user, 2026-11-25): its total at the provider's API prices, and that the
@@ -146,9 +150,9 @@ function Sums({ meta, note }: { meta: Meta; /** why the rows above do not add up
     {billing?.plan === true ? <>
       {!refless(billing) && <Sum what={`Total at ${planOf(billing)}'s API prices`} strong>{said}</Sum>}
       <Sum what={onYour(planOf(billing))} quiet>not billed</Sum>
-    </> : paidTo(billing) ? <Sum what={`Paid to ${paidTo(billing)}`} strong>{said}</Sum> : <Sum what="Total" strong>{said}</Sum>}
-    {[note, ...gaps(meta)].filter(Boolean).map((n) => <div key={n} className="pt-px text-[11.5px] text-faint">{n}</div>)}
-    {bare != null && cost != null && bare > cost * 1.005 && <><Rule /><Sum what="The same without the cache" quiet>{priceSaid(bare, meta.estimate)}</Sum></>}
+    </> : paidTo(billing) ? <Sum what={`Paid to ${paidTo(billing)}`} strong>{said}</Sum> : !rows && <Sum what="Total" strong>{said}</Sum>}
+    {notes.map((n) => <div key={n} className="pt-px text-[11.5px] text-faint">{n}</div>)}
+    {cheaper && <><Rule /><Sum what="The same without the cache" quiet>{priceSaid(bare, meta.estimate)}</Sum></>}
   </>;
 }
 
@@ -191,12 +195,12 @@ export function AnswerSlip({ meta, tools = [], toolsSaid }: { meta: Meta; tools?
             {calls.map((c, i) => (
               <tr key={i}>
                 <td className={`${first} max-w-0`} title={c.tools || "It wrote the answer"}><span className="inline-block w-4 text-faint">{i + 1}</span>
-                  {c.model ? <>{modelLabel(c.model)} <span className="text-faint">{c.role || c.tools || "answer"}</span></> : c.tools || "answer"}</td>
+                  {c.model ? <>{modelLabel(c.model)} <span className="text-faint">{c.role || c.tools || "Answer"}</span></> : c.tools || "Answer"}</td>
                 <td className={num}>{tok(c.fresh + c.cached)}</td><td className={num}>{tok(c.cached)}<Share part={c.cached} whole={c.fresh + c.cached} /></td><td className={num}>{tok(c.out)}</td>
                 <td className={`${num} ${ttft}`}>{took(c.firstMs) || "–"}</td><td className={`${num} ${speed}`}>{c.tps ? perSec(c.tps) : "–"}</td>
                 {/* what a narrow slip leaves out, on hover */}
                 <td className={num} title={[c.firstMs != null && `first token after ${took(c.firstMs)}`, c.tps && `${perSec(c.tps)} while writing`].filter(Boolean).join(", ") || undefined}>{took(c.totalMs) || "–"}</td>
-                {priced && <td className={num} title={c.cost == null ? "not known: no usage reported, or cut off by a stop" : undefined}>{c.cost == null ? "–" : usd(c.cost)}</td>}
+                {priced && <td className={num} title={c.cost == null ? "not known: no usage reported, or cut off by a stop" : undefined}>{c.cost == null ? "–" : usdExact(c.cost)}</td>}
               </tr>
             ))}
             {ran.length > 0 && (
@@ -214,14 +218,14 @@ export function AnswerSlip({ meta, tools = [], toolsSaid }: { meta: Meta; tools?
                 <td className={`${tot} ${ttft}`} title="the median of the calls">{med == null ? "–" : <>{took(med)}<span className="ml-1 text-[11px] font-normal text-faint">med</span></>}</td>
                 <td className={`${tot} ${speed}`}>{tps ? perSec(tps) : "–"}</td>
                 <td className={tot}>{time == null && !ran.length ? "–" : took((time ?? 0) + toolMs)}</td>
-                {priced && <td className={tot}>{price == null ? "–" : usd(price)}</td>}
+                {priced && <td className={tot}>{price == null ? "–" : usdExact(price)}</td>}
               </tr>
             )}
           </tbody>
         </table>
       // a reply without its calls (an older saved one) still knows how long its tools took
       ) : ran.length > 0 && <div className="mt-2 flex justify-between gap-4" title="The time the tools themselves took"><span className="min-w-0 truncate">Tools <span className="text-faint">{toolsSaid}</span></span><span>{took(toolMs)}</span></div>}
-      <Sums meta={meta} note={off ? note(calls, meta.subCalls ?? 0, meta.billing?.plan === true) : undefined} />
+      <Sums meta={meta} note={off ? note(calls, meta.subCalls ?? 0, meta.billing?.plan === true) : undefined} rows={priced && !off && price != null && calls.length + (ran.length ? 1 : 0) > 1} />
     </Slip>
   );
 }
@@ -247,14 +251,14 @@ export function ChatSlip({ turns, cost, busy, children }: { turns: Turn[]; /** t
         <tbody>
           {/* a long conversation: its last turns, the earlier ones as one row */}
           {turns.length > last && <tr className="text-faint"><td className={first} colSpan={3}>{turns.length - last} earlier turn{turns.length - last === 1 ? "" : "s"}</td>
-            <td className={num}>{priceSaid(turns.slice(0, -last).reduce((a, t) => a + (t.cost ?? 0), 0), turns.slice(0, -last).some((t) => t.estimate))}</td></tr>}
+            <td className={num}>{priceSaid(turns.slice(0, -last).reduce((a, t) => a + (t.cost ?? 0), 0), turns.slice(0, -last).some((t) => t.estimate), true)}</td></tr>}
           {turns.slice(-last).map((t, i) => (
             <tr key={i}>
               <td className={`max-w-[230px] ${first}`} title={t.title}><span className="inline-block w-5 text-faint">{Math.max(0, turns.length - last) + i + 1}</span>{t.title}</td>
-              <td className={num}>{t.calls ?? "–"}</td><td className={num}>{dur(t.secs)}</td><td className={num}>{refless(t.billing) ? "not billed" : priceSaid(t.cost, t.estimate)}</td>
+              <td className={num}>{t.calls ?? "–"}</td><td className={num}>{dur(t.secs)}</td><td className={num}>{refless(t.billing) ? "not billed" : priceSaid(t.cost, t.estimate, true)}</td>
             </tr>
           ))}
-          {rest > 0 && <tr className="text-faint"><td className={first} colSpan={3}><span className="inline-block w-5" />{busy ? "Running now, so far" : "Not in a finished turn"}</td><td className={num}>{usd(rest)}</td></tr>}
+          {rest > 0 && <tr className="text-faint"><td className={first} colSpan={3}><span className="inline-block w-5" />{busy ? "Running now, so far" : "Not in a finished turn"}</td><td className={num}>{usdExact(rest)}</td></tr>}
         </tbody>
       </table>
       <Rule />

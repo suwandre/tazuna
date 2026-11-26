@@ -27,7 +27,9 @@ type PluginProps = {
 export const TAB = "tazuna.settings.tab";
 const TabCtx = createContext("");
 
-export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onRemove, onChanged }: { onClose: () => void;
+export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onRemove, onChanged, chat }: { onClose: () => void;
+  /** opened from a plain chat: what is a project's alone (the command after each turn) says so, with no home-folder command */
+  chat?: boolean;
   /** opened on this provider (the model picker's "No key yet"): its row in view, its key field open */
   focus?: string | null } & PluginProps) {
   const [st, setSt] = useState<Settings | null>(null);
@@ -304,14 +306,19 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
             </Section>
 
             {hook && (
-              <Section title="After each turn" note={<>A command of yours for <span className="font-mono">{hook.cwd}</span>, such as a formatter. It runs there at no token cost: the model
+              <Section title="After each turn" note={chat ? <>A command of yours for a project, such as a formatter, run after each turn that changed files.
+                It runs at no token cost: the model never sees it, and only a failure shows.</>
+                : <>A command of yours for <span className="font-mono">{hook.cwd}</span>, such as a formatter. It runs there at no token cost: the model
                 never sees it, and only a failure shows. Kept in your settings, never the repository's (the terminal's <code>/hook</code>).</>}>
+                {/* a chat runs in the home folder: no command for it (it offered one "for /private/tmp/…/home", design review 14) */}
+                {chat ? <div className="px-4 py-3 text-[12.5px] text-muted">For projects only: open a project, then set its command here.</div> : <>
                 <div className="flex items-center gap-2 px-4 py-3">
                   <input value={hookCmd ?? hook.after_turn ?? ""} onChange={(e) => setHookCmd(e.target.value)} placeholder="none, e.g. cargo fmt" aria-label="Command after each turn"
                     spellCheck={false} onKeyDown={(e) => { if (e.key === "Enter" && hookCmd != null) core.hook(hookCmd.trim()).then(() => setHookCmd(null)); }} className={`min-w-0 flex-1 ${input}`} />
                   <button disabled={hookCmd == null} onClick={() => core.hook(hookCmd!.trim()).then(() => setHookCmd(null))} className={button}>Save</button>
                 </div>
                 {hook.note && <div className="px-4 py-2.5 text-[12px] text-bad">{hook.note}</div>}
+                </>}
               </Section>
             )}
 

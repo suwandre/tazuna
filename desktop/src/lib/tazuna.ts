@@ -17,7 +17,8 @@ const on = <T,>(type: string, cb: (m: T, tid: string) => void) =>
   listen<Tagged<T>>("tazuna-view", (e) => { if (e.payload.msg.type === type) cb(e.payload.msg, e.payload.tid); });
 
 export type ViewBlock =
-  | { kind: "prompt"; text: string }
+  /** `queued`: a message the core holds while a reply (or its checks) runs, drawn at the end until it starts (core 0.1.228) */
+  | { kind: "prompt"; text: string; queued?: boolean }
   | { kind: "text"; text: string; live: boolean }
   | { kind: "thinking"; tokens: number; live: boolean; text?: string }
   | { kind: "tool"; id: string; name: string; input: Record<string, unknown> | null; result?: string; error: boolean; declined?: boolean; secs?: number; running: boolean; stopped?: boolean }
@@ -36,7 +37,9 @@ export type ViewBlock =
        * `sub_calls`: its subagents' model calls, which are in its cost and not among `calls`. */
       model?: string; plan?: boolean; provider?: string | null; price_m?: [number, number, number] | null; providers?: string[]; sub_calls?: number }
   /** `rejected`: the error of a send the core refused, its text sent back to the box (send_rejected; newer cores) */
-  | { kind: "notice"; text: string; error: boolean; ended?: boolean; rejected?: boolean }
+  | { kind: "notice"; text: string; error: boolean; ended?: boolean; rejected?: boolean;
+      /** a retry notice while the retry is on: the next try (epoch ms) and the tries so far (newer cores) */
+      retry_at?: number; tries?: number }
   | { kind: "verify"; cmd: string; ok?: boolean; secs: number; timed_out?: boolean; cannot_run?: boolean; no_tests?: boolean };
 type Usage = { input: number; cache_write: number; cache_read: number; output: number };
 export type View = {
@@ -228,6 +231,8 @@ export const core = {
   },
   /** a link in an answer, in the browser (http and https only) */
   openLink: (url: string) => invoke("open_link", { url }),
+  /** a project's folder in the file manager ("files"), a terminal or an editor; without an app, the ids of those here */
+  openIn: (path?: string, app?: string) => invoke<string[]>("open_in", { path, app }),
   onSettings: (cb: (s: Settings) => void) => on<Settings>("settings", cb),
   rename: (id: string, title: string) => to("op", { msg: { op: "rename", id, title } }),
   hide: (id: string) => to("op", { msg: { op: "hide", id } }),

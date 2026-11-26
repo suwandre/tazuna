@@ -1,7 +1,7 @@
 import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { stats, usage, type Point } from "../lib/fromView";
 import type { View } from "../lib/tazuna";
-import { median, usd } from "../lib/types";
+import { median, tenths, usd } from "../lib/types";
 import { Segmented } from "./Controls";
 import { WorkCtx } from "./Rail";
 import { dur, perSec, tok } from "./Receipt";
@@ -98,7 +98,7 @@ function Metric({ name, value, sub, children }: { name: string; value: string; s
   );
 }
 
-const secs = (s: number) => `${s.toFixed(1)} s`;
+const secs = tenths;
 // a share of the input that never rounds up to all of it (pct's rule)
 const share = (x: number) => `${x >= 100 ? 100 : Math.min(99, Math.round(x))}%`;
 const last = (p: Point[]) => (p.length ? p[p.length - 1][1] : null);

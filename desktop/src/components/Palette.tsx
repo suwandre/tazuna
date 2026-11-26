@@ -17,6 +17,28 @@ function marked(label: string, q: string) {
   return label.split(re).map((p, i) => (i % 2 ? <mark key={i} className="rounded-[2px] bg-accent-soft text-ink">{p}</mark> : p));
 }
 
+/** The rows for what was typed: every word somewhere in the row (its group, label, hint or keywords), the label's matches
+ * first (a label that starts with a word, then a word of it that does, then one that holds it), then those found only in
+ * the hint or keywords; each group where its best row falls, in its own order. "set" listed Auto (its hint says "reset")
+ * above Settings (design review 14). */
+export function ranked(actions: Action[], q: string): Action[] {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const hits = actions.filter((a) => { const t = `${a.group} ${a.label} ${a.hint ?? ""} ${a.keywords ?? ""}`.toLowerCase(); return words.every((w) => t.includes(w)); });
+  const rank = (a: Action) => Math.max(...words.map((w) => { const l = a.label.toLowerCase(), i = l.indexOf(w); return i === 0 ? 0 : new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(l) ? 1 : i > 0 ? 2 : 3; }));
+  const r = new Map(hits.map((a) => [a, rank(a)])), best = new Map<string, number>();
+  for (const a of hits) best.set(a.group, Math.min(best.get(a.group) ?? 9, r.get(a)!));
+  const groups = [...best.keys()];
+  return hits.map((a, i) => [a, i] as const).sort(([a, i], [b, j]) => best.get(a.group)! - best.get(b.group)! || groups.indexOf(a.group) - groups.indexOf(b.group) || r.get(a)! - r.get(b)! || i - j).map(([a]) => a);
+}
+export function demo() {
+  const run = () => {};
+  const a: Action[] = [{ id: "auto", group: "Permission mode", label: "Auto", hint: "asks before rm, reset --hard", run }, { id: "settings", group: "Window", label: "Settings: provider keys", run },
+    { id: "theme", group: "Window", label: "Light or dark", run }, { id: "up", group: "Window", label: "Check for updates", keywords: "upgrade version", run }, { id: "asset", group: "Projects", label: "my-assets", run }];
+  const got = (q: string) => ranked(a, q).map((x) => x.id).join(",");
+  if (got("set") !== "settings,asset,auto" || got("up") !== "up" || got("version") !== "up" || got("") !== "auto,settings,theme,up,asset") throw new Error(`palette: ${got("set")} | ${got("")}`);
+  console.log("palette ok");
+}
+
 export function Palette({ actions, onClose, query = "" }: { actions: Action[]; onClose: () => void; query?: string }) {
   const [q, setQ] = useState(query);
   const [sel, setSel] = useState(0);
@@ -28,7 +50,7 @@ export function Palette({ actions, onClose, query = "" }: { actions: Action[]; o
       const seen = new Map<string, number>();
       return actions.filter((a) => { const n = seen.get(a.group) ?? 0; seen.set(a.group, n + 1); return n < 5; });
     }
-    return actions.filter((a) => { const t = `${a.group} ${a.label} ${a.hint ?? ""} ${a.keywords ?? ""}`.toLowerCase(); return words.every((w) => t.includes(w)); }).slice(0, 60);
+    return ranked(actions, q).slice(0, 60);
   }, [actions, q]);
   useEffect(() => setSel(0), [q]);
   useEffect(() => { list.current?.querySelector(`[data-i="${sel}"]`)?.scrollIntoView({ block: "nearest" }); }, [sel]);

@@ -1,8 +1,8 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { GitBranch, LoaderCircle, MessagesSquare, PanelLeft, PanelRight } from "lucide-react";
+import { Fragment, createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { ChevronDown, GitBranch, LoaderCircle, MessagesSquare, PanelLeft, PanelRight } from "lucide-react";
 import { AgentPanel } from "./components/AgentPanel";
 import { Approval } from "./components/Approval";
-import { Composer, DRAFT, MODES, draftFiles, saveDraftFiles, type Completions } from "./components/Composer";
+import { Composer, DRAFT, MODES, PICK_MODEL, draftFiles, saveDraftFiles, type Completions } from "./components/Composer";
 import { DiffView } from "./components/DiffView";
 import { ReviewView } from "./components/ReviewView";
 import { Palette, Shortcuts, type Action } from "./components/Palette";
@@ -19,7 +19,7 @@ import { prChip, type Pr } from "./lib/pr";
 import { checkUpdate, watchUpdates } from "./lib/update";
 import { routeLine } from "./lib/route";
 import { today as todayOf, type Row } from "./lib/usage";
-import { usd, type ChangedFile, type Message, escFor, keysOf, panelChoice, panelState } from "./lib/types";
+import { filesApp, usd, type ChangedFile, type Message, escFor, keysOf, panelChoice, panelState } from "./lib/types";
 import { Sep } from "./components/Sep";
 import type { Turn } from "./components/Receipt";
 import { Rail, UserPanel, WorkCtx, openUsage, type Work } from "./components/Rail";
@@ -31,7 +31,7 @@ import { CoreFailed, Start, type StartItem } from "./components/Start";
 import { StatusBar } from "./components/StatusBar";
 import { getVersion } from "@tauri-apps/api/app";
 import * as demo from "./lib/demo";
-import { asked, askedInput, changedCount, heldTurn, messages as viewMessages, queued, readableError, replyOut, resetIn, sessionIds, standing, unsaved, usage as viewUsage } from "./lib/fromView";
+import { asked, askedInput, changedCount, clockOf, heldTurn, messages as viewMessages, promptsIn, queued, readableError, replyOut, resetIn, sessionIds, standingAt, unsaved, usage as viewUsage, went, type Clock } from "./lib/fromView";
 import { modelLabel, shortTitle, titleFrom, type Usage } from "./lib/types";
 import { items as accountItems, mine as accountOf, withLive } from "./lib/health";
 import { Parts } from "./components/Sep";
@@ -44,7 +44,7 @@ const NO_USAGE: Usage = { contextPct: 0, contextUsed: "0", contextMax: "", plan5
 import { ACCENT, ACCENTS, THEME, applyLooks, darkNow, look } from "./lib/chrome";
 import { HOTKEY, composed, core, defaultHotkey, inTauri, menuKeys, type Accounts, type ClaudeSetup, type Diff, type ModelChoice, type Models, type SendDraft, type SessionRow, type View } from "./lib/tazuna";
 import { listen } from "@tauri-apps/api/event";
-import { accentButton, quietButton } from "./components/Controls";
+import { MenuRule, PopMenu, accentButton, menuItem, quietButton } from "./components/Controls";
 
 const RECENT = "tazuna.projects";
 const recent = (): string[] => { try { return JSON.parse(localStorage.getItem(RECENT) ?? "[]"); } catch { return []; } };
@@ -95,6 +95,8 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
   const draftKeyOf = (t: Thread) => idsOf(t)[0] ?? t.resume ?? `new:${t.folder ?? "chat"}`;
   // the window's queue: when its last message went (and how many of yours the view had then), and the wait set for the next
   const sent = useRef<Record<string, { prompts: number; at: number }>>({});
+  // each running reply's clock (`clockOf`), from every view of its conversation
+  const clocks = useRef<Record<string, Clock>>({});
   const waits = useRef<Record<string, number>>({});
   const activeRef = useRef("");
   activeRef.current = active;
@@ -198,7 +200,7 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
     setThreads((t) => { const { [tid]: _, ...rest } = t; return rest; });
     // what was kept for it goes with it (its queue stays saved under its id, for when it is opened again)
     setHeld(({ [tid]: _, ...m }) => m);
-    delete earlier.current[tid]; delete sent.current[tid]; delete refusals.current[tid]; delete rejected.current[tid]; clearTimeout(waits.current[tid]); delete waits.current[tid];
+    delete earlier.current[tid]; delete sent.current[tid]; delete clocks.current[tid]; delete refusals.current[tid]; delete rejected.current[tid]; clearTimeout(waits.current[tid]); delete waits.current[tid];
   };
   /** A side chat beside thread `of`: its own core in the same folder, the conversation forked on the same model and
    * provider (its cache is the conversation's; the own loop's saved history is that provider's), in plan mode. */
@@ -261,6 +263,8 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
       core.onSendRejected(({ text, files }, tid) => { rejected.current[tid] = { from: live.current[tid]?.view?.blocks.length ?? 0, back: composed({ text: text ?? "", files }), at: Date.now() }; restoreDraft(tid, { text, files }); }),
       core.onView((v, tid) => {
         noteRefusal(tid, v);
+        const c = clockOf(clocks.current[tid], v, Date.now());
+        if (c) clocks.current[tid] = c; else delete clocks.current[tid];
         const was = live.current[tid]?.view?.session_id;
         // (a switch's view has no session until its first turn: the id before it is kept too)
         if (was && was !== v.session_id) earlier.current[tid] = [was, ...(earlier.current[tid] ?? []).filter((x) => x !== was)];
@@ -318,7 +322,7 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
   const draftKey = cur ? draftKeyOf(cur) : undefined;
   // a saved conversation being opened: its core is up and its messages are still on their way (the core's first view is
   // empty, the resumed one follows)
-  const resuming = !!cur?.resume && !error && !!view && view.session_id !== cur.resume && !view.blocks.some((b) => b.kind === "prompt");
+  const resuming = !!cur?.resume && !error && !!view && view.session_id !== cur.resume && !view.blocks.some(went);
   // the first held message goes on once its conversation's reply has ended, the next once that one's reply has: a message
   // sent is taken when the view has one more of yours (a command that adds none: after 2 s idle)
   const [tick, setTick] = useState(0);
@@ -327,7 +331,7 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
       const q = held[t.tid], now = Date.now(), turn = heldTurn(t.view, sent.current[t.tid], now);
       if (!q?.length || t.error || turn < 0) continue;
       if (turn > 0) { clearTimeout(waits.current[t.tid]); waits.current[t.tid] = window.setTimeout(() => setTick((n) => n + 1), turn); continue; }
-      sent.current[t.tid] = { prompts: t.view!.blocks.filter((b) => b.kind === "prompt").length, at: now };
+      sent.current[t.tid] = { prompts: promptsIn(t.view), at: now };
       const [first] = q;
       setHeld((m) => ({ ...m, [t.tid]: (m[t.tid] ?? []).slice(1) }));
       // not taken (the core gone for a moment): back at the head of the queue, tried again after the wait
@@ -345,7 +349,8 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
   const names = new Map(Object.values(sessions).flatMap((rows) => rows.filter((r) => r.named).map((r) => [r.id, r.first] as const)));
   namesRef.current = names;
   const nameOf = (t?: Thread) => (t ? idsOf(t).map((id) => names.get(id)).find(Boolean) ?? (t.resume ? names.get(t.resume) : undefined) : undefined);
-  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, restoreDraft, side, openSide, closeSide, forget, resuming, held: (held[active] ?? []).map((w) => w.text), hold, unhold, sendHeldNow, listedId, refusedIn, nameOf };
+  const sinceOf = (tid: string) => { const c = clocks.current[tid]; return c && c.start + c.paused; };
+  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, restoreDraft, side, openSide, closeSide, forget, resuming, held: (held[active] ?? []).map((w) => w.text), hold, unhold, sendHeldNow, listedId, refusedIn, nameOf, sinceOf };
 }
 
 /** Light or dark: the choice in Settings (lib/chrome.ts keeps it; until desktop 0.1.87 a flip lasted until the window
@@ -411,7 +416,7 @@ export default function App() {
     });
     return () => { off.then((f) => f()); };
   }, []);
-  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, restoreDraft, resuming, side, openSide, closeSide, forget, held, hold, unhold, sendHeldNow, listedId, refusedIn, nameOf } = useCore((draft) => setDraft({ ...draft, n: Date.now(), append: true }));
+  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, restoreDraft, resuming, side, openSide, closeSide, forget, held, hold, unhold, sendHeldNow, listedId, refusedIn, nameOf, sinceOf } = useCore((draft) => setDraft({ ...draft, n: Date.now(), append: true }));
   useEffect(() => setEditing(null), [active]);
   useEffect(watchUpdates, []);
   // creator mode: the user's panels, read again whenever a conversation finishes a turn (a creator one may have made one)
@@ -554,6 +559,9 @@ export default function App() {
   useEffect(() => { if (inTauri && folder && view) core.prIn(active).catch((e) => setPrs((m) => (m[active] ? m : { ...m, [active]: { state: "", error: String(e) } }))); }, [active, folder, !!view, replies]);
   const pr = prs[active];
   const [appVersion, setAppVersion] = useState("");
+  // what a project's folder can open in on this machine (the file manager, a terminal, the editors installed): asked once
+  const [openApps, setOpenApps] = useState<string[]>([]);
+  useEffect(() => { if (inTauri) core.openIn().then((a) => setOpenApps(a ?? [])).catch(() => {}); }, []);
   useEffect(() => { if (inTauri) getVersion().then(setAppVersion).catch(() => {}); }, []);
   // the work panel (the right column): by rule (lib/types.ts `panelState`), and by hand per conversation (⌘\, the header's
   // button, the tab): one choice for the whole window put the panel into plain chats and stopped the fold everywhere
@@ -599,6 +607,11 @@ export default function App() {
    * the agent, and during a reply it waits in the window's queue as the box's do (it jumped ahead of them, and Stop did not
    * bring it back) */
   const say = (text: string, agent = true) => { if (busy) hold(active, text, agent); else core.send(text, agent).catch(() => {}); };
+  /** The box's model picker (it opens once no reply runs). */
+  const chooseModel = () => window.dispatchEvent(new Event(PICK_MODEL));
+  // the palette's actions that have a place of their own too (the model picker, the where-it-runs menu: design review 14)
+  const worktreeNew = () => { core.worktreeNew(null).catch(() => {}); };
+  const tryModels = () => { core.models().catch(() => {}); setBestOf(true); };
   const work: Work = {
     files: changedFiles(view),
     branch: pr?.headRefName ?? pr?.branch, base: pr?.baseRefName,
@@ -752,7 +765,7 @@ export default function App() {
     if (busy) { hold(active, text); return; }
     const send = (message: string, agent = false) => core.sendDraft(active, message, draft, agent);
     const refused = (e: unknown) => { restoreDraft(active, draft); console.error(e); };
-    if (creator === "edit" && !view?.blocks.some((b) => b.kind === "prompt")) { send(creatorMessage(text, true), true).catch(refused); return; }
+    if (creator === "edit" && !view?.blocks.some(went)) { send(creatorMessage(text, true), true).catch(refused); return; }
     if (!editing) { send(text).catch(refused); return; }
     const { cp, keep } = editing;
     setEditing(null);
@@ -816,13 +829,9 @@ export default function App() {
   const accts = accountItems(accountsNow, { plan5h: usage.plan5h, planWeek: usage.planWeek, resetAt: planView?.limits_reset, balance: view?.balance });
   const hereAccts = accountOf(accts, models?.choices.find((c) => c.current), view?.model ?? "");
   const busy = !!view && !["Ready", "Done"].includes(view.activity);
-  // when the reply now running began, as this window first saw it: the fold's "Working 12 s" keeps counting across a switch
-  // to another conversation and back (it began at 0 s again on every switch)
-  const replyStart = useRef<Record<string, number>>({});
-  const startKey = `${active}:${view ? view.blocks.filter((b) => b.kind === "prompt").length : 0}`;
-  // (and from zero again when a reply of the same message starts anew: a Retry counted on from the failed try)
-  if (busy && !replyStart.current[startKey]) replyStart.current[startKey] = Date.now();
-  else if (!busy && view) delete replyStart.current[startKey];
+  // when the reply now running began, less the time questions held it: from every view of its conversation, so the fold's
+  // "Working 12 s" is right across a switch to another conversation and back (`clockOf`, lib/fromView.ts)
+  const since = busy ? sinceOf(active) : undefined;
   // its output so far, on its Working row (design review 13, D1)
   const liveOut = busy ? replyOut(view) : 0;
   const session = view
@@ -840,10 +849,10 @@ export default function App() {
     if (busy) a.unshift({ id: "stop", group: "This conversation", label: "Stop the reply", keys: "Esc", run: stop });
     const undo = view?.changes?.find((c) => c.can_undo);
     if (undo && !busy) a.push({ id: "undo", group: "This conversation", label: `Undo the last turn's changes`, hint: `${undo.files.length} file${undo.files.length === 1 ? "" : "s"}`, run: () => core.undo(undo.turn) });
-    if (view && folder) a.push({ id: "worktree", group: "This project", label: "New conversation in a worktree", hint: "a branch and folder of its own", keywords: "worktree branch parallel", run: () => core.worktreeNew(null).catch(() => {}) },
+    if (view && folder) a.push({ id: "worktree", group: "This project", label: "New conversation in a worktree", hint: "a branch and folder of its own", keywords: "worktree branch parallel", run: worktreeNew },
       { id: "pr", group: "This project", label: "Pull request: checks and reviews", keywords: "pr github gh checks ci", run: () => setShowPr(true) },
       { id: "best-of", group: "This project", label: "Try on several models…", hint: "one task, a worktree each, compared", keywords: "best of n compare lanes models parallel",
-        run: () => { core.models().catch(() => {}); setBestOf(true); } });
+        run: tryModels });
     if (lanes) a.push({ id: "lanes", group: "This project", label: "Compare the lanes", hint: `${lanes.lanes.length} models`, keywords: "best of n lanes", run: () => setShowLanes(true) });
     if (inWorktree) a.push({ id: "worktree-remove", group: "This project", label: "Remove this worktree", hint: "its branch stays", run: () => setWt({ remove: { path: folder! } }) });
     if (view?.session_id && !side) a.push({ id: "side", group: "This conversation", label: "Side chat", hint: "ask about it; nothing goes back", keywords: "btw aside question fork", run: () => openSide(active) });
@@ -887,7 +896,16 @@ export default function App() {
   // a send that started nothing (a message claude could not take): its error beside the box, the message back in it (the
   // core's send_rejected), on the start page and in a conversation alike (design review 13); the start page shows any
   // other error there too, as before
-  const refusal = (inTauri && view && !busy && !view.asking && !resuming ? standing(view, refused) : undefined) ?? (freshError?.kind === "notice" ? freshError.text : undefined);
+  // ...until a message goes, or the model changes: it stood under the box after another model was picked (design review 14).
+  // Each refusal keeps the model it came on; once another one is picked it is gone for good (null), back on that model too
+  const refusedAt = inTauri && view && !busy && !view.asking && !resuming ? standingAt(view, refused) : -1;
+  const shownOn = useRef<Record<string, string | null>>({}), modelNow = view?.model ?? "";
+  const stands = (key: string) => {
+    if (!(key in shownOn.current)) shownOn.current[key] = modelNow; else if (shownOn.current[key] !== modelNow) shownOn.current[key] = null;
+    return shownOn.current[key] === modelNow;
+  };
+  const refusal = (refusedAt >= 0 && stands(`${active}:r${refusedAt}`) ? (view!.blocks[refusedAt] as { text: string }).text : undefined)
+    ?? (freshError?.kind === "notice" && stands(`${active}:f${view!.blocks.indexOf(freshError)}`) ? freshError.text : undefined);
   // the start page's ledger reads the run log again when the page shows and when the day turns: yesterday's numbers stood
   // there overnight as "Today", and runs made in the terminal never came (design review 11)
   const [day, setDay] = useState(0);
@@ -896,9 +914,9 @@ export default function App() {
   // in a project, its own conversations; in a chat, everything by when it last ran
   const startRecent: StartItem[] = Object.entries(sessions).filter(([dir]) => !folder || dir === folder).flatMap(([dir, rows]) => rows.map((r) => ({ id: r.id, title: shortTitle(r.first, r.named) || "(no message)", full: titleFrom(r.first),
     place: dir === home ? "chat" : base(dir), dir: dir === home ? null : dir, at: r.last_at }))).sort((a, b) => b.at - a.at).slice(0, 3);
-  const where = { label: folder ? base(folder) : "Chat", folder: !!folder, pickFolder: pick,
+  const where = { label: folder ? base(folder) : "Chat", folder: !!folder, path: folder, pickFolder: pick,
     choices: [{ label: "Chat", hint: "no folder: a general question", path: null as string | null }, ...projects.slice(0, 6).map((p) => ({ label: base(p), hint: p, path: p as string | null }))],
-    pick: (path: string | null) => { if (path !== folder) open(path); } };
+    pick: (path: string | null) => { if (path !== folder) open(path); }, worktree: inTauri && view && folder ? worktreeNew : undefined };
   // the terminal's panels and switches, typed in the box (or taken from its `/` menu), open the window's own. Before, the
   // menu held only /create and /agent here, and a typed `/mcp` went on to the agent (the user, 2026-11-20).
   const settingsAt = (tab: string) => { localStorage.setItem(TAB, tab); setOverlay("settings"); };
@@ -953,9 +971,7 @@ export default function App() {
                     Also put back the {editing.files} file{editing.files === 1 ? "" : "s"} tazuna changed since</label>}</span>
                 <button onClick={() => { setEditing(null); setDraft({ text: "", n: Date.now() }); }} className={quietButton}>Cancel</button>
               </div>
-            ) : refusal && (
-              <div role="alert" className="mx-auto mb-2 max-w-[700px] text-[12.5px] text-bad">{readableError(refusal)}</div>
-            )} onStop={stop}
+            ) : refusal && <Refusal text={refusal} onModel={chooseModel} />} onStop={stop}
             models={models} onModels={inTauri ? () => core.models() : undefined}
             onRefreshModelList={inTauri ? (p) => { core.refreshModelList(p).catch(() => {}); } : undefined}
             onPickModel={inTauri ? pickModel : undefined} onPickEffort={inTauri ? (e) => core.setEffort(e) : undefined}
@@ -964,7 +980,7 @@ export default function App() {
             onPickFiles={inTauri ? core.pickFiles : undefined} onPasteImage={inTauri ? core.pasteImage : undefined} onDrop={inTauri ? core.onDrop : undefined}
             onPasteClipboardImage={inTauri && navigator.userAgent.includes("Linux") ? core.pasteClipboardImage : undefined}
             complete={complete[active] ?? null} onComplete={inTauri ? () => { core.complete().catch(() => {}); } : undefined}
-            onImage={inTauri ? (p) => core.imageData(p, folder ?? undefined) : undefined} />
+            onImage={inTauri ? (p) => core.imageData(p, folder ?? undefined) : undefined} onBestOf={inTauri && view && folder ? tryModels : undefined} />
   );
   const data = widgetData(view);
   // the header: the short title, then the first message in full where it is longer (variant A of mockups/v6.html)
@@ -987,6 +1003,7 @@ export default function App() {
     // the one on screen closed: a new one in its folder takes its place, as when it is removed
     onClose={(tid) => { const t = threads.find((x) => x.tid === tid); close(tid); if (tid === active) open(t?.folder ?? null); }}
     onRename={inTauri ? (t, title) => core.rename(t.id, title).then(refreshSessions) : undefined}
+    onReveal={openApps.includes("files") ? (path) => { core.openIn(path, "files").catch((e) => console.error(e)); } : undefined}
     // the conversation removed is closed where it is open: it stayed on screen, and a message sent there brought it back to
     // the list (the user, 2026-11-24); on screen, a new one in its place takes over
     onHide={inTauri ? (t) => core.hide(t.id).then(() => {
@@ -1027,7 +1044,8 @@ export default function App() {
             <HeaderCtx.Provider value={{ modelLabel: modelLabel(models?.choices.find((c) => c.current)?.model ?? session.model), effort: session.effort,
               branch: session.branch, changed: session.changed, review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined,
               side: inTauri && view?.session_id ? () => (side ? closeSide(active) : openSide(active)) : undefined, sideOpen: !!side,
-              pr: pr ? prChip(pr) : null, openPr: () => setShowPr(true), cost: usage.threadCost, panelOpen: panelOpen && !side && !agentHere, togglePanel: side || agentHere ? undefined : togglePanel }}>
+              pr: pr ? prChip(pr) : null, openPr: () => setShowPr(true), cost: usage.threadCost, panelOpen: panelOpen && !side && !agentHere, togglePanel: side || agentHere ? undefined : togglePanel,
+              openIn: folder && openApps.length ? { path: folder, apps: openApps } : undefined }}>
               <Slot name="header.actions" props={{ data, folder }} />
             </HeaderCtx.Provider>
           </div>
@@ -1046,14 +1064,15 @@ export default function App() {
           onEdit={inTauri ? (e, text) => {
             const files = new Set((view?.changes ?? []).filter((c) => c.at_block > e.block && !c.undone).flatMap((c) => c.files.map((f) => f.path))).size;
             setEditing({ ...e, files, keep: files > 0 }); setDraft({ text, n: Date.now() });
-          } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} asking={!!view?.asking} since={busy ? replyStart.current[startKey] : undefined} out={liveOut} onSendToAgent={inTauri ? (text) => say(text) : undefined} onRetry={inTauri ? () => { core.retry().catch(() => {}); } : undefined}
+          } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} asking={!!view?.asking} since={since} out={liveOut} onSendToAgent={inTauri ? (text) => say(text) : undefined} onRetry={inTauri ? () => { core.retry().catch(() => {}); } : undefined}
           onImage={inTauri ? (p) => core.imageData(p, folder ?? undefined) : undefined}
-          onDiff={inTauri ? (turn, path) => setReviewing({ scope: "turn", turn, path }) : undefined} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={inTauri ? (turn) => core.undo(turn) : undefined} />}
+          onDiff={inTauri ? (turn, path) => setReviewing({ scope: "turn", turn, path }) : undefined} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={inTauri ? (turn) => core.undo(turn) : undefined}
+          onStop={inTauri ? stop : undefined} onChangeModel={inTauri ? () => { stop(); chooseModel(); } : undefined} />}
         </div>
         {inTauri && col.tab && !side && !agentHere && !reviewing && !fresh && !failed && (
           <button data-panel onClick={togglePanel} aria-expanded={panelOpen} aria-label={`The work panel: ${changes} file${changes === 1 ? "" : "s"} changed`} title={`The work panel: changes, checks, the pull request (${keysOf("⌘\\")})`}
             className={`tz-enter absolute right-[var(--tz-sbw,0px)] top-[calc(40*var(--tz-pt)+13px)] z-[2] flex items-center gap-1.5 rounded-l-[7px] border border-r-0 border-line py-1 pl-2 pr-[9px] text-[12px] hover:text-ink ${panelOpen ? "bg-hover text-ink" : "bg-desk text-muted"}`}>
-            <GitBranch size={13} strokeWidth={1.5} aria-hidden="true" />Changes<span className={`font-medium tabular-nums ${changes ? "text-ink-2" : "text-faint"}`}>{changes}</span></button>
+            <GitBranch size={13} strokeWidth={1.5} aria-hidden="true" />Changes{changes > 0 && <span className="font-medium tabular-nums text-ink-2">{changes}</span>}</button>
         )}
         {diff && <DiffView diff={diff} onClose={() => setDiff(null)} />}
         {reviewing && <ReviewView start={reviewing} turns={(view?.changes ?? []).filter((c) => !c.undone).map((c) => c.turn)}
@@ -1156,10 +1175,10 @@ export default function App() {
       <Toaster />
       {showPr && inTauri && <PrView pr={pr ?? null} worktree={inWorktree} onClose={() => setShowPr(false)} onRefresh={() => core.prIn(active).catch(() => {})}
         onSend={(text) => { setShowPr(false); say(text); }} onRemoveWorktree={() => { setShowPr(false); setWt({ remove: { path: folder! } }); }} />}
-      {overlay === "usage" && inTauri && <UsageView onClose={() => setOverlay(null)} limits={view?.limits} balance={view?.balance} choices={models?.choices} />}
+      {overlay === "usage" && inTauri && <UsageView onClose={() => setOverlay(null)} limits={view?.limits} balance={view?.balance} choices={models?.choices} claude={claude} />}
       {overlay === "setup" && inTauri && <Setup onSettings={() => { localStorage.setItem(SETUP, "1"); localStorage.setItem("tazuna.settings.tab", "Providers"); setOverlay("settings"); }}
         onClose={() => { localStorage.setItem(SETUP, "1"); setOverlay(null); }} />}
-      {overlay === "settings" && inTauri && <SettingsView onClose={() => setOverlay(null)} focus={keyFocus} items={userWidgets} onEdit={editPanel}
+      {overlay === "settings" && inTauri && <SettingsView onClose={() => setOverlay(null)} focus={keyFocus} items={userWidgets} onEdit={editPanel} chat={!folder}
         onEnable={(w, on) => widgets.enable(w.id, w.print!, on).then(reloadWidgets).catch((e) => console.error(e))}
         onRemove={(id) => widgets.remove(id).then(reloadWidgets).catch(() => {})} onChanged={reloadWidgets} />}
     </div>
@@ -1223,7 +1242,9 @@ const titleOf = (first?: string) => shortTitle(first) || "New conversation";
 
 /** The header's built-in chips read this (and a plugin replacing one can too). */
 export const HeaderCtx = createContext<{ modelLabel: string; effort: string; branch: string; changed: number; review?: () => void; side?: () => void; sideOpen?: boolean;
-  pr?: string | null; openPr?: () => void; cost?: number; panelOpen?: boolean; togglePanel?: (e?: { currentTarget: EventTarget | null }) => void }>({ modelLabel: "", effort: "", branch: "", changed: 0 });
+  pr?: string | null; openPr?: () => void; cost?: number; panelOpen?: boolean; togglePanel?: (e?: { currentTarget: EventTarget | null }) => void;
+  /** a project conversation: its folder and the apps it opens in ("files", "terminal", editors) */
+  openIn?: { path: string; apps: string[] } }>({ modelLabel: "", effort: "", branch: "", changed: 0 });
 
 function ModelChip() {
   const h = useContext(HeaderCtx);
@@ -1244,6 +1265,26 @@ function SideChip() {
     className={`grid size-7 place-items-center rounded-md ${h.sideOpen ? "bg-field text-ink" : "text-muted hover:text-ink"}`}><MessagesSquare size={16} strokeWidth={1.5} /></button> : null;
 }
 slots.register({ id: "header.side", slot: "header.actions", order: 40, source: "tazuna", render: SideChip });
+/** The apps "Open in" names, by the ids the shell sends. */
+const APP_NAMES: Record<string, string> = { files: filesApp.replace(/^the f/, "F"), terminal: "Terminal", vscode: "VS Code", cursor: "Cursor", zed: "Zed", windsurf: "Windsurf" };
+/** "Open in": a project's folder in the file manager, a terminal or an editor installed here (design review 14; other
+ * harnesses have it). */
+function OpenInChip() {
+  const h = useContext(HeaderCtx);
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null), button = useRef<HTMLButtonElement>(null);
+  if (!h.openIn) return null;
+  const { path, apps } = h.openIn;
+  return <>
+    <button ref={button} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setAt(at ? null : { x: r.left, y: r.bottom + 6 }); }} aria-haspopup="menu" aria-expanded={!!at} title={`Open ${path} in another app`}
+      className={`flex h-7 items-center gap-1 rounded-md px-2 text-[12.5px] ${at ? "bg-field text-ink" : "text-muted hover:text-ink"}`}>Open in<ChevronDown size={13} strokeWidth={1.5} className="text-faint" /></button>
+    {at && <PopMenu at={at} label="Open in" anchor={button.current} onClose={() => setAt(null)}>
+      {/* the editors apart, under a rule */}
+      {apps.map((a, i) => <Fragment key={a}>{i > 0 && i === apps.findIndex((x) => x !== "files" && x !== "terminal") && <MenuRule />}
+        <button role="menuitem" onClick={() => { setAt(null); core.openIn(path, a).catch((e) => console.error(e)); }} className={menuItem}>{APP_NAMES[a] ?? a}</button></Fragment>)}
+    </PopMenu>}
+  </>;
+}
+slots.register({ id: "header.open-in", slot: "header.actions", order: 30, source: "tazuna", render: OpenInChip });
 function PrChip() {
   const h = useContext(HeaderCtx);
   return h.pr ? <button onClick={h.openPr} title="The pull request: checks and reviews" className={`rounded-full border px-2.5 py-1 text-[12px] hover:bg-hover ${h.pr.includes("✗") ? "border-bad/40 text-bad" : "border-line text-ink-2"}`}>{h.pr}</button> : null;
@@ -1264,3 +1305,20 @@ function PanelChip() {
 // the cost moved to the status bar (desktop 0.1.71): CostChip stays exported for a plugin that wants it in the header
 slots.register({ id: "header.panel", slot: "header.actions", order: 50, source: "tazuna", render: PanelChip });
 export { BranchChip, CostChip, ModelChip, PrChip, ReviewChip };
+
+/** A send the core refused, as a notice over the box (design review 14: raw red text with backticks and a CLI hint): Claude
+ * Code missing in words with its install page, any other refusal in its own words made readable; "Choose another model"
+ * where the model is the cause. */
+function Refusal({ text, onModel }: { text: string; onModel: () => void }) {
+  const missing = /Claude Code \(the `claude` command\) is not installed|\bclaude not installed|starting claude[^:]*: (program not found|No such file)/i.test(text);
+  const said = readableError(text);
+  const model = missing || /\/model\b|claude|not signed in|no key|api key|provider/i.test(text);
+  return (
+    <div role="alert" className="mx-auto mb-2 flex max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
+      <span className="min-w-0 flex-1">{missing ? <span className="text-ink">Claude Code isn't installed.</span>
+        : said.split(/(`[^`]+`)/).map((p, i) => (p.startsWith("`") ? <code key={i} className="font-mono text-[11.5px] text-ink">{p.slice(1, -1)}</code> : p))}</span>
+      {missing && <button onClick={() => core.openLink("https://claude.com/claude-code").catch(() => {})} className={`flex-none ${quietButton}`}>Install page</button>}
+      {model && <button onClick={onModel} className={`flex-none ${quietButton}`}>Choose another model</button>}
+    </div>
+  );
+}

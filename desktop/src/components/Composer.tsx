@@ -1,5 +1,5 @@
-import { ArrowUp, Check, ChevronDown, FileText, FolderOpen, Gauge, MessageCircle, Paperclip, Plus, Shield, Square, X, Zap } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ArrowUp, Check, ChevronDown, FileText, FolderOpen, Gauge, GitBranch, MessageCircle, Paperclip, Plus, Shield, Square, X, Zap } from "lucide-react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { composed, type ModelChoice, type Models, type SendDraft } from "../lib/tazuna";
 import { IMAGE_FILE, keysOf, modelLabel, type Session } from "../lib/types";
 import { Slot } from "../lib/slots";
@@ -10,7 +10,11 @@ import { Sep } from "./Sep";
  * calls they make, and `attach` to put file paths into the box. */
 /** Where a new conversation runs, before its first message: a chat or a project's folder (the box's first pill). */
 export type Where = { label: string; folder: boolean; choices: { label: string; hint: string; path: string | null }[];
-  pick: (path: string | null) => void; pickFolder: () => void };
+  /** the folder it runs in (null: a chat): which choice is it, by path (two projects can have one name) */
+  path?: string | null;
+  pick: (path: string | null) => void; pickFolder: () => void;
+  /** a new conversation in a worktree of the project chosen (the palette's action, under the project: design review 14) */
+  worktree?: () => void };
 
 export type ComposerBag = {
   readOnly?: boolean;
@@ -24,6 +28,8 @@ export type ComposerBag = {
   onPickEffort?: (e: string) => void; onMode?: (mode: string) => void; onPickFiles?: () => Promise<string[]>; attach: (paths: string[]) => void;
   /** counts the `/model` (or `/effort`) asks: the model picker opens at each new one */
   picker?: number;
+  /** the palette's "Try on several models…", the model picker's last row in a project (design review 14) */
+  onBestOf?: () => void;
 };
 
 type Props = {
@@ -66,9 +72,12 @@ type Props = {
   draftKey?: string;
   /** the window's own commands (`/mcp`, `/model`…): what each does, and what runs when one is taken or sent alone */
   commands?: Record<string, [about: string, run: () => void]>;
+  onBestOf?: () => void;
 };
 
 export const DRAFT = "tazuna.draft.";
+/** The window event that opens the box's model picker (once no reply runs): `window.dispatchEvent(new Event(PICK_MODEL))`. */
+export const PICK_MODEL = "tazuna-pick-model";
 const DRAFT_FILES = "tazuna.draft-files.";
 export const draftFiles = (key: string): string[] => { try { return JSON.parse(localStorage.getItem(DRAFT_FILES + key) ?? "[]"); } catch { return []; } };
 export const saveDraftFiles = (key: string, files: string[]) => {
@@ -113,7 +122,7 @@ export const MODES: [string, string][] = [
 // one line always (a narrow window wrapped "Opus 5.5" onto two), and readable while a reply runs (faded, they read as broken)
 const pill = "inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink disabled:cursor-default disabled:text-muted";
 
-export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSendNow, onStop, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onPasteClipboardImage, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {}, readOnly = false, asking = false }: Props) {
+export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSendNow, onStop, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onPasteClipboardImage, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, onBestOf, commands = {}, readOnly = false, asking = false }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   // attachments are chips over the text, with a thumbnail for an image (until desktop 0.1.87 their paths were typed into
   // the message, and a screenshot was a line of path)
@@ -123,6 +132,8 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSe
   // the box's own: `/model` and `/effort` open the model pill's picker (the effort levels are at its top)
   const [picker, setPicker] = useState(0);
   const ask = () => setPicker((n) => n + 1);
+  // "Choose another model" from a refused send or a call being tried again (App, the transcript): the same picker
+  useEffect(() => { window.addEventListener(PICK_MODEL, ask); return () => window.removeEventListener(PICK_MODEL, ask); }, []);
   const mine: Record<string, [string, () => void]> = onPickModel ? { model: ["Pick the model and its effort", ask], effort: ["The model's effort level", ask], ...commands } : commands;
   const extra = useMemo(() => Object.entries(mine).map(([n, [about]]) => [`/${n}`, about] as [string, string]), [commands, !!onPickModel]);
   const found = useMemo(() => (shut || readOnly ? null : completions(text, caret, complete, extra)), [text, caret, complete, shut, extra, readOnly]);
@@ -203,7 +214,7 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSe
     return () => { off.then((f) => f()); };
   }, [onDrop]);
   const nextMode = () => { const i = MODES.findIndex(([m]) => m === session.mode); onMode?.(MODES[(i + 1) % MODES.length][0]); };
-  const bag: ComposerBag = { readOnly, where, chat, session, busy, sendBlocked, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, attach: (p) => { attach(p); }, picker };
+  const bag: ComposerBag = { readOnly, where, chat, session, busy, sendBlocked, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, attach: (p) => { attach(p); }, picker, onBestOf };
   // a message sent during a reply waits behind it (the core queues it, as the terminal does)
   // attachments go in the message as paths after its text (quoted when they hold a space): the core sends images as images
   const send = (now = false) => {
@@ -329,6 +340,7 @@ export function WherePill({ composer: c }: { composer: ComposerBag }) {
   const [open, setOpen] = useState(false);
   const w = c.where;
   if (!w) return null;
+  const here = (ch: Where["choices"][number]) => (w.path !== undefined ? ch.path === w.path : ch.label === w.label);
   return (
     <span className="relative">
       <button onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open} title="Where it runs: a chat, or a project's folder"
@@ -339,10 +351,17 @@ export function WherePill({ composer: c }: { composer: ComposerBag }) {
         // downward: on the start screen the box sits under the heading, which an upward menu covered
         <Menu onClose={() => setOpen(false)} width={280}>
           {w.choices.map((ch) => (
-            <button key={ch.path ?? "chat"} role="menuitemradio" aria-checked={ch.label === w.label} onClick={() => { setOpen(false); w.pick(ch.path); }} title={ch.hint} className="flex w-full items-center gap-2 px-3 py-[6px] text-left hover:bg-hover">
-              <span className="w-3.5 flex-none text-accent">{ch.label === w.label && <Check size={14} strokeWidth={1.75} />}</span>
+            <Fragment key={ch.path ?? "chat"}>
+            <button role="menuitemradio" aria-checked={here(ch)} onClick={() => { setOpen(false); w.pick(ch.path); }} title={ch.hint} className="flex w-full items-center gap-2 px-3 py-[6px] text-left hover:bg-hover">
+              <span className="w-3.5 flex-none text-accent">{here(ch) && <Check size={14} strokeWidth={1.75} />}</span>
               <span className="min-w-0 flex-1"><span className="block truncate text-ink">{ch.label}</span><span className="block truncate text-[11.5px] text-faint">{ch.hint}</span></span>
             </button>
+            {/* under the project it runs in: the same project, on a branch and folder of its own */}
+            {w.folder && w.worktree && here(ch) && ch.path && (
+              <button role="menuitem" onClick={() => { setOpen(false); w.worktree!(); }} title="A branch and folder of its own" className="flex w-full items-center gap-2 py-[5px] pl-[34px] pr-3 text-left text-[12.5px] text-ink-2 hover:bg-hover">
+                <GitBranch size={13} strokeWidth={1.5} className="flex-none text-muted" />New conversation in a worktree</button>
+            )}
+            </Fragment>
           ))}
           <button role="menuitem" onClick={() => { setOpen(false); w.pickFolder(); }} className="flex w-full items-center gap-2 border-t border-line-soft px-3 py-[6px] text-left text-ink hover:bg-hover">
             <span className="w-3.5 flex-none text-muted"><Plus size={14} strokeWidth={1.5} /></span>Open a folder…</button>
@@ -385,7 +404,9 @@ export function ModelPill({ composer: c }: { composer: ComposerBag }) {
   const [open, setOpen] = useState(false);
   const current = c.models?.choices.find((m) => m.current);
   const toggle = () => { c.onModels?.(); setOpen(!open); };
-  useEffect(() => { if (c.picker && !c.busy && c.onPickModel) { c.onModels?.(); setOpen(true); } }, [c.picker]);
+  // each ask once, when no reply runs: Change model stops the reply first, and the picker opens as it ends
+  const answered = useRef(0);
+  useEffect(() => { if (c.picker && c.picker !== answered.current && !c.busy && c.onPickModel) { answered.current = c.picker; c.onModels?.(); setOpen(true); } }, [c.picker, c.busy]);
   return (
     <span className="relative">
       <button disabled={c.busy || !c.onPickModel} onClick={toggle} aria-haspopup="dialog" aria-expanded={open} title={c.readOnly ? "Model and effort — available in the desktop app" : "Model and effort"} className={pill}>
@@ -393,8 +414,8 @@ export function ModelPill({ composer: c }: { composer: ComposerBag }) {
         {!c.sendBlocked && c.session.effort && <span className="flex items-center text-faint"><Sep />{c.session.effort}</span>}
         <ChevronDown size={13} strokeWidth={1.5} className="text-faint" />
       </button>
-      {open && <ModelPicker models={c.models ?? null} onClose={() => setOpen(false)} onPick={(m) => { setOpen(false); c.onPickModel?.(m); }}
-        onKey={c.onAddKey && ((p) => { setOpen(false); c.onAddKey!(p); })}
+      {open && <ModelPicker models={c.models ?? null} current={c.session.model} onClose={() => setOpen(false)} onPick={(m) => { setOpen(false); c.onPickModel?.(m); }}
+        onKey={c.onAddKey && ((p) => { setOpen(false); c.onAddKey!(p); })} onBestOf={c.onBestOf && (() => { setOpen(false); c.onBestOf!(); })}
         onRefreshModelList={c.onRefreshModelList}
         efforts={current?.efforts ?? []} effort={c.session.effort} onEffort={c.onPickEffort} />}
     </span>

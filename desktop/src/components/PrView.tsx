@@ -42,7 +42,14 @@ export function PrView({ pr, worktree, onClose, onSend, onRefresh, onRemoveWorkt
         </div>
         <div className="overflow-auto px-5 pb-5 pt-3 text-[12.5px]">
           {!pr && <div className="text-faint">Asking GitHub…</div>}
-          {pr?.error && <div className="text-bad">{pr.error}</div>}
+          {/* gh missing is no error of yours: a quiet empty state with its install page (it was red raw text, design review 14) */}
+          {pr?.error && (/gh is not installed/.test(pr.error) ? <div className="py-6 text-center">
+            <div className="text-[13px] text-ink-2">GitHub CLI (gh) isn't installed.</div>
+            <div className="mt-3 flex justify-center gap-2">
+              <button onClick={() => core.openLink("https://cli.github.com").catch(() => {})} className={quietButton}>Install page</button>
+              <button onClick={onRefresh} className={quietButton}>Check again</button>
+            </div>
+          </div> : <div className="text-bad">{pr.error}</div>)}
           {pr?.none && <>
             <div className="text-ink-2">No pull request for the branch <span className="font-mono">{pr.branch}</span> yet.</div>
             <button onClick={() => onSend(OPEN_PR)}

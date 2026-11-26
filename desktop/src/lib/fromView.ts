@@ -10,8 +10,12 @@ export const interim = (text: string) => { const t = text.trim(); return t.lengt
 export function readableError(text: string): string {
   const m = text.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/);
   const msg = m ? m[1].replace(/\\n/g, " ").replace(/\\(.)/g, "$1") : text.replace(/^[\w ]+ · /, "").replace(/ · trying again in \d+\s*s$/, "");
-  // "[404]: Antigravity upstream error (404): …" says its code twice: the first goes (design review 9; src/ui/mod.rs too)
-  return msg.trim().replace(/^\[(\d{3})\]:\s*(?=.*\b\1\b)/, "");
+  // "[404]: Antigravity upstream error (404): …" says its code twice: the first goes (design review 9; src/ui/mod.rs too);
+  // the provider's error codes ("(rate_limit_exceeded, rate_limit_error)") are for the raw reply, and it starts with a
+  // capital (design review 14)
+  const said = msg.trim().replace(/^\[(\d{3})\]:\s*(?=.*\b\1\b)/, "").replace(/\s*\((?:[a-z]+_[a-z_]+(?:,\s*)?)+\)(?=\)*$)/, "");
+  // only an ordinary word ("the provider is…"), never a name or a code ("ssh: …", "gpt-5 is…")
+  return /^[a-z]+ /.test(said) ? said.charAt(0).toUpperCase() + said.slice(1) : said;
 }
 
 function target(input: Record<string, unknown>): string {
@@ -97,6 +101,24 @@ export function stats(v: View, scope: "turn" | "all") {
     hits: series((c) => (c.fresh + c.cached ? (100 * c.cached) / (c.fresh + c.cached) : null)) };
 }
 
+/** A message that went: a prompt the core has started, not one it still holds (`queued`, core 0.1.228: held while a reply
+ * or its checks run, at the end of the view until it starts). Only these open a turn, name a conversation or count. */
+export const went = (b: View["blocks"][number]): b is Extract<View["blocks"][number], { kind: "prompt" }> => b.kind === "prompt" && !b.queued;
+/** How many messages went in a view. */
+export const promptsIn = (v: View | null | undefined) => (v?.blocks ?? []).filter(went).length;
+
+/** A running reply's clock: when it began and how long questions held it (the time a question waited for you is no work:
+ * "Worked 14 s" for a 2 s turn after an approval, design review 14). Kept from every view of its conversation, on screen
+ * or not; a new message or the reply's end (a Retry is a new reply) starts it again. The live count is now - start - paused. */
+export type Clock = { turn: number; start: number; paused: number; at?: number };
+export function clockOf(c: Clock | undefined, v: View, now: number): Clock | undefined {
+  if (["Ready", "Done"].includes(v.activity)) return undefined;
+  const turn = promptsIn(v), k: Clock = c?.turn === turn ? { ...c } : { turn, start: now, paused: 0 };
+  if (v.asking && k.at == null) k.at = now;
+  else if (!v.asking && k.at != null) { k.paused += now - k.at; k.at = undefined; }
+  return k;
+}
+
 /** The prompts shown before the core refused them (the router's check, then the refusal) whose words are what went back
  * into the box: left out with their refusal, so a send again does not show it twice (`refused` as messages() has it). The
  * prompt is the nearest before the refusal past notices that are no error (a mode picked during the router's check). */
@@ -104,9 +126,9 @@ export function orphans(v: View | null | undefined, refused: ReadonlyMap<number,
   const out = new Set<number>(), blocks = v?.blocks ?? [];
   for (const [k, back] of refused) {
     let i = k - 1;
-    while (i >= 0 && blocks[i].kind === "notice" && !(blocks[i] as { error: boolean }).error) i--;
+    while (i >= 0 && ((blocks[i].kind === "notice" && !(blocks[i] as { error: boolean }).error) || (blocks[i].kind === "prompt" && (blocks[i] as { queued?: boolean }).queued))) i--;
     const p = blocks[i];
-    if (back.trim() && p?.kind === "prompt" && p.text.trim() === back.trim()) out.add(i);
+    if (back.trim() && p && went(p) && p.text.trim() === back.trim()) out.add(i);
   }
   return out;
 }
@@ -114,7 +136,7 @@ export function orphans(v: View | null | undefined, refused: ReadonlyMap<number,
 /** The prompts messages() shows: the conversation's title, whether it is saved or empty, read from these. */
 export const asked = (v: View | null | undefined, refused: ReadonlyMap<number, string> = new Map()) => {
   const gone = orphans(v, refused);
-  return (v?.blocks ?? []).flatMap((b, k) => (b.kind === "prompt" && !gone.has(k) ? [b.text] : []));
+  return (v?.blocks ?? []).flatMap((b, k) => (went(b) && !gone.has(k) ? [b.text] : []));
 };
 
 /** `refused` (App's alone): the error notices of sends the core refused whose words went back into the box, each with
@@ -129,6 +151,8 @@ export function messages(v: View, refused: ReadonlyMap<number, string> = new Map
   // a message sent during a reply waits in the core's queue: shown after that reply ends, not above it
   let open = false;
   const queue: string[] = [];
+  // the messages the core holds (`queued` prompts): never a turn of their own until it starts them, so no done takes them
+  const held: string[] = [];
   const edits = new Map((v.edit_points ?? []).map((e) => [e.block, e]));
   let at = 0;
   const gone = orphans(v, refused);
@@ -140,14 +164,15 @@ export function messages(v: View, refused: ReadonlyMap<number, string> = new Map
   // long answer and then a to-do step folded the whole answer away, and Copy took only the "Done." after it
   const step = (t: ToolStep) => {
     const a = current();
-    delete a.retrying;
+    delete a.retrying; delete a.retryAt;
     a.prose = a.prose.filter((text) => { const short = interim(text); if (short) a.tools!.push({ kind: "said", verb: "", target: "", secs: 0, ok: true, text }); return !short; });
     a.tools!.push(t);
   };
   const changeAt = new Map((v.changes ?? []).map((c) => [c.at_block, c]));
   for (const [k, b] of v.blocks.entries()) {
     at = k;
-    if (b.kind === "prompt") { if (gone.has(k)) { /* refused: its words are back in the box */ } else if (open) queue.push(b.text); else prompt(b.text); }
+    if (b.kind === "prompt" && b.queued) held.push(b.text);
+    else if (b.kind === "prompt") { if (gone.has(k)) { /* refused: its words are back in the box */ } else if (open) queue.push(b.text); else prompt(b.text); }
     // the router answered it as a chat (app server, 0.1.127's router): the reply carries the tag and the ask, for "send to agent"
     else if (b.kind === "notice" && b.text.startsWith("answered as a chat")) { Object.assign(current(), { routedChat: true, ask }); }
     // the agent answered in a chat's place (the chat replied [[agent]], or you sent it there)
@@ -157,7 +182,7 @@ export function messages(v: View, refused: ReadonlyMap<number, string> = new Map
     else if (b.kind === "notice" && !b.error && b.text.startsWith("This conversation ran on ")) { (current().info ??= []).push(b.text); }
     // a model switch that went on in a new session (core C5): a quiet divider, the conversation above it stays
     else if (b.kind === "notice" && !b.error && /^─+\s*continued on /.test(b.text)) out.push({ role: "notice", text: b.text.replace(/^[─\s]+|[─\s]+$/g, "") });
-    else if (b.kind === "text") { if (b.text.trim()) { current().prose.push(b.text); delete current().retrying; } }
+    else if (b.kind === "text") { if (b.text.trim()) { current().prose.push(b.text); delete current().retrying; delete current().retryAt; } }
     // ToolSearch is Claude Code loading a deferred tool before using it ("select:mcp__lean__bash"): plumbing, not a step
     // (it showed in every hand-off and added "used 1 other tool" to the summary; real window, 2026-11-22)
     else if (b.kind === "tool" && b.name === "ToolSearch") { /* nothing */ }
@@ -190,7 +215,8 @@ export function messages(v: View, refused: ReadonlyMap<number, string> = new Map
       // a reply that ended without its answer says why, where a provider's error before it said (until desktop 0.1.74 the
       // error was its raw JSON, as the answer's text, and a failed reply ended with nothing)
       if (!b.ok || b.stopped) {
-        const f = current().failure = { text: lastError ? readableError(lastError) : b.stopped ? "" : "The reply ended without an answer.", raw: lastError, stopped: b.stopped, ask };
+        const f = current().failure = { text: lastError ? readableError(lastError) : b.stopped ? "" : "The reply ended without an answer.", raw: lastError, stopped: b.stopped, ask,
+          retrying: b.stopped && !!current().retrying };
         // an answer that only repeats its error is said once, in the error card ("Not logged in · Please run /login" twice)
         current().prose = current().prose.filter((p) => !(f.text && [f.text, f.raw].some((e) => e.trim() === p.trim())));
       }
@@ -199,7 +225,7 @@ export function messages(v: View, refused: ReadonlyMap<number, string> = new Map
       // a reply that answered and then took one more step (a last to-do list) has its last words as its answer, not none
       const a = current(), said = a.tools!.map((t) => t.kind).lastIndexOf("said");
       if (b.ok && !b.stopped && !a.prose.length && said >= 0) a.prose.push(a.tools!.splice(said, 1)[0].text!);
-      delete current().retrying;
+      delete current().retrying; delete current().retryAt; delete current().tries;
       const c = changeAt.get(k);
       if (c) current().change = { turn: c.turn, files: c.files, undone: c.undone, canUndo: c.can_undo };
       agent = null;
@@ -209,7 +235,7 @@ export function messages(v: View, refused: ReadonlyMap<number, string> = new Map
     }
     // a call tried again (the core's retry notice): said while the reply runs, in its place; once the reply ends it goes
     // (past it, or into the error card). In a plain chat it showed only once the reply had failed, 55 s later
-    else if (b.kind === "notice" && !b.error && /: \d+ (?:try|tries) failed/.test(b.text)) { lastError = b.text; current().retrying = b.text; }
+    else if (b.kind === "notice" && !b.error && /: \d+ (?:try|tries) failed/.test(b.text)) { lastError = b.text; Object.assign(current(), { retrying: b.text, retryAt: b.retry_at, tries: b.tries }); }
     else if (b.kind === "notice" && (b.error || /provider error|HTTP \d{3}/.test(b.text))) {
       // a send the core refused, its words back in the box (`refused`): said beside the box until a message goes
       // (`standing`), not a row; they piled up at the top with nothing of what was sent (design review 13). Its message,
@@ -225,19 +251,24 @@ export function messages(v: View, refused: ReadonlyMap<number, string> = new Map
       if (b.ended) { open = false; const next = queue.shift(); if (next !== undefined) prompt(next); }
     }
   }
-  for (const text of queue) out.push({ role: "user", text, queued: true });
+  for (const text of [...queue, ...held]) out.push({ role: "user", text, queued: true });
   return out;
 }
 
 /** The error shown beside the box: the last refused send's (`refused`, as messages() has it), until a message goes; a
  * change of mode or of model, or any other notice, leaves it. */
 export function standing(v: View, refused: ReadonlyMap<number, string> = new Map()): string | undefined {
-  let open = false, waiting = 0, error: string | undefined;
+  const k = standingAt(v, refused);
+  return k < 0 ? undefined : (v.blocks[k] as { text: string }).text;
+}
+/** Where that error is in the view (-1: none): App keeps the model it was refused on, and a change of model leaves it. */
+export function standingAt(v: View, refused: ReadonlyMap<number, string> = new Map()): number {
+  let open = false, waiting = 0, error = -1;
   for (const [k, b] of v.blocks.entries()) {
-    if (b.kind === "prompt") { if (open) waiting++; else { open = true; error = undefined; } }
-    else if (b.kind === "notice" && refused.has(k)) error = b.text;
+    if (went(b)) { if (open) waiting++; else { open = true; error = -1; } }
+    else if (b.kind === "notice" && refused.has(k)) error = k;
     // the turns as messages() has them: a message waiting in the core's queue goes when one ends
-    if (b.kind === "done" || (b.kind === "notice" && b.error && b.ended)) { if (waiting) { waiting--; error = undefined; } else open = false; }
+    if (b.kind === "done" || (b.kind === "notice" && b.error && b.ended)) { if (waiting) { waiting--; error = -1; } else open = false; }
   }
   return error;
 }
@@ -272,6 +303,13 @@ export function demoView() {
   const retry = { kind: "notice", text: "the provider is rate limiting this model: 2 tries failed, trying again (HTTP 429: busy)", error: false } as const;
   const live = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "fail" }, retry] } as View)[1], ended = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "fail" }, retry, { ...done, ok: false }] } as View)[1];
   if (live.role !== "agent" || !live.retrying || ended.role !== "agent" || ended.retrying || !ended.failure?.raw.includes("2 tries")) throw new Error("retry notice");
+  // the core's countdown where it sends one; stopped during the tries: said so, the codes left for the raw reply
+  const timed = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "fail" }, { ...retry, retry_at: 5000, tries: 2 }] } as View)[1];
+  const halted = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "fail" }, { ...retry, text: `${retry.text.slice(0, -1)} (rate_limit_exceeded, rate_limit_error))` }, { ...done, ok: false, stopped: true }] } as View)[1];
+  if (readableError("ssh: connect to host x port 22") !== "ssh: connect to host x port 22" || readableError("gpt-5 is not available") !== "gpt-5 is not available")
+    throw new Error("readableError capitalised a name");
+  if (timed.role !== "agent" || timed.retryAt !== 5000 || timed.tries !== 2 || halted.role !== "agent" || !halted.failure?.retrying
+    || halted.failure.text !== "The provider is rate limiting this model: 2 tries failed, trying again (HTTP 429: busy)") throw new Error(`retry countdown, stop: ${JSON.stringify([timed, halted])}`);
   const answering = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "x" }, retry, { kind: "text", text: "Here", live: true }] } as View)[1];
   if (answering.role !== "agent" || answering.retrying) throw new Error("retry notice once the text comes");
   const refused = { kind: "notice", text: "starting claude: program not found", error: true, ended: true } as const;
@@ -290,6 +328,20 @@ export function demoView() {
     see([{ kind: "prompt", text: "a" }, { ...lost, ended: true }]), see([{ kind: "prompt", text: "a" }, done, lost], back)];
   const want = [`ua,${lost.text}`, `ua,${lost.text}`, "uau,", "uaa,", `ua,${lost.text}`, "ua,", `ua,${lost.text}`];
   if (seen.join(" / ") !== want.join(" / ")) throw new Error(`a refused message's error: ${seen.join(" / ")}`);
+  // a message the core holds while the checks run (core 0.1.228, `queued`): drawn queued at the end, no title, no turn of its
+  // own, and a refusal standing before it stays (it hid one and the checks' status sat under it)
+  const heldB = { kind: "prompt", text: "b", queued: true } as const, ver = { kind: "verify", cmd: "npm test", secs: 0 } as const;
+  const holding = { ...v, calls: [], activity: "Verifying", blocks: [{ kind: "prompt", text: "a" }, { kind: "text", text: "Done.", live: false }, done, heldB, ver] } as View;
+  const drawn = messages(holding).map((m) => (m.role === "user" ? `${m.text}${m.queued ? "(queued)" : ""}` : m.role[0])).join(",");
+  const refusedThen = { ...v, calls: [], blocks: [{ kind: "prompt", text: "a" }, done, lost, heldB] } as View;
+  if (drawn !== "a,a,b(queued)" || asked(holding).join() !== "a" || promptsIn(holding) !== 1 || standingAt(refusedThen, new Map([[2, ""]])) !== 2
+    || heldTurn({ ...holding, activity: "Done" }, { prompts: 1, at: 0 }, 500) !== 1500) throw new Error(`held prompts: ${drawn} | ${asked(holding)} | ${standingAt(refusedThen, new Map([[2, ""]]))}`);
+  // the clock: a question at 10 s answered at 65 s, the conversation off screen meanwhile (views still come), counts 10 s
+  const tool = { ...v, activity: "Tool", blocks: [{ kind: "prompt", text: "a" }] } as View, asking = { ...tool, asking: { tool: "Bash", what: "ls", note: "", once: false, queued: 0 } } as View;
+  let clock = clockOf(undefined, tool, 0);
+  clock = clockOf(clock, asking, 10_000); clock = clockOf(clock, asking, 30_000); clock = clockOf(clock, tool, 65_000);
+  if (!clock || 70_000 - clock.start - clock.paused !== 15_000 || clockOf(clock, { ...tool, activity: "Done" }, 70_000) !== undefined
+    || clockOf(clock, { ...tool, blocks: [...tool.blocks, { kind: "prompt", text: "b" }] } as View, 71_000)?.start !== 71_000) throw new Error(`clock: ${JSON.stringify(clock)}`);
   // a long answer, then a to-do step, then "Done.": the answer stays the answer
   const long = `${"The cache is keyed on the lock file. ".repeat(4)}\n\n- one\n- two`;
   const kept = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "a" }, { kind: "text", text: long, live: false }, { ...bash, name: "TodoWrite" }, { kind: "text", text: "Done.", live: false }, done] } as View)[1];
@@ -332,7 +384,7 @@ export function demoView() {
     ["running at list prices", stats(sv("Tool", [...two, sc(2, 0, 2000, 200, 1000, 200, 3000, 0.002, { estimate: true })]), "turn"), [1, 2000, 2000, 100, 200, 200, 0.002, true, "so far", 3, [[1, 1]], 1, 1]],
     ["paid to nobody named", stats(sv("Done", two, { ...vibe, plan: false, provider: null }), "turn"), [2, 2000, 900, 45, 400, 80, 0.05, false, null, 4, [[1, 2]], 2, 2]],
     ["a plan turn and a paid one", stats(sv("Done", [sc(0, 10, 0, 1, null, null, 100, 0.05), sc(2, 10, 0, 1, null, null, 100, 0.03)], vibe, { ...vibe, plan: false, provider: "SubRouter", run_cost: 0.03 }), "all"),
-      [2, 20, 0, 0, 2, null, 0.1, false, "$0.050 not\u00a0billed + $0.030 paid", 8, [], 0, 2]],
+      [2, 20, 0, 0, 2, null, 0.1, false, "$0.05 not\u00a0billed + $0.03 paid", 8, [], 0, 2]],
   ];
   const off = cases.filter(([, s, w]) => said(s) !== JSON.stringify(w));
   if (off.length) throw new Error(`view: stats\n${off.map(([n, s, w]) => `${n}: ${said(s)}, wanted ${JSON.stringify(w)}`).join("\n")}`);
@@ -385,7 +437,7 @@ export const unsaved = (v: View | null, refused?: ReadonlyMap<number, string>) =
  * after 2 s), 0 now. */
 export function heldTurn(v: View | null, last: { prompts: number; at: number } | undefined, now: number): number {
   if (!v || !["Ready", "Done"].includes(v.activity) || v.asking) return -1;
-  const prompts = v.blocks.filter((b) => b.kind === "prompt").length, wait = last ? 2000 - (now - last.at) : 0;
+  const prompts = promptsIn(v), wait = last ? 2000 - (now - last.at) : 0;
   return last && prompts <= last.prompts && wait > 0 ? wait : 0;
 }
 

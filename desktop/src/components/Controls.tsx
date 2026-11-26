@@ -1,3 +1,7 @@
+import { Check } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+
 // The window's shared controls (design review 11, prototype mockups/v8.html "one control, one button, one dialog"): each
 // was drawn three ways (a lilac key in Settings, a raised one in the review, a bare one on the usage page; Cancel as plain
 // words, bordered and filled; dialogs with three shadows and two body fills).
@@ -56,3 +60,61 @@ export const accentButton = "rounded-md border border-accent bg-accent px-2.5 py
  * palette alone keeps a geometry of its own (560 px, near the window's top, at most 60% of its height). */
 export const dialogShell = (width: 420 | 600 | 780 | 860) =>
   `tz-dialog flex max-h-[calc(100vh-5rem)] max-w-[calc(100vw-5rem)] flex-col overflow-hidden rounded-xl border border-line-strong bg-main ${width === 420 ? "w-[420px]" : width === 600 ? "w-[600px]" : width === 780 ? "w-[780px]" : "w-[860px]"}`;
+
+/** A choice of several that can be on together, as a row: a drawn 14 px box (the accent when on), the row's hover as the
+ * model picker's rows have it, the focus ring inside the row, Space (or Enter, or a click) to toggle. The best-of dialog's
+ * were the browser's own boxes (design review 14). */
+export function CheckRow({ on, onChange, disabled, children }: { on: boolean; onChange: () => void; disabled?: boolean; children: ReactNode }) {
+  return (
+    // tabIndex: WebKit's Tab skips buttons (the sidebar's rows do the same)
+    <button type="button" role="checkbox" aria-checked={on} disabled={disabled} onClick={onChange} tabIndex={0}
+      className="flex w-full items-center gap-2.5 rounded-md px-2 py-[5px] text-left outline-offset-[-2px] enabled:hover:bg-hover focus-visible:bg-hover disabled:cursor-default disabled:opacity-50">
+      <span aria-hidden="true" className={`grid size-3.5 flex-none place-items-center rounded-[4px] border-[1.5px] ${on ? "border-accent bg-accent text-on-accent" : "border-line-strong"}`}>
+        {on && <Check size={10} strokeWidth={3} />}</span>
+      {children}
+    </button>
+  );
+}
+
+/** A menu at a point (a row's right click, a header button's own menu): the window's menu (tz-pop), kept inside the window,
+ * focus on its first item, the arrows, Home and End between items, Esc, Tab or a click outside to shut; focus goes back to
+ * what had it unless an item put it elsewhere. Its items are buttons with role="menuitem" (`menuItem`). */
+export function PopMenu({ at, onClose, label, children, anchor }: { at: { x: number; y: number }; onClose: () => void; label: string; children: ReactNode;
+  /** the button that opened it: a press there is its own (it toggles), not a click outside */
+  anchor?: HTMLElement | null }) {
+  const box = useRef<HTMLDivElement>(null), close = useRef(onClose);
+  close.current = onClose;
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  // what had the focus, read while rendering: the first item takes it before any effect runs
+  const [back] = useState(() => document.activeElement as HTMLElement | null);
+  const items = () => [...(box.current?.querySelectorAll<HTMLButtonElement>("[role=menuitem]:not(:disabled)") ?? [])];
+  useLayoutEffect(() => {
+    const r = box.current!.getBoundingClientRect();
+    setPos({ x: Math.max(8, Math.min(at.x, innerWidth - r.width - 8)), y: Math.max(8, Math.min(at.y, innerHeight - r.height - 8)) });
+    items()[0]?.focus({ preventScroll: true });
+  }, [at.x, at.y]);
+  useEffect(() => {
+    const away = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node) && !anchor?.contains(e.target as Node)) close.current(); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close.current(); } };
+    const shut = () => close.current();
+    window.addEventListener("mousedown", away, true); window.addEventListener("keydown", esc, true); window.addEventListener("resize", shut);
+    return () => {
+      window.removeEventListener("mousedown", away, true); window.removeEventListener("keydown", esc, true); window.removeEventListener("resize", shut);
+      if (back?.isConnected && (!document.activeElement || document.activeElement === document.body)) back.focus({ preventScroll: true });
+    };
+  }, []);
+  const keys = (e: React.KeyboardEvent) => {
+    const all = items(), i = all.indexOf(document.activeElement as HTMLButtonElement);
+    const go = (n: number) => { e.preventDefault(); all[(n + all.length) % all.length]?.focus(); };
+    if (e.key === "ArrowDown") go(i + 1); else if (e.key === "ArrowUp") go(i - 1); else if (e.key === "Home") go(0); else if (e.key === "End") go(all.length - 1);
+    else if (e.key === "Tab") { e.preventDefault(); onClose(); }
+  };
+  return createPortal(
+    <div ref={box} role="menu" aria-label={label} onKeyDown={(e) => { keys(e); e.stopPropagation(); }} onClick={(e) => e.stopPropagation()} onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }} style={{ left: pos?.x ?? at.x, top: pos?.y ?? at.y, opacity: pos ? undefined : 0 }}
+      className="tz-pop fixed z-50 min-w-[200px] max-w-[320px] rounded-xl border border-line-strong py-1 text-[13px] [&_button:focus-visible]:bg-hover [&_button]:outline-offset-[-2px]">
+      {children}
+    </div>, document.body);
+}
+/** A PopMenu's item, and the hairline between two groups of them. */
+export const menuItem = "flex w-full items-center gap-2 px-3 py-[5px] text-left text-ink hover:bg-hover";
+export const MenuRule = () => <div role="separator" className="my-1 border-t border-line-soft" />;

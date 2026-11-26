@@ -1,11 +1,13 @@
-import { ChevronRight, FolderOpen, LoaderCircle, Pencil, Plus, Search, Settings, X } from "lucide-react";
+import { ChevronRight, Copy, FolderOpen, LoaderCircle, Pencil, Plus, Search, Settings, X } from "lucide-react";
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Slot } from "../lib/slots";
 import type { Project, Thread } from "../lib/types";
 import { Mark } from "./Mark";
 import { Parts } from "./Sep";
 import { clock } from "../lib/health";
-import { keysOf } from "../lib/types";
+import { filesApp, keysOf } from "../lib/types";
+import { toast } from "../lib/toast";
+import { MenuRule, PopMenu, menuItem } from "./Controls";
 
 const icon = { size: 16, strokeWidth: 1.5 };
 
@@ -61,8 +63,28 @@ export function when(at?: number, now = Date.now()): string {
 
 const groupHead = "flex items-center px-[9px] pb-1 pt-3.5 text-[11.5px] font-medium text-faint";
 
-function ThreadRow({ t, active, sub, onClick, onRename, onHide, opened, onClose, noPlace }: {
+/** Where a row's menu opens: at the pointer (a right click), or under the row (the keyboard's menu key or Shift+F10). */
+type At = { x: number; y: number };
+const menuAt = (e: React.MouseEvent | React.KeyboardEvent): At | null => {
+  if (e.type === "contextmenu") { const m = e as React.MouseEvent; return { x: m.clientX, y: m.clientY }; }
+  const k = e as React.KeyboardEvent;
+  if (k.key !== "ContextMenu" && !(k.shiftKey && k.key === "F10")) return null;
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  return { x: r.left + 12, y: r.bottom - 4 };
+};
+const copyPath = (path: string) => navigator.clipboard?.writeText(path).then(() => toast("Path copied", { kind: "ok" }), () => {});
+/** A project's own items in a row's menu: its folder in the file manager, its path copied. */
+function FolderItems({ path, onReveal, close }: { path: string; onReveal?: (path: string) => void; close: () => void }) {
+  return <>
+    {onReveal && <button role="menuitem" onClick={() => { close(); onReveal(path); }} className={menuItem}><FolderOpen size={14} strokeWidth={1.5} className="text-muted" />Open in {filesApp}</button>}
+    <button role="menuitem" onClick={() => { close(); copyPath(path); }} className={menuItem}><Copy size={14} strokeWidth={1.5} className="text-muted" />Copy path</button>
+  </>;
+}
+
+function ThreadRow({ t, active, sub, onClick, onRename, onHide, opened, onClose, noPlace, onReveal }: {
   t: Thread; active: boolean; sub?: boolean; onClick?: () => void; onRename?: (title: string) => void; onHide?: () => void;
+  /** a project's folder in the file manager (the row's menu, design review 14) */
+  onReveal?: (path: string) => void;
   /** open now with nothing to do: it stays under its day, marked, and × closes it (design review 10: it jumped into "Open") */
   opened?: boolean; onClose?: () => void;
   /** every row of the list is in the same place: the place is not repeated under each title */
@@ -70,6 +92,9 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide, opened, onClose,
 }) {
   const [mode, setMode] = useState<"view" | "rename" | "hide">("view");
   const [title, setTitle] = useState(t.title);
+  // the row's own menu (a right click, the menu key): what its buttons do, and a project's folder (design review 14)
+  const [menu, setMenu] = useState<At | null>(null);
+  const openMenu = (e: React.MouseEvent | React.KeyboardEvent) => { const at = onRename ? menuAt(e) : null; if (at) { e.preventDefault(); setMenu(at); } };
   // back from the remove question by Cancel or Esc, the keyboard's focus is on the row again (it fell to the window)
   const row = useRef<HTMLAnchorElement>(null), back = useRef(false);
   useEffect(() => { if (mode === "view" && back.current) { back.current = false; row.current?.focus(); } }, [mode]);
@@ -101,7 +126,9 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide, opened, onClose,
   const twoLines = !sub && !!place;
   const dot = opened && <span title="Open" className="size-1.5 flex-none rounded-full bg-live" />;
   return (
-    <a ref={row} data-flip={sub ? undefined : t.id} data-tip-clip={(t.full ?? t.title).toLowerCase() === t.title.toLowerCase() ? "" : undefined} onClick={onClick} {...press(onClick)} title={onClick ? t.full ?? t.title : "Example conversation · available in the desktop app"} className={`group flex items-center gap-2 truncate rounded-md px-[9px] ${twoLines ? "py-[5px]" : "py-1.5"} text-ink-2 transition-colors duration-150 ${onClick ? "hover:bg-hover" : "cursor-default"} ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
+    <>
+    <a ref={row} data-flip={sub ? undefined : t.id} data-tip-clip={(t.full ?? t.title).toLowerCase() === t.title.toLowerCase() ? "" : undefined} onClick={onClick} {...press(onClick)}
+      onContextMenu={openMenu} onKeyDownCapture={openMenu} aria-haspopup={onRename ? "menu" : undefined} title={onClick ? t.full ?? t.title : "Example conversation · available in the desktop app"} className={`group flex items-center gap-2 truncate rounded-md px-[9px] ${twoLines ? "py-[5px]" : "py-1.5"} text-ink-2 transition-colors duration-150 ${onClick ? "hover:bg-hover" : "cursor-default"} ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
       {sub && <span className={`size-1.5 flex-none rounded-full ${t.running ? "bg-live shadow-[0_0_0_3px_var(--live-soft)]" : "bg-faint"}`} />}
       {twoLines ? (
         <span className="min-w-0 flex-1">
@@ -119,6 +146,13 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide, opened, onClose,
           : <button tabIndex={0} title="Remove from the list (its recording stays)" onClick={(e) => { e.stopPropagation(); setMode("hide"); }} className={icon}><X size={12} strokeWidth={1.5} /></button>}
       </span>}
     </a>
+    {/* beside the row, not in it: a click in the menu is not the row's */}
+    {menu && <PopMenu at={menu} label={t.title} onClose={() => setMenu(null)}>
+      <button role="menuitem" onClick={() => { setMenu(null); setTitle(t.title); setMode("rename"); }} className={menuItem}><Pencil size={14} strokeWidth={1.5} className="text-muted" />Rename</button>
+      <button role="menuitem" onClick={() => { setMenu(null); setMode("hide"); }} className={menuItem}><X size={14} strokeWidth={1.5} className="text-muted" />Remove from the list</button>
+      {t.project && <><MenuRule /><FolderItems path={t.project} onReveal={onReveal} close={() => setMenu(null)} /></>}
+    </PopMenu>}
+    </>
   );
 }
 
@@ -158,6 +192,8 @@ type Props = {
   onSettings?: () => void;
   onRename?: (t: Thread, title: string) => void;
   onHide?: (t: Thread) => void;
+  /** a project's folder in the file manager, from a row's menu */
+  onReveal?: (path: string) => void;
   /** the conversations open now, each with its own core: working ones keep going while another is on screen */
   open?: Open[];
   activeTid?: string;
@@ -173,7 +209,9 @@ const STATE: Record<string, [string, string]> = {
   stopped: ["bg-bad", "stopped"],
 };
 
-export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFolder, onOpenProject, onOpenThread, onSearch, onSettings, onRename, onHide, open = [], activeTid, onSwitch, onClose, onDismiss }: Props) {
+export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFolder, onOpenProject, onOpenThread, onSearch, onSettings, onRename, onHide, onReveal, open = [], activeTid, onSwitch, onClose, onDismiss }: Props) {
+  // a project row's menu: which project, and where
+  const [projectMenu, setProjectMenu] = useState<{ p: Project; at: At } | null>(null);
   // the chevron folds and unfolds a project's conversations by itself (until 0.1.57 "open" was only "the active project":
   // a click opened it and nothing folded it again); the name opens the project
   const [fold, setFold] = useState<Record<string, boolean>>({});
@@ -243,7 +281,7 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
             const o = idleOpen.get(t.id);
             return <ThreadRow key={t.id} t={t} active={o ? o.tid === activeTid : t.id === active} noPlace={samePlace} opened={!!o && open.length > 1}
               onClick={o ? () => onSwitch?.(o.tid) : onOpenThread && (() => onOpenThread(t, p))} onClose={o && (() => onClose?.(o.tid))}
-              onRename={onRename && ((title) => onRename(t, title))} onHide={onHide && (() => onHide(t))} />;
+              onRename={onRename && ((title) => onRename(t, title))} onHide={onHide && (() => onHide(t))} onReveal={onReveal} />;
           })}
         </div>;
       })}
@@ -253,13 +291,16 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
         const key = p.path ?? p.name, shown = fold[key] ?? false;
         return (
         <div key={key}>
-          <div className={`flex items-center rounded-md text-ink-2 ${p.path && p.path === active ? "bg-selected text-ink" : ""}`}>
+          <div onContextMenu={(e) => { const at = p.path && onOpenProject ? menuAt(e) : null; if (at) { e.preventDefault(); setProjectMenu({ p, at }); } }}
+            onKeyDownCapture={(e) => { const at = p.path && onOpenProject ? menuAt(e) : null; if (at) { e.preventDefault(); setProjectMenu({ p, at }); } }}
+            className={`flex items-center rounded-md text-ink-2 ${p.path && p.path === active ? "bg-selected text-ink" : ""}`}>
+            {/* the chevron's stroke on the other rows' text edge (it sat 4 px in from it, design review 14) */}
             {p.threads.length > 0 ? (
               <button onClick={() => setFold((f) => ({ ...f, [key]: !shown }))} aria-expanded={shown} aria-label={`${shown ? "Hide" : "Show"} ${p.name}'s conversations`}
-                className="ml-1 rounded p-1 text-faint hover:bg-hover hover:text-ink">
+                className="rounded p-1 text-faint hover:bg-hover hover:text-ink">
                 <ChevronRight size={14} strokeWidth={1.5} className={`transition-transform duration-150 ${shown ? "rotate-90" : ""}`} />
               </button>
-            ) : <span className="ml-1 w-[22px]" />}
+            ) : <span className="w-[22px]" />}
             <button disabled={!onOpenProject} onClick={() => onOpenProject?.(p)} title={onOpenProject ? p.path : "Available in the desktop app"}
               className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-1 pr-[9px] text-left enabled:hover:bg-hover disabled:cursor-default disabled:text-muted">
               <span className="flex-1 truncate">{p.name}</span>
@@ -267,10 +308,14 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
             </button>
           </div>
           {shown && p.threads.slice(0, 15).map((t) => <ThreadRow key={t.id} t={t} active={t.id === active} sub onClick={onOpenThread && (() => onOpenThread(t, p))}
-            onRename={onRename && ((title) => onRename(t, title))} onHide={onHide && (() => onHide(t))} />)}
+            onRename={onRename && ((title) => onRename(t, title))} onHide={onHide && (() => onHide(t))} onReveal={onReveal} />)}
         </div>
         );
       })}
+      {projectMenu && <PopMenu at={projectMenu.at} label={projectMenu.p.name} onClose={() => setProjectMenu(null)}>
+        <button role="menuitem" onClick={() => { setProjectMenu(null); onOpenProject?.(projectMenu.p); }} className={menuItem}><Plus size={14} strokeWidth={1.5} className="text-muted" />New chat here</button>
+        <MenuRule /><FolderItems path={projectMenu.p.path!} onReveal={onReveal} close={() => setProjectMenu(null)} />
+      </PopMenu>}
       </div>
       <div className="mt-auto"><Slot name="sidebar.footer" props={{ planLeft }} /></div>
       </SidebarCtx.Provider>

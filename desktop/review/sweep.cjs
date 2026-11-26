@@ -191,6 +191,95 @@ const log = [];
       await c5.close(); }
     if (process.env.ONLY === "stats") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n")); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
   }
+  // design review 14 (ONLY=r14: these alone): a row's menu (PopMenu) by pointer and keyboard, focus back after Esc; the
+  // header's "Open in" (its editors under a rule); best-of's check rows by Space; a retry's countdown with Stop and Change
+  // model, the live status above a message the core holds (`queued`) and kept in place when one comes; the picker's
+  // Current row; an undone turn's card
+  if (!process.env.ONLY || process.env.ONLY === "r14") {
+    const ok = (c, what) => { if (!c) throw new Error(what); };
+    const L14 = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T), inv = T.invoke.bind(T);
+      T.emit = (e, p) => { if (p?.msg?.type === "view") window.__lastView = p; return emit(e, p); };
+      window.__again = (f) => { const { tid, msg } = window.__lastView; T.view(tid, f({ ...msg, from: 0 })); };
+      T.invoke = async (c, a) => c === "open_in" ? (a?.app ? (window.__opened = [a.path, a.app], []) : ["files", "terminal", "vscode", "zed"]) : inv(c, a); })();`;
+    for (const theme of ["dark", "light"]) {
+      const T = `r14-${theme[0]}`, [ctx, p] = await ctxOf({ theme, extra: L14 });
+      await step(p, `${T}-row-menu`, async () => {
+        // (by its place in the list: the tooltip takes a hovered row's title away)
+        const row = side(p).locator("a[data-flip]").first();
+        await row.click({ button: "right" }); await p.waitForTimeout(200);
+        const menu = p.getByRole("menu");
+        ok((await menu.innerText()).includes("Rename") && (await menu.innerText()).includes("Remove from the list"), `the row's menu: ${await menu.innerText()}`);
+        ok(await p.evaluate(() => document.activeElement?.getAttribute("role")) === "menuitem", "focus is not on the menu's first item");
+        await p.screenshot({ path: `${OUT}/${T}-row-menu-open.png` });
+        await p.keyboard.press("Escape"); await p.waitForTimeout(150); ok(!(await menu.count()), "Esc left the menu open");
+        // by the keyboard: Shift+F10 on the focused row, the arrows, Esc, and the focus back on the row
+        await row.focus(); await p.keyboard.press("Shift+F10"); await p.waitForTimeout(200); ok(await menu.count(), "Shift+F10 opened no menu");
+        await p.keyboard.press("ArrowDown"); ok(/Remove/.test(await p.evaluate(() => document.activeElement?.textContent ?? "")), "ArrowDown did not move");
+        await p.keyboard.press("Escape"); await p.waitForTimeout(150);
+        ok(await row.evaluate((r) => document.activeElement === r), "the focus did not come back to the row");
+      });
+      await step(p, `${T}-project-menu`, async () => {
+        await side(p).locator("button[title^='/']").first().click({ button: "right" }); await p.waitForTimeout(200);
+        const t = await p.getByRole("menu").innerText();
+        ok(t.includes("New chat here") && t.includes("Copy path"), `the project's menu: ${t}`);
+      });
+      await esc(p);
+      await step(p, `${T}-open-in`, async () => {
+        await open(p, "Fix the flaky retry test");
+        await p.locator("main > header button").filter({ hasText: "Open in" }).click(); await p.waitForTimeout(200);
+        const items = await p.getByRole("menu").locator("[role=menuitem], [role=separator]").evaluateAll((es) => es.map((e) => e.getAttribute("role") === "separator" ? "|" : e.textContent));
+        ok(items.join(",") === "File manager,Terminal,|,VS Code,Zed", `Open in: ${items}`);
+        await p.screenshot({ path: `${OUT}/${T}-open-in-menu.png` });
+        await p.getByRole("menuitem", { name: "Zed" }).click(); await p.waitForTimeout(100);
+        ok(JSON.stringify(await p.evaluate(() => window.__opened)) === '["/Users/x/api-gateway","zed"]', `opened ${JSON.stringify(await p.evaluate(() => window.__opened))}`);
+      });
+      await step(p, `${T}-undone`, async () => {
+        await p.evaluate(() => window.__again((v) => ({ ...v, changes: (v.changes ?? []).map((c) => ({ ...c, undone: true, can_undo: false })) })));
+        await p.waitForTimeout(200);
+        const card = p.locator("[data-msg] .rounded-lg.border.bg-card").filter({ hasText: "changed in this turn" }).first();
+        await card.scrollIntoViewIfNeeded();
+        ok((await card.innerText()).includes("Undone") && (await card.getByRole("button", { name: "Diff" }).evaluateAll((bs) => bs.every((b) => b.disabled))), `the undone card: ${await card.innerText()}`);
+        await card.screenshot({ path: `${OUT}/${T}-undone-card.png` });
+      });
+      await step(p, `${T}-best-of-checks`, async () => {
+        await p.keyboard.press("Control+k"); await p.keyboard.type("several"); await p.keyboard.press("Enter"); await p.waitForTimeout(500);
+        const rows = p.getByRole("dialog", { name: "Try on several models" }).getByRole("checkbox");
+        ok(await rows.first().getAttribute("tabindex") === "0", "a check row is no Tab stop");
+        await rows.first().focus(); await p.keyboard.press("Space"); await rows.nth(1).focus(); await p.keyboard.press("Space");
+        const on = await rows.evaluateAll((r) => r.map((x) => x.getAttribute("aria-checked")));
+        ok(on[0] === "true" && on[1] === "true" && on.slice(2).every((x) => x === "false"), `the checks: ${on}`);
+      });
+      await esc(p);
+      await step(p, `${T}-retry-countdown`, async () => {
+        await open(p, "Names for a grey cat");
+        await p.evaluate(() => window.__again((v) => ({ ...v, activity: "Waiting", blocks: [...v.blocks, { kind: "prompt", text: "fail please" },
+          { kind: "notice", text: "the provider is rate limiting this model: 2 tries failed, trying again (HTTP 429: busy)", error: false, retry_at: Date.now() + 12_000, tries: 2 }] })));
+        await p.waitForTimeout(300);
+        const st = await p.getByRole("status").allInnerTexts(), all = st.join(" | ").replace(/\s+/g, " ");
+        ok(/The provider is rate limiting this model.*2 tries failed.*next try in 1\d s.*Stop.*Change model/.test(all) && /waiting to retry.*next try in 1\d s/.test(all), `the retry: ${all}`);
+        await p.screenshot({ path: `${OUT}/${T}-retry-countdown.png` });
+      });
+      await step(p, `${T}-held-below-status`, async () => {
+        await p.getByRole("status").last().evaluate((e) => { e.dataset.seen = "1"; });
+        await p.evaluate(() => window.__again((v) => ({ ...v, blocks: [...v.blocks, { kind: "prompt", text: "and then this", queued: true }] })));
+        await p.waitForTimeout(300);
+        const live = p.locator("[role=status][data-seen]"), held = p.locator("[data-msg]").filter({ hasText: "and then this" });
+        ok(await live.count() === 1, "the live status was drawn again when a message was held (its mark started over)");
+        ok((await held.innerText()).includes("Queued"), "the held message is not shown queued");
+        ok((await live.boundingBox()).y < (await held.boundingBox()).y, "the live status sits under the held message");
+        await p.screenshot({ path: `${OUT}/${T}-held-below-status.png` });
+      });
+      await ctx.close();
+      const [c2, q] = await ctxOf({ theme });
+      await step(q, `${T}-picker-current`, async () => {
+        await q.locator("button[aria-haspopup=dialog]").filter({ hasText: "Opus" }).first().click(); await q.waitForTimeout(600);
+        const heads = await q.locator("input[aria-label='Search models and providers']").locator("xpath=ancestor::div[contains(@class,'tz-pop')]").locator("div.font-medium").allInnerTexts();
+        ok(/^Current/.test(heads[0] ?? ""), `the picker's first group: ${heads.slice(0, 3)}`);
+      });
+      await c2.close();
+    }
+    if (process.env.ONLY === "r14") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok"); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
+  }
   const rows = [];
   for (const [mac, theme, w, h] of [true, false].flatMap((mac) => ["dark", "light"].flatMap((theme) => (mac ? [[1440, 900], [1280, 800], [960, 600], [760, 640]] : [[1440, 900], [960, 600]]).map(([w, h]) => [mac, theme, w, h])))) {
     const [ctx, p] = await ctxOf({ theme, w, h, mac }), N = `rows-${mac ? "mac" : "linux"}-${theme[0]}-${w}`;
@@ -495,7 +584,9 @@ const log = [];
     await step(p, "d-send-no-provider", async () => {
       await p.getByRole("textbox", { name: "Message" }).fill("  Hello\nWorld  ");
       await p.getByTitle("Send (Enter)").click();
-      await p.getByRole("alert").filter({ hasText: "starting claude (is it installed and on PATH?)" }).waitFor({ state: "visible", timeout: 4000 });
+      // design review 14: the refusal in words, not the core's raw text
+      await p.getByRole("alert").filter({ hasText: "Claude Code isn't installed." }).waitFor({ state: "visible", timeout: 4000 });
+      if (await p.getByRole("alert").getByText(/starting claude/).count()) throw new Error("the refusal's raw text is on screen");
       await p.waitForFunction(() => document.querySelector('textarea[aria-label="Message"]')?.value === "  Hello\nWorld  ", null, { timeout: 4000 });
     });
     await step(p, "d-send-rejected-attachments", async () => {
@@ -857,7 +948,7 @@ const log = [];
   // it; after a message that goes, nothing of it at the top either; an error of the core's that is no refused send (a
   // command's reply) stays a row, as before
   { const [ctx, p] = await ctxOf({ extra: "window.__NO_CLAUDE__ = true;" + LAST });
-    const box = p.getByRole("textbox", { name: "Message" }), alert = () => p.getByRole("alert").filter({ hasText: "starting claude" });
+    const box = p.getByRole("textbox", { name: "Message" }), alert = () => p.getByRole("alert").filter({ hasText: "Claude Code isn't installed." });
     await step(p, "d-send-refused-conversation", async () => {
       await open(p, "Names for a grey cat"); await box.fill("write me a haiku about rain"); await p.getByTitle("Send (Enter)").click();
       await alert().waitFor({ state: "visible", timeout: 4000 });
@@ -865,6 +956,9 @@ const log = [];
       must(!(await p.locator("[data-msg]").getByText(/starting claude/).count()), "the error is a row of the conversation");
       await p.evaluate(() => window.__again((v) => ({ ...v, mode: "plan", blocks: [...v.blocks, { kind: "notice", text: "mode: plan", error: false }] })));
       await p.waitForTimeout(200); must(!!(await alert().count()), "a mode's notice took the error away");
+      // ...and another model does (design review 14: it stood after another model was picked)
+      await p.evaluate(() => window.__again((v) => ({ ...v, model: "mock-coder-7b" })));
+      await p.waitForTimeout(200); must(!(await alert().count()), "another model left the refusal standing");
     });
     await step(p, "d-send-after-refused", async () => {
       await p.evaluate(() => { window.__NO_CLAUDE__ = false; window.__DRAFT_SEND_SUCCESS__ = true; });
@@ -896,7 +990,7 @@ const log = [];
     // a new chat: the start page stays, its title and the sidebar do not take the refused words
     await step(p, "d-send-refused-fresh", async () => {
       await box.fill("write me a haiku about rain"); await p.getByTitle("Send (Enter)").click();
-      await p.getByRole("alert").filter({ hasText: "starting claude" }).waitFor({ state: "visible", timeout: 4000 }); await p.waitForTimeout(300);
+      await p.getByRole("alert").filter({ hasText: "Claude Code isn't installed." }).waitFor({ state: "visible", timeout: 4000 }); await p.waitForTimeout(300);
       must((await box.inputValue()) === "write me a haiku about rain", `the box holds "${await box.inputValue()}"`);
       must(!!(await p.getByText("What are we working on?").count()), "the start page went");
       must((await p.locator("main > header").innerText()).includes("New chat"), `the header reads "${await p.locator("main > header").innerText()}"`);
@@ -921,7 +1015,7 @@ const log = [];
     });
     await step(p, "d-send-refused-routed", async () => {
       await open(p, "Names for a grey cat"); await box.fill("write me a haiku about rain"); await p.getByTitle("Send (Enter)").click();
-      await p.getByRole("alert").filter({ hasText: "starting claude" }).waitFor({ state: "visible", timeout: 4000 });
+      await p.getByRole("alert").filter({ hasText: "Claude Code isn't installed." }).waitFor({ state: "visible", timeout: 4000 });
       await p.waitForTimeout(300);
       must((await box.inputValue()) === "write me a haiku about rain", `the box holds "${await box.inputValue()}"`);
       must(!(await p.locator("[data-msg]").getByText("write me a haiku about rain", { exact: true }).count()), "the refused message is still a row");
@@ -959,7 +1053,8 @@ const log = [];
             shimmer: word ? getComputedStyle(word).backgroundImage.slice(0, 15) : "", text: b.innerText.replace(/\s+/g, " ").trim() };
         });
         log.push(`${N}: ${JSON.stringify(seen)}`);
-        must(seen.size === 10 && seen.anim.length === 4, `no 10 px, four-stroke mark at work on the row: ${JSON.stringify(seen)}`);
+        // 16 px, a CSS pixel per cell of its grid (design review 14: at 10 px a grey smudge)
+        must(seen.size === 16 && seen.anim.length === 4, `no 16 px, four-stroke mark at work on the row: ${JSON.stringify(seen)}`);
         if (R) {
           must(seen.anim.every((a) => a === "none") && seen.start.every((c) => c === "none") && seen.guide === "none" && seen.shimmer === "none", "reduced motion did not show the still mark and plain text");
         } else {

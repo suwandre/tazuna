@@ -1,8 +1,9 @@
-import { Check, Search } from "lucide-react";
+import { Check, Columns3, Search } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import type { ModelChoice, Models } from "../lib/tazuna";
 import { matchesWords, modelLabel } from "../lib/types";
 import { Segmented } from "./Controls";
+import { Sep } from "./Sep";
 
 // The model picker over the composer: the terminal's /model catalog, grouped by provider. With nothing typed it lists the
 // models usable now; typing searches all of them, and a row that needs a key or trust says what to do.
@@ -64,13 +65,21 @@ const NO_KEY: Record<string, string> = { "no key": "No key yet · add one in Set
   "plan use not allowed": "Plan use not allowed · allow it in Settings", "model list not loaded": "Its model list has not loaded yet",
   "which key": "Same key as Mistral or Mistral Vibe · say which in Settings" };
 
+/** A row that cannot run, in a few words for its right-hand column: "not installed", never "on your plan" (design review 14). */
+const shortWhy = (why: string) => (/not installed/i.test(why) ? "not installed" : /not signed in/i.test(why) ? "not signed in" : why.split(/[:.·]/)[0].trim());
+
 const CATALOG_STATUS = {
   loading: { label: "Loading model list", detail: "A key is configured. Models will appear when the list is ready.", tone: "bg-live" },
   ready: { label: "Models ready", detail: "", tone: "bg-ok" },
   unavailable: { label: "Model list unavailable", detail: "A key is configured, but the list couldn’t load.", tone: "bg-warn" },
 };
 
-export function ModelPicker({ models, onPick, onClose, onKey, onRefreshModelList, efforts = [], effort, onEffort }: { models: Models | null; onPick: (c: ModelChoice) => void; onClose: () => void;
+export function ModelPicker({ models, current, onPick, onClose, onKey, onRefreshModelList, onBestOf, efforts = [], effort, onEffort }: { models: Models | null; onPick: (c: ModelChoice) => void; onClose: () => void;
+  /** the conversation's model (its id): its row comes first, as "Current", even when it cannot run (the core marks only a
+   * row that can) */
+  current?: string;
+  /** "Try on several models…": the picker's last row, in a project */
+  onBestOf?: () => void;
   /** a row whose provider has no key: Settings on that provider, its key field open */
   onKey?: (provider: string) => void;
   onRefreshModelList?: (provider: string) => void;
@@ -83,18 +92,29 @@ export function ModelPicker({ models, onPick, onClose, onKey, onRefreshModelList
   const search = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const place = usePlace(box, 420, 460);
+  // above the box it opens as tall as the room there and stays so: it grew and shrank from its bottom as you typed, and the
+  // search field went from y 207 to 72 to 318 (design review 14); the list scrolls inside. Below the box its top is fixed
+  // anyway, and it is as tall as what it lists
+  const above = place.side.startsWith("bottom") && place.style.maxHeight != null;
+  // the fade and the room under the last row only while the list scrolls (an empty band under it otherwise)
+  const [scrolls, setScrolls] = useState(false);
+  useLayoutEffect(() => {
+    const el = list.current;
+    if (el) setScrolls(el.scrollHeight - parseFloat(getComputedStyle(el).paddingBottom) > el.clientHeight - 4);
+  });
   // the keyboard through the rows (design review 13: only a click picked): Enter in the search takes the first row that
   // can be taken (a "no key" row opens Settings; nothing typed: the current model stays, the picker shuts), ArrowDown goes
   // to it, the arrows, Home and End between rows, ArrowUp from the first back to the search; Enter or Space on a row is
   // its button's own. Not while an input method composes (its Enter takes the word)
   const keys = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-    const rows = [...(list.current?.querySelectorAll<HTMLButtonElement>("button[data-row]:not(:disabled)") ?? [])];
+    const rows = [...(box.current?.querySelectorAll<HTMLButtonElement>("button[data-row]:not(:disabled)") ?? [])];
     const inSearch = e.target === search.current, i = rows.indexOf(e.target as HTMLButtonElement);
     if (inSearch && e.key === "Enter" && !q.trim()) { e.preventDefault(); onClose(); return; }
     if (!rows.length || (!inSearch && i < 0)) return;
     const go = (n: number) => { e.preventDefault(); const to = n < 0 ? search.current : rows[Math.min(n, rows.length - 1)]; to?.focus({ preventScroll: true }); to?.scrollIntoView({ block: "nearest" }); };
-    if (inSearch && e.key === "Enter") { e.preventDefault(); rows[0].click(); }
+    // (Enter takes a model, never the footer's "Try on several models…")
+    if (inSearch && e.key === "Enter") { e.preventDefault(); rows.find((r) => r.dataset.row !== "footer")?.click(); }
     else if (e.key === "ArrowDown") go(inSearch ? 0 : i + 1);
     else if (e.key === "ArrowUp" && !inSearch) go(i - 1);
     else if (e.key === "Home" && !inSearch) go(0);
@@ -113,18 +133,24 @@ export function ModelPicker({ models, onPick, onClose, onKey, onRefreshModelList
   }, [models?.catalogs]);
   const { groups, hidden } = useMemo(() => {
     const all = models?.choices ?? [], f = q.trim().toLowerCase();
-    const rows = f ? all.filter((c) => matchesWords(f, [modelLabel(c.model), c.label, c.model, c.place, c.provider].join(" "))) : all.filter((c) => !c.why_not);
-    const groups = new Map<string, ModelChoice[]>();
+    // the conversation's own row, first: the one the core marks, else (it marks none that cannot run) its model's, Claude's
+    // where several providers have it
+    const same = () => { const name = modelLabel(current), s = all.filter((c) => c.model === current || modelLabel(c.model) === name); return s.find((c) => c.provider === "Claude") ?? s[0]; };
+    const cur = all.find((c) => c.current) ?? (current ? same() : undefined);
+    const found = (c: ModelChoice) => matchesWords(f, [modelLabel(c.model), c.label, c.model, c.place, c.provider].join(" "));
+    const rows = (f ? all.filter(found) : all.filter((c) => !c.why_not)).filter((c) => c !== cur);
+    const groups = new Map<string, ModelChoice[]>(cur && (!f || found(cur)) ? [["Current", [cur]]] : []);
     for (const c of rows.slice(0, 300)) groups.set(c.provider, [...(groups.get(c.provider) ?? []), c]);
-    return { groups: [...groups], hidden: f ? Math.max(0, rows.length - 300) : all.length - rows.length };
-  }, [models, q]);
+    return { groups: [...groups], hidden: f ? Math.max(0, rows.length - 300) : all.length - rows.length - (cur ? 1 : 0) };
+  }, [models, q, current]);
   // the score column only where a row has one (a "Score" header stood over an empty column, design review 12)
   const scored = groups.some(([, rows]) => rows.some((c) => c.bench));
   const query = q.trim().toLowerCase();
   const catalogs = models?.catalogs?.filter(({ provider, state }) =>
     state !== "ready" || seenPending.has(provider) || (!!query && (matchesWords(query, provider) || groups.some(([name]) => name === provider)))) ?? [];
   return (
-    <div ref={box} style={place.style} onKeyDown={keys} className={`tz-pop absolute ${place.side} left-0 z-10 flex flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer`}>
+    <div ref={box} style={above ? { ...place.style, height: place.style.maxHeight } : place.style} onKeyDown={keys}
+      className={`tz-pop absolute ${place.side} left-0 z-10 flex flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer`}>
       <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2 text-muted">
         <Search size={14} strokeWidth={1.5} />
         <input ref={search} autoFocus aria-label="Search models and providers" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search models and providers" className="min-w-0 flex-1 bg-transparent text-ink outline-none placeholder:text-faint" />
@@ -138,7 +164,7 @@ export function ModelPicker({ models, onPick, onClose, onKey, onRefreshModelList
       {models?.rebuild && <div className="border-b border-line-soft px-3 py-1.5 text-[12px] text-warn">Switching between Claude models: {models.rebuild}</div>}
       {/* scroll room under the sticky column heads and over the bottom fade (22 px; the last row needs the room under it
           too): a row reached by the keyboard is not under either */}
-      <div ref={list} className="tz-scrollfade scroll-pb-6 scroll-pt-7 overflow-auto pb-6!">
+      <div ref={list} className={`scroll-pt-7 overflow-auto ${above ? "min-h-0 flex-1" : ""} ${scrolls ? "tz-scrollfade scroll-pb-6 pb-6!" : "pb-1.5"}`}>
         {/* what the numbers on the right are (until desktop 0.1.74 only a hover said: "8.4 (12)", "0.14 / 0.56") */}
         {groups.length > 0 && <div className="sticky top-0 z-[1] flex items-center gap-2 bg-[var(--pop)] px-3 pb-0.5 pt-1.5 text-[11px] text-faint">
           <span className="flex-1" />{scored && <span className="w-[64px] text-right" title="tazuna bench: judge score out of 10 (runs)">Score</span>}
@@ -147,7 +173,7 @@ export function ModelPicker({ models, onPick, onClose, onKey, onRefreshModelList
         {models && query && groups.length === 0 && <div className="px-3 py-2 text-[12.5px] text-muted">No known models match this search.</div>}
         {groups.map(([provider, rows]) => { const caution = models?.cautions?.[provider]; return (
           <div key={provider}>
-            <div className="px-3 pb-0.5 pt-2 text-[11.5px] font-medium text-faint">{provider}</div>
+            <div className="flex items-center px-3 pb-0.5 pt-2 text-[11.5px] font-medium text-faint">{provider === "Current" ? <>Current<Sep />{rows[0].provider}</> : provider}</div>
             {/* its terms once, under its name: in the warning colour only where the account may be at risk or it may refuse tazuna */}
             {caution?.note && <div className={`px-3 pb-0.5 text-[11.5px] ${caution.warn ? "text-warn" : "text-faint"}`}>{caution.note}</div>}
             {rows.map((c) => { const toKey = c.no_key && onKey; return (
@@ -160,10 +186,11 @@ export function ModelPicker({ models, onPick, onClose, onKey, onRefreshModelList
                   <span className={`block truncate ${c.why_not ? "text-faint" : "text-ink"}`} title={c.model}>{modelLabel(c.model)}</span>
                   {/* the group names the provider: a row's second line only says why it cannot run (it repeated "api.mistral.ai") */}
                   {/* no key: the desktop's own way to one (the core's words name the terminal's /login) */}
-                  {c.why_not && <span className="block truncate text-[11.5px] text-faint">{c.no_key ? NO_KEY[c.why_not ?? ""] ?? NO_KEY["no key"] : c.why_not}</span>}
+                  {/* (not installed: said on the right, the install page in its tooltip) */}
+                  {c.why_not && !(!c.no_key && /not installed/i.test(c.why_not)) && <span className="block truncate text-[11.5px] text-faint">{c.no_key ? NO_KEY[c.why_not ?? ""] ?? NO_KEY["no key"] : c.why_not}</span>}
                 </span>
                 {scored && <span className="w-[64px] flex-none whitespace-nowrap text-right text-[11.5px] tabular-nums text-faint" title="tazuna bench: judge score (runs)">{c.bench}</span>}
-                <span className="w-[112px] flex-none whitespace-nowrap text-right text-[11.5px] tabular-nums text-muted" title="$ per million tokens: input / output">{c.price === "plan" ? "on your plan" : price(c.price)}</span>
+                <span className="w-[112px] flex-none whitespace-nowrap text-right text-[11.5px] tabular-nums text-muted" title={c.price === "plan" && c.why_not ? c.why_not : "$ per million tokens: input / output"}>{c.price === "plan" ? (c.why_not ? shortWhy(c.why_not) : "on your plan") : price(c.price)}</span>
               </button>
             ); })}
           </div>
@@ -194,6 +221,10 @@ export function ModelPicker({ models, onPick, onClose, onKey, onRefreshModelList
           })}
         </div>
       )}
+      {/* a row for the arrows too (data-row), and a Tab stop in WebKit */}
+      {onBestOf && <button data-row="footer" tabIndex={0} onClick={onBestOf} title="One task on two to four models, each in a worktree of its own; then you compare"
+        className="flex flex-none items-center gap-2 border-t border-line-soft px-3 py-[7px] text-left text-ink outline-offset-[-2px] hover:bg-hover focus-visible:bg-hover">
+        <span className="w-3.5 flex-none text-muted"><Columns3 size={14} strokeWidth={1.5} /></span>Try on several models…</button>}
     </div>
   );
 }

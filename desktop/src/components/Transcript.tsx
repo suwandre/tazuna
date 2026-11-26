@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState
 import { createPortal } from "react-dom";
 import { Slot } from "../lib/slots";
 import { readableError } from "../lib/fromView";
-import { attachments, IMAGE_FILE, type Change, type Message, type ToolStep } from "../lib/types";
+import { attachments, IMAGE_FILE, usd, usdExact, type Change, type Message, type ToolStep } from "../lib/types";
 import { AnswerSlip, dur, priceSaid, refless, tok } from "./Receipt";
 import { Parts, Sep } from "./Sep";
 import { quietButton } from "./Controls";
@@ -42,9 +42,13 @@ type Props = {
   lastChatReceipt?: number;
   /** an image file an answer names, as a data URL (it fails for a file that is not there) */
   onImage?: (path: string) => Promise<string>;
+  /** Stop, and Stop with the model picker after it: the actions of a call being tried again */
+  onStop?: () => void; onChangeModel?: () => void;
 };
 
 const STATUS: Record<string, string> = { A: "added", D: "deleted", M: "changed" };
+/** A quiet action in a line of text ("Send now", a retry's Stop): words, underlined on hover. */
+const textAction = "rounded px-1 text-muted underline-offset-2 hover:text-ink hover:underline";
 
 /** What a turn changed: each file with its lines added and removed and its diff; undo for the last turn. */
 function ChangeCard({ change, busy, onDiff, onUndo, onReview }: { change: Change; busy?: boolean; onDiff?: Props["onDiff"]; onUndo?: Props["onUndo"]; onReview?: Props["onReview"] }) {
@@ -62,7 +66,8 @@ function ChangeCard({ change, busy, onDiff, onUndo, onReview }: { change: Change
             {f.added > 0 && <span className="text-[12px] font-medium tabular-nums text-ok">+{f.added}</span>}
             {(f.removed ?? 0) > 0 && <span className="text-[12px] font-medium tabular-nums text-bad">−{f.removed}</span>}
           </>}
-          <button disabled={!onDiff} title={!onDiff ? "Diff — available in the desktop app" : undefined} onClick={() => onDiff?.(change.turn, f.path)} className={quietButton}>Diff</button>
+          {/* undone: the files are as they were, so there is no diff to show */}
+          <button disabled={!onDiff || change.undone} title={!onDiff ? "Diff — available in the desktop app" : undefined} onClick={() => onDiff?.(change.turn, f.path)} className={quietButton}>Diff</button>
         </div>
       ))}
       <div className="flex items-center gap-2 px-3 py-[7px] text-[12px] text-muted">
@@ -70,7 +75,7 @@ function ChangeCard({ change, busy, onDiff, onUndo, onReview }: { change: Change
           {change.files.length > 6 && !all && <button onClick={() => setAll(true)} className="ml-2 text-accent-ink">show all</button>}</span>
         {!change.undone && onReview && <button onClick={() => onReview(change.turn)} title="Go through this turn's changes piece by piece"
           className={quietButton}>Review</button>}
-        {change.undone ? <span className="text-faint">undone</span>
+        {change.undone ? <span className="text-faint">Undone</span>
           : change.canUndo && <button disabled={busy || !onUndo} onClick={() => onUndo?.(change.turn)} title={!onUndo ? "Undo — available in the desktop app" : "Put these files back as they were before this turn"}
               className={quietButton}>Undo</button>}
       </div>
@@ -92,6 +97,14 @@ export function Transcript({ messages, activity, jumps = true, ...props }: Props
     lastChatReceipt: messages.reduce((n, m, i) => (m.role === "agent" && m.chat && hasReceipt(m) ? i : n), -1) };
   // a reply with steps says it is working in its fold; the line under the transcript only until the first step
   const folded = !!busy && messages.some((m) => m.role === "agent" && !m.meta && (m.tools?.length ?? 0) > 0);
+  // a call being tried again: the live status says so, with the time to the next try (design review 14)
+  const last = busy ? [...messages].reverse().find((m) => m.role === "agent") : undefined, retry = last?.role === "agent" && last.retrying ? last : undefined;
+  // the live status under its reply, above the messages queued behind it (it sat under them, as if one of them were being
+  // written: design review 14)
+  let queuedFrom = messages.length;
+  while (queuedFrom > 0 && messages[queuedFrom - 1].role === "user" && (messages[queuedFrom - 1] as { queued?: boolean }).queued) queuedFrom--;
+  const working = busy && !folded && activity && doing[activity]
+    ? <Working what={retry ? "waiting to retry" : doing[activity]} since={rest.since} out={rest.out} retryAt={retry?.retryAt} above={queuedFrom < messages.length} /> : null;
   // follow new output while the reader is at the bottom; stay put once they scroll up
   const box = useRef<HTMLElement>(null), stick = useRef(true);
   // a long conversation draws its latest messages; earlier ones on request (a three-day session is ~1,900 blocks)
@@ -131,20 +144,10 @@ export function Transcript({ messages, activity, jumps = true, ...props }: Props
     target?.focus({ preventScroll: true });
     setJump(null);
   }, [jump]);
-  return (
-    <TranscriptCtx.Provider value={rest}>
-    <div className={`tz-doc-edges relative flex min-h-0 flex-1 flex-col ${away ? "away" : ""}`}>
-    <section ref={box} onScroll={(e) => { const el = e.currentTarget, gap = el.scrollHeight - el.scrollTop - el.clientHeight; stick.current = gap < 40; setAway(gap > 240); }}
-      className="tz-col tz-scroller min-h-0 flex-1 overflow-auto pb-9 pt-7 [overflow-anchor:none]">
-      {hidden > 0 && (
-        <div className="mx-auto mb-5 max-w-[756px] px-7">
-          <button onClick={() => { stick.current = false; setLimit((l) => l + 40); }} className={quietButton}>
-            Show {Math.min(40, hidden)} earlier messages <span className="text-faint">({hidden} not shown)</span>
-          </button>
-        </div>
-      )}
-      {messages.slice(hidden).map((m, i, shown) => (
-        <div key={hidden + i} data-msg={hidden + i} tabIndex={-1} className={`group mx-auto mb-[22px] max-w-[756px] scroll-mt-7 px-7 transition-opacity duration-150 ${editFrom != null && shown.slice(0, i + 1).some((x) => x.role === "user" && x.edit?.cp === editFrom) ? "opacity-35" : ""}`}>
+  const shown = messages.slice(hidden), cut = Math.max(0, queuedFrom - hidden);
+  // relative: an older chat answer's receipt shows in the gap under it, taking no room (design review 14)
+  const row = (m: Message, i: number) => (
+        <div key={hidden + i} data-msg={hidden + i} tabIndex={-1} className={`group relative mx-auto mb-[22px] max-w-[756px] scroll-mt-7 px-7 transition-opacity duration-150 ${editFrom != null && shown.slice(0, i + 1).some((x) => x.role === "user" && x.edit?.cp === editFrom) ? "opacity-35" : ""}`}>
           {m.role === "user" ? <Slot name="message.user" props={{ message: m, index: hidden + i }} only /> : m.role === "notice" ? (
             // a model switch that went on in a new session: a quiet divider, the conversation above it is still the one
             <div className="flex items-center gap-3 text-[12px] text-faint"><span aria-hidden="true" className="h-px flex-1 bg-line" />{m.text}<span aria-hidden="true" className="h-px flex-1 bg-line" /></div>
@@ -166,14 +169,30 @@ export function Transcript({ messages, activity, jumps = true, ...props }: Props
                   </span>
                 </div>
               )}
-              {m.tools && m.tools.length > 0 && <WorkFold tools={m.tools} secs={m.meta?.secs} live={!!busy && !m.meta} asking={rest.asking} since={rest.since} out={rest.out} />}
+              {m.tools && m.tools.length > 0 && <WorkFold tools={m.tools} secs={m.meta?.secs} live={!!busy && !m.meta} asking={rest.asking} since={rest.since} out={rest.out} retry={m.retrying ? m.retryAt ?? 0 : undefined} />}
               <div className="prose-answer text-ink">{m.prose.map((p, j) => <Slot key={j} name="message.text" props={{ text: p }} only />)}</div>
               <Slot name="message.after" props={{ message: m, index: hidden + i }} />
             </>
           )}
         </div>
-      ))}
-      {busy && !folded && activity && doing[activity] && <Working what={doing[activity]} since={rest.since} out={rest.out} />}
+  );
+  return (
+    <TranscriptCtx.Provider value={rest}>
+    <div className={`tz-doc-edges relative flex min-h-0 flex-1 flex-col ${away ? "away" : ""}`}>
+    <section ref={box} onScroll={(e) => { const el = e.currentTarget, gap = el.scrollHeight - el.scrollTop - el.clientHeight; stick.current = gap < 40; setAway(gap > 240); }}
+      className="tz-col tz-scroller min-h-0 flex-1 overflow-auto pb-9 pt-7 [overflow-anchor:none]">
+      {hidden > 0 && (
+        <div className="mx-auto mb-5 max-w-[756px] px-7">
+          <button onClick={() => { stick.current = false; setLimit((l) => l + 40); }} className={quietButton}>
+            Show {Math.min(40, hidden)} earlier messages <span className="text-faint">({hidden} not shown)</span>
+          </button>
+        </div>
+      )}
+      {/* the messages, the live status, then the messages queued behind the reply: the status stays in one place in the tree
+          (a queued message remounted it, and its mark started again) */}
+      {shown.slice(0, cut).map((m, j) => row(m, j))}
+      {working}
+      {shown.slice(cut).map((m, j) => row(m, cut + j))}
     </section>
       {/* over the scroller, not in it: the transcript's own fade is under the button (in it, the fade took the button
           too; before the fade it sat on a message's words, "public API s↓ame", design review 9) */}
@@ -241,7 +260,9 @@ function useFold(shown: boolean, set: (open: boolean) => void) {
 
 /** A reply's steps as one line, "Worked 41 s · read 2 files, ran 3 commands ›": open while the reply runs, folded once it
  * is done (a click keeps it as chosen). Until desktop 0.1.64 each step was a line of its own above every answer. */
-function WorkFold({ tools, secs, live, asking, since, out }: { tools: ToolStep[]; secs?: number; live: boolean; asking?: boolean; since?: number; out?: number }) {
+function WorkFold({ tools, secs, live, asking, since, out, retry }: { tools: ToolStep[]; secs?: number; live: boolean; asking?: boolean; since?: number; out?: number;
+  /** a call being tried again: when the next try is (epoch ms; 0 where the core does not say) */
+  retry?: number }) {
   const [open, setOpen] = useState<boolean | null>(null);
   const shown = open ?? live;
   const what = workSummary(tools);
@@ -252,13 +273,16 @@ function WorkFold({ tools, secs, live, asking, since, out }: { tools: ToolStep[]
   const [body, toggle] = useFold(shown, setOpen);
   return (
     <div className="mb-2.5">
+      {/* no gap between the parts: each hairline has the same room on both sides (design review 14: 12 px before it, 6 after) */}
       <button onClick={toggle} aria-expanded={shown} title={shown ? "Fold the steps" : "Show each step"}
-        className="-ml-1.5 inline-flex max-w-full items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left text-[12.5px] text-muted hover:bg-hover hover:text-ink">
-        <ChevronRight size={13} strokeWidth={1.5} className={`flex-none transition-transform duration-150 ${shown ? "rotate-90" : ""}`} />
+        className="-ml-1.5 inline-flex max-w-full items-center rounded-md px-1.5 py-0.5 text-left text-[12.5px] text-muted hover:bg-hover hover:text-ink">
+        <ChevronRight size={13} strokeWidth={1.5} className={`mr-1.5 flex-none transition-transform duration-150 ${shown ? "rotate-90" : ""}`} />
         {/* the mark at work where the spinning ring was, "Working" under a slow shimmer, and its tokens so far (design review
             13, D1 of mockups/v10.html); with reduced motion the mark is drawn whole and the words plain */}
-        {live && !asking && <Mark size={MARK_AT_WORK} motion="write" />}
-        <span className={`flex-none ${live && asking ? "font-medium text-warn" : ""}`}>{live ? (asking ? "Waiting for you" : <><span className="tz-shimmer font-medium">Working</span>{since && <> <Ticking since={since} /></>}</>) : `Worked${took}`}</span>
+        {live && !asking && <span className="mr-1.5 flex flex-none"><Mark size={MARK_AT_WORK} motion="write" /></span>}
+        <span className={`flex-none ${live && asking ? "font-medium text-warn" : ""}`}>{live ? (asking ? "Waiting for you"
+          : retry != null ? <><span className="tz-shimmer font-medium">Waiting to retry</span>{retry > 0 && <> <span className="tabular-nums"><Countdown at={retry} /></span></>}</>
+          : <><span className="tz-shimmer font-medium">Working</span>{since && <> <Ticking since={since} /></>}</>) : `Worked${took}`}</span>
         {live && !asking && !!out && <span className="flex flex-none items-center text-faint"><Sep />↓ {tok(out)} tokens</span>}
         {what && <span className="flex min-w-0 items-center truncate text-faint"><Sep />{what}</span>}
         {failed > 0 && <span className="flex flex-none items-center text-bad"><Sep />{failed} failed</span>}
@@ -273,20 +297,34 @@ function WorkFold({ tools, secs, live, asking, since, out }: { tools: ToolStep[]
   );
 }
 
-/** The working mark's tile on a 12.5 px line (18.75 px high): 10 px, as a 20 px tile would not fit it. */
-const MARK_AT_WORK = 10;
+/** The working mark's tile on a 12.5 px line (18.75 px high): 16 px, a CSS pixel for each cell of its 16-cell grid (at 10 px
+ * it read as a grey smudge, design review 14; a 20 px tile would not fit the line). */
+const MARK_AT_WORK = 16;
 
 /** Under a reply that is still going: the mark at work, what it is doing with dots that count, how long the reply has run
  * (it stays mounted from the reply's start to its end) and its tokens so far. */
-function Working({ what, since, out }: { what: string; since?: number; out?: number }) {
-  const [start] = useState(() => since ?? Date.now());
+function Working({ what, since, out, retryAt, above }: { what: string; since?: number; out?: number;
+  /** a call being tried again: the next try (epoch ms), counted down in place of the time */
+  retryAt?: number;
+  /** messages queued behind the reply follow it */
+  above?: boolean }) {
+  // the reply's own start where App knows it (it leaves out the time a question waited for you); else when this mounted
+  const [mounted] = useState(Date.now), start = since ?? mounted;
   return (
-    <div role="status" className="mx-auto flex max-w-[756px] items-center gap-2 px-7 text-[12.5px] text-muted">
+    <div role="status" className={`mx-auto flex max-w-[756px] items-center gap-2 px-7 text-[12.5px] text-muted ${above ? "mb-[22px]" : ""}`}>
       <Mark size={MARK_AT_WORK} motion="write" />
       <span className="tz-shimmer font-medium">{what}</span><span className="tz-dots -ml-2" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>
-      <span className="tabular-nums text-faint"><Ticking since={start} />{!!out && <><Sep />↓ {tok(out)} tokens</>}</span>
+      <span className="tabular-nums text-faint">{retryAt ? <Countdown at={retryAt} /> : <Ticking since={start} />}{!!out && <><Sep />↓ {tok(out)} tokens</>}</span>
     </div>
   );
+}
+
+/** "next try in 12 s" until `at` (epoch ms), counting; "trying again" once it is past. */
+function Countdown({ at }: { at: number }) {
+  const [, tick] = useState(0);
+  useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(t); }, []);
+  const left = Math.ceil((at - Date.now()) / 1000);
+  return <>{left > 0 ? `next try in ${dur(left)}` : "trying again"}</>;
 }
 
 /** The seconds since `since`, counting. */
@@ -328,7 +366,7 @@ export function UserMessage({ message: m }: { message: Message }) {
       </div>
       {m.queued && <div className="mt-1 flex items-center gap-2 text-[11.5px] text-faint">Queued: goes after this reply
         {m.held && onSendNow && <button onClick={() => onSendNow(m.text)} title="Stop the reply and send this message now (a command still running stops too)"
-          className="rounded px-1 text-muted underline-offset-2 hover:text-ink hover:underline">Send now</button>}</div>}
+          className={textAction}>Send now</button>}</div>}
     </>
   );
 }
@@ -374,16 +412,20 @@ function Attachments({ files }: { files: string[] }) {
 /** Why a reply ended without its answer: the provider's error in words, its reply as it came on request, and Retry; a
  * reply you stopped says only that. Until desktop 0.1.74 the error was its raw JSON in the answer's font, after a "⚠". */
 export function MessageFailure({ message: m, index }: { message: Message; index?: number }) {
-  const { busy, onRetry, lastReply } = useTranscript();
+  const { busy, onRetry, lastReply, onStop, onChangeModel } = useTranscript();
   const [raw, setRaw] = useState(false);
   if (m.role !== "agent") return null;
   const notes = (m.notes ?? []).filter((n) => n !== m.failure?.raw);
   const f = m.failure, r = m.retrying?.match(/^([\s\S]*?): (\d+ (?:try|tries) failed)(, trying again)?/);
   return <>
-    {/* a call being tried again, while it is: "the provider is rate limiting this model | 2 tries failed | trying again" */}
+    {/* a call being tried again, while it is: "The provider is rate limiting this model | 2 tries failed | next try in 12 s",
+        then Stop and Change model (design review 14); without the core's time, "trying again" */}
     {/* (no spinner of its own: the reply's one live status is under it) */}
     {m.retrying && <div role="status" className="mt-1 flex items-center gap-2 text-[12.5px] text-muted"><RotateCcw size={12} strokeWidth={1.75} className="flex-none text-faint" aria-hidden="true" />
-      <Parts items={r ? [r[1], r[2], r[3] && "trying again"] : [readableError(m.retrying)]} /></div>}
+      <Parts className="min-w-0" items={r ? [readableError(r[1]), r[2], m.retryAt ? <Countdown at={m.retryAt} /> : r[3] && "trying again"] : [readableError(m.retrying)]} />
+      {busy && index === lastReply && onStop && <span className="ml-1 flex flex-none items-center gap-1">
+        <button onClick={onStop} title="Stop the reply (Esc)" className={textAction}>Stop</button>
+        {onChangeModel && <button onClick={onChangeModel} title="Stop the reply and choose another model" className={textAction}>Change model</button>}</span>}</div>}
     {m.info?.map((n, i) => <div key={`i${i}`} className="mt-1 flex items-start gap-2 text-[12.5px] text-muted"><Info size={14} strokeWidth={1.5} className="mt-0.5 flex-none" />{n}</div>)}
     {notes.map((n, i) => <div key={i} className="mb-2 flex items-start gap-2 text-[12.5px] text-bad"><CircleAlert size={14} strokeWidth={1.5} className="mt-0.5 flex-none" />{readableError(n)}</div>)}
     {f && !f.text && <div className="mt-1 flex items-center gap-1.5 text-[12.5px] text-muted"><Square size={11} strokeWidth={2} className="fill-current text-warn" />Stopped</div>}
@@ -392,7 +434,7 @@ export function MessageFailure({ message: m, index }: { message: Message; index?
         <div className="flex items-start gap-2.5">
           <CircleAlert size={16} strokeWidth={1.5} className="mt-px flex-none text-bad" />
           <div className="min-w-0 flex-1">
-            <div className="font-medium text-ink">{f.stopped ? "Stopped after an error from the provider" : "The provider could not answer"}</div>
+            <div className="font-medium text-ink">{f.stopped ? (f.retrying ? "Stopped while retrying" : "Stopped after an error from the provider") : "The provider could not answer"}</div>
             <div className="mt-0.5 text-ink-2">{inlineCode(f.text)}</div>
             {f.raw && f.raw !== f.text && <button onClick={() => setRaw(!raw)} aria-expanded={raw} className="mt-1 text-[12px] text-muted hover:text-ink">{raw ? "Hide" : "Show"} its reply <ChevronRight size={12} strokeWidth={1.5} aria-hidden="true" className={`inline-block align-[-1px] transition-transform duration-150 ${raw ? "rotate-90" : ""}`} /></button>}
             {raw && <pre className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-field px-2.5 py-2 font-mono text-[11.5px] text-muted">{f.raw}</pre>}
@@ -473,9 +515,11 @@ export function MessageMeta({ message: m, index }: { message: Message; index?: n
     // the answer's receipt: one faint line, always there (design review 11, variant A of mockups/v8.html; until then its
     // numbers showed on the answer's hover only), a click unfolds every model call and what it cost. Copy stays on hover
     // and on the keyboard's focus.
-    <div ref={line} className={`mt-2 scroll-mb-3 text-[12px] tabular-nums text-faint ${quiet ? "opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100" : ""}`}>
+    // a hidden one takes no room: it lies in the gap under the answer and shows there, nothing moving (it kept its row, and
+    // the space over the next message was 54 px, not 22: design review 14)
+    <div ref={line} className={`scroll-mb-3 text-[12px] tabular-nums text-faint ${quiet ? "absolute inset-x-7 top-full opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100" : "mt-2"}`}>
       <div className="flex items-center">
-        <button onClick={toggle} aria-expanded={open} title="The receipt: every model call of this reply and what it cost"
+        <button onClick={toggle} aria-expanded={open} title={`The receipt: every model call of this reply and what it cost${a.cost != null && usd(a.cost) !== usdExact(a.cost) ? ` (${usdExact(a.cost)})` : ""}`}
           className="-ml-1.5 inline-flex min-w-0 items-center rounded-md px-1.5 py-0.5 hover:bg-hover hover:text-ink-2">
           <ChevronRight size={12} strokeWidth={1.5} aria-hidden="true" className={`mr-1.5 flex-none transition-transform duration-150 ${open ? "rotate-90" : ""}`} />
           {/* a plan without a reference price: no "$0" (the user, 2026-11-25) */}

@@ -4,7 +4,7 @@ import { Slot } from "../lib/slots";
 import { tokens, widgetUrl, type UserWidget } from "../lib/widgets";
 import { OPEN_PR, checksOf, type Pr } from "../lib/pr";
 import type { View } from "../lib/tazuna";
-import type { ChangedFile, Message, Usage } from "../lib/types";
+import { tenths, type ChangedFile, type Message, type Usage } from "../lib/types";
 import { Counts, Sep } from "./Sep";
 import { quietButton } from "./Controls";
 
@@ -102,7 +102,7 @@ export function ChecksSection() {
             : c.ok == null ? <LoaderCircle size={14} strokeWidth={1.75} className="flex-none animate-spin text-live" />
             : c.ok ? <Check size={14} strokeWidth={1.75} className="flex-none text-ok" /> : <X size={14} strokeWidth={1.75} className="flex-none text-bad" />}
           <span className="min-w-0 flex-1 truncate">{c.none ?? (c.ok == null ? "Running" : c.ok ? "Passed" : "Failed")}{i > 0 ? (c.none ? " earlier" : " before") : ""}</span>
-          <span className="text-[12px] tabular-nums text-faint">{c.secs.toFixed(1)} s</span>
+          <span className="text-[12px] tabular-nums text-faint">{tenths(c.secs)}</span>
         </div>
       ))}
     </Section>

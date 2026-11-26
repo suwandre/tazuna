@@ -4,7 +4,7 @@ import { useDialog } from "../lib/dialog";
 import type { ModelChoice, View } from "../lib/tazuna";
 import { modelLabel, usd } from "../lib/types";
 import { Counts, Parts, Sep } from "./Sep";
-import { accentButton, dialogShell, quietButton } from "./Controls";
+import { CheckRow, accentButton, dialogShell, quietButton } from "./Controls";
 import { dur } from "./Receipt";
 
 // Best-of-N (docs/DESKTOP.md 1.1): one task on several models, each in a worktree of its own, compared on cost, time,
@@ -44,18 +44,20 @@ export function BestOfStart({ choices, onStart, onClose }: { choices: ModelChoic
           <textarea autoFocus value={task} onChange={(e) => setTask(e.target.value)} rows={3} aria-label="Task" placeholder="The task, as you would send it"
             className="w-full resize-none rounded-md border border-line bg-field px-2.5 py-2 text-ink outline-none focus:border-accent placeholder:text-faint" />
           <div className="mb-1.5 mt-3 text-[11.5px] font-medium text-faint">Models: two to four</div>
+          {/* the app's own check rows, not the browser's boxes (design review 14) */}
+          <div className="-mx-2">
           {usable.map((c) => {
             const on = picked.includes(id(c));
             return (
-              <label key={id(c)} className="flex items-center gap-2 py-1">
-                <input type="checkbox" checked={on} disabled={!on && picked.length >= 4}
-                  onChange={() => setPicked((p) => (on ? p.filter((x) => x !== id(c)) : [...p, id(c)]))} />
-                <span className="text-ink" title={c.model}>{modelLabel(c.model)}</span><Parts className="text-[12px] text-muted" items={[c.place, c.price]} />
-              </label>
+              <CheckRow key={id(c)} on={on} disabled={!on && picked.length >= 4} onChange={() => setPicked((p) => (on ? p.filter((x) => x !== id(c)) : [...p, id(c)]))}>
+                <span className="text-ink" title={c.model}>{modelLabel(c.model)}</span><Parts className="min-w-0 truncate text-[12px] text-muted" items={[c.place, c.price]} />
+              </CheckRow>
             );
           })}
-          <div className="mt-3 text-[12px] text-muted">Each lane gets a worktree of its own (a branch and folder; the setup script does not run) and the same
-            message, in auto mode: the agent works without asking, inside its worktree, but asks before a destructive command. Each lane bills as its model does.</div>
+          </div>
+          {/* one line; the rest (no setup script, auto mode, each billed as its model) in its tooltip */}
+          <div className="mt-3 text-[12px] text-muted" title="Each lane gets a branch and folder of its own (the setup script does not run) and the same message, in auto mode: the agent works without asking inside its worktree, but asks before a destructive command. Each lane bills as its model does.">
+            Each model works in its own worktree; then you compare.</div>
         </div>
         <div className="flex justify-end gap-2 border-t border-line-soft px-5 py-3">
           <button onClick={onClose} className={quietButton}>Cancel</button>

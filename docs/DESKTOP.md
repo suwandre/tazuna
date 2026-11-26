@@ -722,6 +722,22 @@ separate strokes that a running reply writes in order on its Working row, the si
 runs. Paper on warm ink like the rest of the app, and centred on its tile (it came in cool graphite and 32 px left of the
 middle). The receipt keeps each call's timing on its own row (#58, #59).
 
+0.1.129 (with tazuna 0.1.228), design review 14's fixes (a user-level pass on the real core with a new user who has no
+Claude, plus an anti-AI-slop round; the visual proposals wait in mockups/v12.html for the user's pick):
+- A send refused because the model cannot run says so in words ("Claude Code isn't installed.", Install page, Choose
+  another model) and goes once the model changes; the core now starts a new user on a model that can run.
+- Retries: "waiting to retry · next try in 12 s" from the core's retry_at, with Stop and Change model on the retry line;
+  a stop during retries reads "Stopped while retrying"; error codes behind the raw reply.
+- A chat's hidden receipts take no room (the gap above a follow-up message was 54-66 px); costs in compact places by one
+  rule ("<$0.001", never "$0.000019"); "<0.1 s", never "0.0 s"; one Total on the slip, as wide as the column.
+- The model picker keeps its search field still while you type and shows the current model first, with why it cannot
+  run; best-of and worktrees are reachable from the picker and the where menu, not only the palette.
+- A right-click menu on conversations and projects; "Open in" (Finder, Terminal, installed editors) for a project, every
+  program by absolute path with a PATH of absolute entries (a security review found binary planting in the first draft).
+- The live status sits under its reply, above queued messages, and pauses while a question waits for you; the core's
+  held messages show as queued; "Changes" without a 0; a short cut-off title shows whole; Undo greys its diffs; the
+  working mark at 16 px; Usage and Settings copy true to a new user's state; palette ranks names above hints.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

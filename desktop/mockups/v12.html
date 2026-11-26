@@ -1,0 +1,759 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>tazuna · design review 14 prototype (v12): less machine-made</title>
+<!-- Design review 14 (2026-11-26). Theme: take out the looks that read as machine-made, or as one more ChatGPT / Claude.ai /
+     T3 Code clone, and keep what is tazuna's own (paper on the desk, the torn slip, the document transcript, the fold line,
+     plain step verbs, the warn-tinted full-mode pill, the status bar's account names, the 手 mark).
+     Nine switches, each the app as it is ("current", drawn after the r14 screenshots at 1440×900) or the proposal; the
+     panel at the bottom right sets them, the screen, the theme, and "all current" / "all proposed". A fourth screen shows
+     the terminal before and after. The window is drawn from DESIGN.md's tokens and the bundled fonts. Not the app.
+
+     A link opens a state: v12.html#screen=done&theme=light&s5=new&slip=1 (shot=1: the window alone at 1440×900, for
+     screenshots; the clock stands still). Screens: start, startp, done, run, panel (calls=2|12), term.
+
+     Numbers: one turn on DeepSeek V4.1 Flash (DeepSeek, paid, $0.30 in / $0.03 cached / $1.20 out per million, a 128k
+     window), every figure computed from its calls, so the receipt, the slip, the meter and Stats agree on each screen. The
+     brief's "$0.031" cannot come from 15.0k in and 800 out at those prices ($0.0042), so the turn is drawn as a real agent's:
+     ~19k of context a call, most of it from DeepSeek's cache. Finished: "$0.0053 | 98.2k in (95% cached) | 800 out | 34 s".
+     Running, at 12 s (four calls done, the answer being written): "19.9k of 128k · $0.0038 · 94% cached · 28 t/s · ↓ 156".
+     Screen 5's "2 calls" and "12 calls" are the same turn made in 2 calls (its four tools asked for at once) and in 12.
+
+     Choices the brief left open: S3 on also takes "context" off the status bar (the meter has it: each number once); the
+     start page keeps the "→ … about $0.0004 a message" line under the box (no conversation yet, so no meter); S9's one
+     Total is the table's totals row, the payee and "without the cache" on one faint line under it. Interactive only: the
+     pills' hairline on hover (S2), the meter opening Stats and the numbers easing while a reply runs (S3, S4), the mark
+     drawing its strokes (S7; screenshots show it whole). The terminal keeps its indigo (S5 is the window's).
+
+     S5, the ai-iro accent (藍色), checked with WCAG 2 contrast (out/review-14/proto/contrast.mjs, all pass):
+       light  accent #1d5f86  accent-ink #174b6b  on-accent #ffffff  accent-soft #e7eced (9% on main)  selected #e0e7e9 (12%)
+       dark   accent #7fb0d0  accent-ink #a3c8e0  on-accent #0e1820  accent-soft #2a2e2d (10%)          selected #2c3031 (12%)
+       live, live-ink, live-soft = accent, accent-ink, accent-soft.
+                              light            dark
+       ink    on accent-soft  13.36  selected 12.72    11.25  selected 10.91
+       ink-2  on accent-soft   9.23  selected  8.79     8.68  selected  8.42
+       muted  on accent-soft   6.03  selected  5.74     5.94  selected  5.76
+       faint  on accent-soft   4.87  selected  4.63     5.10  selected  4.95
+       accent-ink on soft      7.81  selected  7.44     7.79  selected  7.56
+       on-accent on accent     6.92                     7.71
+       accent-ink on main      8.92                     9.32
+       accent on main / desk   6.63 / 5.82 (UI, >= 3)   7.07 / 8.10 -->
+<style>
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Regular.woff2") format("woff2"); font-weight: 400; }
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Medium.woff2") format("woff2"); font-weight: 500; }
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-SemiBold.woff2") format("woff2"); font-weight: 600; }
+@font-face { font-family: "Geist Mono"; src: url("../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2") format("woff2"); font-weight: 100 900; }
+@font-face { font-family: "Source Serif 4"; src: url("../node_modules/@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-normal.woff2") format("woff2"); font-weight: 200 900; }
+/* DESIGN.md's tokens; Indigo is the accent today */
+:root {
+  --main:#fbfaf7; --card:#fffefb; --field:#efebe3; --hover:#e7e3db; --selected:#e6e1f2;
+  --ink:#23221e; --ink-2:#3f3c35; --muted:#5b574f; --faint:#69655d; --line:#e3ded3; --line-soft:#ece8df; --line-strong:#d8d2c5;
+  --accent:#3d4aa8; --accent-ink:#2f3a8f; --accent-soft:#e7e8f6; --on-accent:#ffffff; --live:#3d4aa8; --live-ink:#2f3a8f; --live-soft:#e7e8f6;
+  --ok:#347045; --bad:#aa4236; --warn:#8c5811; --desk:#efebe3; --search:var(--main);
+  --sheet:0 0 0 1px #2321190a, 0 1px 2px #2321190f, 0 8px 28px #2321190d; --composer:0 1px 2px #2321190d, 0 4px 14px #23211908;
+  --ui:"Geist", system-ui, sans-serif; --mono:"Geist Mono", ui-monospace, monospace; --prose:"Source Serif 4", Georgia, serif;
+  --term:ui-monospace, "SF Mono", Menlo, "Hiragino Sans", monospace;
+}
+.dark {
+  --main:#211f1b; --card:#282622; --field:#302e29; --hover:#37342e; --selected:#2b2c45;
+  --ink:#ece8df; --ink-2:#d2cdc2; --muted:#afaa9e; --faint:#a29d95; --line:#35322c; --line-soft:#2b2925; --line-strong:#423e37;
+  --accent:#8f9bf0; --accent-ink:#aab3f5; --accent-soft:#272a44; --on-accent:#14152a; --live:#8f9bf0; --live-ink:#aab3f5; --live-soft:#272a44;
+  --ok:#7cc08f; --bad:#e08b7f; --warn:#e0b46a; --desk:#121110; --search:color-mix(in srgb, var(--field) 70%, var(--desk));
+  --sheet:0 0 0 1px #ffffff14, 0 1px 2px #00000080, 0 12px 34px #00000066; --composer:none;
+}
+/* S5 proposed: ai-iro (values and their contrast in the header comment) */
+.acc-ai { --accent:#1d5f86; --accent-ink:#174b6b; --accent-soft:#e7eced; --selected:#e0e7e9; --on-accent:#ffffff; --live:#1d5f86; --live-ink:#174b6b; --live-soft:#e7eced; }
+.dark.acc-ai { --accent:#7fb0d0; --accent-ink:#a3c8e0; --accent-soft:#2a2e2d; --selected:#2c3031; --on-accent:#0e1820; --live:#7fb0d0; --live-ink:#a3c8e0; --live-soft:#2a2e2d; }
+/* S6 proposed: the system's UI face; prose stays Source Serif 4, mono Geist Mono */
+.ui-sys { --ui:-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body { font: 13.5px/1.5 var(--ui); color: var(--ink); background: #0d0d0c; overflow: hidden; -webkit-font-smoothing: antialiased; }
+body.light { background: #d9d5cc; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: default; text-align: left; }
+.mono { font-family: var(--mono); font-size: 12.5px; }
+.faint { color: var(--faint); } .muted { color: var(--muted); } .ok { color: var(--ok); } .bad { color: var(--bad); } .num { font-variant-numeric: tabular-nums; }
+.hair { display: inline-block; width: 1px; height: .85em; background: var(--line-strong); margin: 0 7px; flex: none; }
+kbd { font: 11px var(--mono); border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; color: var(--faint); }
+.ico { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.ico.s { width: 14px; height: 14px; } .ico.xs { width: 13px; height: 13px; } .ico.xxs { width: 11px; height: 11px; stroke-width: 2; }
+[data-act] { cursor: pointer; }
+
+/* the stage: the window at its real size, scaled to the page beside the switch panel */
+.stage { position: fixed; inset: 0 352px 0 0; }
+body.pmin .stage, body.shot .stage { right: 0; }
+.frame { position: absolute; left: 50%; top: 50%; width: 1440px; height: 900px; transform-origin: center; overflow: hidden; border-radius: 12px; box-shadow: 0 20px 60px #0007; background: var(--desk); }
+body.shot .frame { left: 0; top: 0; transform: none !important; border-radius: 0; box-shadow: none; }
+
+/* ---------- the window: paper on the desk ---------- */
+.win { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--desk); }
+.cols { flex: 1; min-height: 0; display: grid; }
+.side { padding: 0 10px; display: flex; flex-direction: column; min-height: 0; }
+.main { background: var(--main); display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; border-radius: 12px; box-shadow: var(--sheet); overflow: hidden; margin: 8px 8px 0 0; }
+.rail { padding: 15px 16px 16px 10px; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
+
+/* the mark: 手 in four strokes, paper on warm ink (components/Mark.tsx); "write" draws them in turn */
+.mk { display: inline-grid; place-items: center; border-radius: 22%; background: linear-gradient(#2a2824, #1d1c19); color: #ece8df; flex: none; }
+.dark .mk { box-shadow: inset 0 0 0 1px #ffffff29; }
+.mk svg { display: block; }
+.mk .guide { display: none; }
+.mk.write .guide { display: inline; opacity: .2; }
+.mk.write .st > path { transform-box: fill-box; transform-origin: 0 50%; animation: mk-a 2.8s ease-out infinite; }
+.mk.write .st > path:nth-child(2) { animation-name: mk-b; } .mk.write .st > path:nth-child(3) { animation-name: mk-c; }
+.mk.write .st > path:nth-child(4) { transform-origin: 50% 0; animation-name: mk-d; }
+@keyframes mk-a { 0% { transform: scaleX(0); } 12%, 100% { transform: none; } }
+@keyframes mk-b { 0%, 9% { transform: scaleX(0); } 21%, 100% { transform: none; } }
+@keyframes mk-c { 0%, 18% { transform: scaleX(0); } 30%, 100% { transform: none; } }
+@keyframes mk-d { 0%, 27% { transform: scaleY(0); } 39%, 100% { transform: none; } }
+/* the reply's live status today: "Working" under a slow shimmer to live-ink (tz-shimmer) */
+.shim { background: linear-gradient(90deg, var(--muted) 40%, var(--live-ink) 50%, var(--muted) 60%) 0 0 / 250% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shim 1.8s linear infinite; }
+@keyframes shim { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+.spin { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
+.pulse { animation: pulse 1.2s ease-in-out infinite; } @keyframes pulse { 50% { opacity: .35; } }
+body.shot .mk.write .st > path, body.shot .pulse, body.shot .spin { animation: none; }
+body.shot .shim { animation-play-state: paused; animation-delay: -.95s; }
+@media (prefers-reduced-motion: reduce) { .mk.write .st > path, .pulse { animation: none; } .mk.write .guide { display: none; } .shim { background: none; color: inherit; } .spin { animation-duration: 3s; } }
+
+/* sidebar */
+.brand { height: 48px; padding: 8px 0 0 8px; display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 14px; letter-spacing: -.01em; flex: none; }
+.search { display: flex; align-items: center; gap: 9px; height: 37px; margin-top: 8px; border: 1px solid var(--line); background: var(--search); border-radius: 7px; padding: 0 9px; color: var(--muted); flex: none; }
+.search kbd { margin-left: auto; }
+.act { display: flex; align-items: center; gap: 9px; height: 36px; padding: 0 9px; border-radius: 7px; color: var(--ink-2); flex: none; }
+.act.first { margin-top: 5px; }
+.list { flex: 1; overflow: hidden; display: flex; flex-direction: column; gap: 2px; }
+.grp { display: flex; justify-content: space-between; padding: 15px 9px 5px; font-size: 11.5px; font-weight: 500; color: var(--faint); }
+.srow { display: block; padding: 5px 9px; border-radius: 7px; color: var(--ink-2); }
+.srow.on { background: var(--selected); box-shadow: inset 0 0 0 1px var(--accent); color: var(--ink); }
+.srow .t { display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; } .srow .t span { overflow: hidden; text-overflow: ellipsis; }
+.srow .s { display: flex; gap: 6px; font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+.srow .s .age { margin-left: auto; font-variant-numeric: tabular-nums; }
+.settings { border-top: 1px solid var(--line); padding: 6px 0 13px; flex: none; } .settings .act { color: var(--ink-2); }
+
+/* the sheet's header */
+.head { flex: none; height: 41px; display: flex; align-items: center; gap: 8px; padding: 0 16px 0 28px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; min-width: 0; }
+.crumb { color: var(--muted); } .ttl { font-weight: 500; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: .3; }
+.fulltl { font-size: 12px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.hb { margin-left: auto; display: flex; gap: 6px; flex: none; }
+.hb span { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); }
+.hb span.on { background: var(--hover); color: var(--ink); }
+.ptab { position: absolute; right: 0; top: 61px; z-index: 3; display: inline-flex; align-items: center; gap: 6px; background: var(--main); border: 1px solid var(--line); border-right: 0; border-radius: 7px 0 0 7px; padding: 3px 9px 3px 8px; font-size: 12.5px; color: var(--ink-2); background: var(--desk); }
+.ptab b { font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* the transcript */
+.scrollw { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
+.scroll { flex: 1; overflow-y: auto; min-height: 0; scrollbar-width: none; }
+.scroll::-webkit-scrollbar { display: none; }
+.edge { position: absolute; left: 0; right: 0; height: 28px; pointer-events: none; z-index: 2; }
+.edge.t { top: 0; background: linear-gradient(var(--main), transparent); } .edge.b { bottom: 0; background: linear-gradient(transparent, var(--main)); }
+.doc { max-width: 756px; margin: 0 auto; padding: 28px 28px 30px; }
+.you { display: inline-block; max-width: 85%; background: var(--field); border-radius: 10px; padding: 9px 14px; color: var(--ink); line-height: 22px; }
+.queued { margin-top: 22px; }
+.qline { display: flex; gap: 12px; margin-top: 7px; font-size: 11.5px; color: var(--faint); } .qline b { font-weight: 500; color: var(--muted); }
+.fold { margin: 22px 0 10px -6px; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 2px 6px; border-radius: 6px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.fold[data-act="fold"]:hover { background: var(--hover); }
+.fold .ico.xs { transition: transform 150ms; } .fold.open .ico.xs, .rline.open > .ico.xs { transform: rotate(90deg); }
+.fold .cnt { display: flex; align-items: center; color: var(--faint); } .fold .cnt.bad { color: var(--bad); }
+.steps { margin: -4px 0 12px 5px; border-left: 1px solid var(--line); padding: 2px 0 2px 14px; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--muted); }
+.step { display: flex; align-items: center; gap: 8px; min-height: 22px; white-space: nowrap; }
+.step .tg { font: 11.5px var(--mono); color: var(--ink-2); } .step .tm { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.step .slot { width: 14px; flex: none; }
+.said { font-size: 12.5px; color: var(--muted); padding: 1px 0 2px; }
+.prose { font: 15.5px/1.62 var(--prose); color: var(--ink); }
+.prose p { margin: 0 0 10px; } .prose ul { margin: 0 0 10px; padding-left: 22px; } .prose li + li { margin-top: 2px; }
+.prose b { font-weight: 650; }
+.prose code { font: 12.5px var(--mono); background: var(--field); padding: 2px 5px; border-radius: 4px; }
+.cc { border: 1px solid var(--line); border-radius: 8px; background: var(--card); margin: 12px 0 9px; }
+.cc .f { display: flex; align-items: center; gap: 8px; height: 41px; padding: 0 12px 0 12px; border-bottom: 1px solid var(--line-soft); }
+.cc .f .ico { color: var(--faint); } .cc .f .p { font: 12.5px var(--mono); color: var(--ink-2); } .cc .f .st { font-size: 12px; color: var(--faint); }
+.cc .f .n { margin-left: auto; font-size: 12.5px; font-variant-numeric: tabular-nums; display: flex; gap: 6px; }
+.cc .ft { display: flex; align-items: center; gap: 8px; height: 41px; padding: 0 12px; font-size: 12.5px; color: var(--muted); }
+.cc .ft .btn:first-of-type { margin-left: auto; }
+.btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line-strong); border-radius: 7px; height: 26px; padding: 0 9px; font-size: 12.5px; color: var(--ink); background: var(--card); flex: none; }
+.rline { display: inline-flex; align-items: center; font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; padding: 1px 6px; margin-left: -6px; border-radius: 6px; }
+.rline b { font-weight: 500; color: var(--muted); } .rline > .ico.xs { margin-right: 6px; transition: transform 150ms; } .rline .q { margin-left: 4px; }
+.rline.open { background: var(--hover); }
+.rrow { display: flex; align-items: center; justify-content: space-between; }
+.copy { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--faint); }
+
+/* the receipt: a slip of paper, its lower edge torn (.tz-slip) */
+.slipw { width: 600px; max-width: 100%; margin: 6px 0 14px; filter: drop-shadow(0 0 .5px var(--line-strong)) drop-shadow(0 0 .5px var(--line-strong)) drop-shadow(0 1px 1.5px #2321191f); }
+.slipw.full { width: 100%; }
+.slip { background: var(--card); padding: 12px 16px 21px; border-radius: 6px 6px 0 0; font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; line-height: 1.5;
+  -webkit-mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / 14px 100%; mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / 14px 100%; }
+.slip .sh { display: flex; align-items: center; gap: 8px; } .slip .sh .tt { font-weight: 500; color: var(--ink); } .slip .sh .rgt { margin-left: auto; font-size: 12px; color: var(--faint); }
+.slip .first { font-size: 12px; color: var(--faint); }
+.rt { width: 100%; border-collapse: collapse; margin-top: 8px; }
+.rt th { font-size: 11.5px; font-weight: 500; color: var(--faint); text-align: right; padding: 0 0 5px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.rt th:first-child { text-align: left; padding-left: 0; width: 100%; }
+.rt td { padding: 3px 0 0 12px; white-space: nowrap; text-align: right; } .rt tbody tr:first-child td { padding-top: 6px; }
+.rt td:first-child { text-align: left; padding-left: 0; max-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+.rt .n { display: inline-block; width: 16px; color: var(--faint); } .rt .sh2 { color: var(--faint); font-size: 10.5px; margin-left: 4px; }
+.rt tr.tot td { border-top: 1px solid var(--line); padding-top: 5px; color: var(--ink); font-weight: 500; }
+.rt tr.tot td .med { font-size: 11px; font-weight: 400; color: var(--faint); margin-left: 4px; }
+.dash { border-top: 1px dashed var(--line-strong); margin: 9px 0 7px; }
+.sum { display: flex; justify-content: space-between; padding: 1px 0; } .sum b { font-weight: 600; color: var(--ink); } .sum.q { color: var(--faint); }
+
+/* the composer */
+.foot { flex: none; padding: 10px 28px 22px; }
+.composer { border: 1px solid var(--line-strong); border-radius: 12px; background: var(--card); padding: 12px 12px 8px 16px; box-shadow: var(--composer); white-space: nowrap; }
+.composer.focus { border-color: var(--accent); }
+.composer .ph { color: var(--faint); line-height: 22px; padding: 1px 0 13px; overflow: hidden; text-overflow: ellipsis; }
+.pills { display: flex; gap: 6px; align-items: center; }
+.pill { display: inline-flex; align-items: center; gap: 6px; height: 25px; border: 1px solid var(--line); border-radius: 999px; padding: 0 10px; font-size: 12px; color: var(--ink-2); background: var(--field); white-space: nowrap; flex: none; }
+.pill .dn { width: 13px; height: 13px; color: var(--faint); margin-left: -1px; } .pill .lvl { display: flex; align-items: center; color: var(--faint); }
+.pill .hair { margin: 0 6px 0 3px; }
+.pill.dis { color: var(--muted); }
+.pill.full { border-color: color-mix(in srgb, var(--warn) 55%, var(--line-strong)); background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); }
+.pill.full .dn { color: inherit; }
+/* S2 proposed: words and a chevron; a hairline on hover or focus only */
+.pill.np { background: transparent; border-color: transparent; padding: 0 8px; gap: 5px; }
+.pill.np:hover, .pill.np:focus-visible { border-color: var(--line-strong); }
+.pill.np.full { border-color: color-mix(in srgb, var(--warn) 55%, var(--line-strong)); background: color-mix(in srgb, var(--warn) 12%, transparent); padding: 0 10px; }
+.pill.np:first-child { margin-left: -8px; } .pill.np.full:first-child { margin-left: 0; }
+.clip { width: 28px; height: 28px; display: grid; place-items: center; color: var(--faint); }
+.send { margin-left: auto; width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line); background: var(--field); display: grid; place-items: center; color: var(--faint); flex: none; }
+.send.stop { background: var(--ink); border-color: var(--ink); color: var(--main); }
+.under { margin-top: 6px; padding: 0 4px; display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--faint); min-height: 17px; white-space: nowrap; }
+/* S3 proposed: the meter, right-aligned, faint, tabular */
+.meter { margin-left: auto; font-variant-numeric: tabular-nums; border-radius: 5px; padding: 0 4px; margin-right: -4px; }
+.meter:hover { background: var(--hover); color: var(--muted); }
+
+/* the status bar */
+.sbar { height: 28px; flex: none; display: flex; align-items: center; gap: 16px; padding: 0 14px; font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sbar b { font-weight: 500; color: var(--ink); }
+.sdot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); display: inline-block; margin-right: 7px; }
+.sbar .l { display: flex; align-items: center; gap: 0; } .sbar .sp { flex: 1; }
+
+/* the start page */
+.startw { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; align-items: center; padding: 40px 28px; }
+.startc { margin: auto 0; width: 100%; display: flex; flex-direction: column; align-items: center; padding-bottom: 6vh; }
+.ques { font: 400 27px/1.25 var(--prose); letter-spacing: -.01em; text-align: center; margin-bottom: 6px; color: var(--ink); }
+.ledger { display: flex; align-items: center; font-size: 13px; color: var(--muted); margin-bottom: 12px; padding: 2px 8px; border-radius: 6px; font-variant-numeric: tabular-nums; }
+.ledger b { font-weight: 500; color: var(--ink); margin-right: 4px; } .ledger .tdy { color: var(--faint); margin-right: 10px; }
+.what { font-size: 12.5px; color: var(--muted); margin-bottom: 12px; padding: 2px 0; }
+.cards { margin-top: 12px; width: 100%; max-width: 756px; padding: 0 28px; display: grid; gap: 14px; }
+.cards.two { grid-template-columns: 1fr 1fr; }
+.card { border: 1px solid var(--line); border-radius: 12px; background: var(--card); overflow: hidden; align-self: start; }
+.card .hd { font-size: 11.5px; font-weight: 500; color: var(--muted); padding: 10px 14px 8px; border-bottom: 1px solid var(--line-soft); }
+.card .r { display: flex; align-items: center; gap: 10px; padding: 7px 14px; }
+.card .r + .r { border-top: 1px solid var(--line-soft); }
+.card .r .ico { color: var(--muted); } .card .r .tx { flex: 1; min-width: 0; } .card .r .tx > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .r .tx > span + span { font-size: 11.5px; color: var(--faint); } .card .r .age { font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.keys { margin-top: 20px; display: flex; gap: 16px; font-size: 11.5px; color: var(--faint); } .keys kbd { margin-left: 4px; }
+/* S1 proposed: the day's ledger is the headline; recent conversations are rows on the sheet */
+.hl { font: 400 27px/1.25 var(--prose); letter-spacing: -.01em; text-align: center; color: var(--ink); margin-bottom: 18px; padding: 0 8px; border-radius: 8px; font-variant-numeric: tabular-nums; }
+.hl:hover { background: var(--hover); }
+.branch { margin: -8px 0 16px; font-size: 13px; color: var(--muted); } .branch .mono { color: var(--ink-2); }
+.recent { width: 100%; max-width: 756px; padding: 0 28px; margin-top: 16px; }
+.rec { display: flex; align-items: baseline; gap: 12px; padding: 7px 16px; border-radius: 7px; white-space: nowrap; }
+.rec:hover { background: var(--hover); }
+.rec .t { color: var(--ink); overflow: hidden; text-overflow: ellipsis; min-width: 0; } .rec .p { color: var(--faint); font-size: 12px; flex: none; }
+.rec .a { margin-left: auto; color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; flex: none; padding-left: 12px; }
+
+/* the work panel: sections apart by a rule, on the desk */
+.sec { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.sec:last-child { border-bottom: 0; }
+.sec h4 { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 500; color: var(--ink); height: 26px; margin-bottom: 6px; }
+.sec h4 .n { margin-left: auto; font-weight: 400; font-size: 12.5px; font-variant-numeric: tabular-nums; display: flex; gap: 5px; }
+.sec .fr { display: flex; justify-content: space-between; font-size: 12.5px; padding: 3px 0; color: var(--ink); }
+.sec .fr .n { font-variant-numeric: tabular-nums; display: flex; gap: 5px; }
+.sec .btn { margin-top: 8px; }
+.seg { display: inline-flex; background: var(--field); border: 1px solid var(--line); border-radius: 8px; padding: 2px; gap: 2px; margin-left: auto; font-weight: 400; }
+.seg span { padding: 2px 10px; border-radius: 6px; font-size: 12.5px; color: var(--muted); }
+.seg span.on { background: var(--card); color: var(--ink); box-shadow: 0 0 0 1px var(--line-strong); }
+.livedot { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 400; color: var(--live-ink); }
+.livedot i { width: 6px; height: 6px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 3px var(--live-soft); }
+/* S4 current: tiles and sparkline cards (components/Stats.tsx) */
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.box { border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 9px 11px; }
+.box .l { font-size: 11.5px; color: var(--faint); } .box .v { font-size: 20px; font-weight: 600; line-height: 1.25; letter-spacing: -.02em; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
+.box .s { font-size: 11.5px; color: var(--muted); line-height: 1.4; white-space: nowrap; }
+.bar { height: 6px; border-radius: 3px; background: var(--field); overflow: hidden; margin-top: 7px; } .bar i { display: block; height: 100%; background: var(--live); border-radius: 3px; }
+.metric { padding: 9px 11px 7px; margin-bottom: 8px; }
+.metric .top { display: flex; align-items: baseline; gap: 6px; } .metric .top .l { margin-right: auto; }
+.metric .top .v2 { font-size: 15px; font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; } .metric .top .s { font-size: 11.5px; }
+.sparkc { position: relative; height: 34px; margin-top: 4px; } .sparkc svg { position: absolute; inset: 4px; width: calc(100% - 8px); height: 26px; overflow: visible; }
+/* S4 proposed: a slip in spirit, on the desk with no boxes */
+.ledg { margin-top: 2px; }
+.lrow { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; min-height: 29px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--ink-2); }
+.lrow:first-child { border-top: 0; }
+.lrow .q2 { color: var(--faint); margin-left: 6px; } .lrow .v { color: var(--ink); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.lrow .v.zero { color: var(--faint); } .lrow svg { display: block; width: 56px; height: 14px; overflow: visible; }
+
+/* the terminal page */
+.tpage { position: absolute; inset: 0; padding: 18px 36px; background: var(--desk); color: var(--ink); overflow: hidden; }
+.tpage h1 { font: 400 22px/1.2 var(--prose); margin-bottom: 4px; } .tpage .lede { color: var(--muted); font-size: 12.5px; margin-bottom: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tgrid { display: grid; grid-template-columns: auto auto; gap: 7px 28px; justify-content: center; align-items: start; }
+.tgrid .lab { font-size: 11.5px; font-weight: 500; color: var(--faint); margin-bottom: -4px; }
+.tgrid .lab.new { color: var(--accent-ink); }
+.tw { border-radius: 8px; overflow: hidden; box-shadow: 0 0 0 1px #0000002e, 0 6px 18px #00000026; }
+.tw .pad { padding: 7px 12px; }
+.tc { font: 11px/13.5px var(--term); white-space: pre; width: 92ch; }
+.tc .tl { height: 13.5px; display: flex; } .tc .tl > span { white-space: pre; }
+.tc .w2 { display: inline-block; width: 2ch; text-align: center; }
+@keyframes tzsh { 0%, 100% { color: var(--sh-base); } 12% { color: var(--sh-hi); } 24% { color: var(--sh-base); } }
+.tsh > span { animation: tzsh 1.7s steps(1, end) infinite; }
+@keyframes tzmark { 0%, 100% { color: var(--sh-hi); } 50% { color: var(--sh-base); } }
+.tpulse { animation: tzmark 1.7s steps(6, end) infinite; }
+body.shot .tsh > span, body.shot .tpulse { animation: none; }
+
+/* the switch panel */
+.proto { position: fixed; right: 14px; bottom: 14px; z-index: 50; width: 326px; max-height: calc(100vh - 28px); overflow: auto; background: #111; color: #eee; border-radius: 12px; padding: 12px 12px 12px; font: 12px/1.45 system-ui, sans-serif; box-shadow: 0 10px 30px #0008; }
+body.shot .proto { display: none; }
+.proto h3 { font-size: 12.5px; font-weight: 600; margin-bottom: 8px; color: #fff; padding-right: 20px; }
+.proto b { display: block; font-size: 10.5px; color: #8a8a8a; text-transform: uppercase; letter-spacing: .06em; margin: 10px 0 4px; font-weight: 600; }
+.proto .opts { display: flex; flex-wrap: wrap; gap: 4px; }
+.proto button { background: #2a2a2a; color: #ddd; border-radius: 6px; padding: 3px 8px; font-size: 12px; cursor: pointer; }
+.proto button.on { background: #5b67d8; color: #fff; }
+.proto .sw { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 6px; padding: 4px 0; border-top: 1px solid #222; }
+.proto .sw .nm { color: #ddd; } .proto .sw .nm small { display: block; color: #888; font-size: 11px; line-height: 1.3; }
+.proto .sw .opts button { padding: 2px 7px; font-size: 11.5px; }
+.proto .sw.flip .nm { color: #fff; } .proto .sw.flip .nm::before { content: "● "; color: #8fa0ff; }
+.proto .min { position: absolute; right: 12px; top: 9px; color: #888; cursor: pointer; }
+.proto.small { top: auto; } .proto.small > :not(.min):not(h3) { display: none; }
+.proto .note { color: #aaa; margin-top: 8px; font-size: 11.5px; }
+</style>
+</head>
+<body class="dark">
+<div class="stage"><div class="frame" id="frame"></div></div>
+<div class="proto" id="proto"></div>
+<script>
+// ── state: each switch "cur" (the app today) or "new" (the proposal) ──────────────────────────────────────────────────
+const SW = [
+  ["s1", "S1 Start page", "start screens"], ["s2", "S2 Composer pills", "every screen"], ["s3", "S3 Meter under the box", "finished, running, panel"],
+  ["s4", "S4 Stats", "work panel (or click the meter)"], ["s5", "S5 Accent: ai-iro", "selected row, box ring, live marks"], ["s6", "S6 UI font: system", "every screen"],
+  ["s7", "S7 Working, no shimmer", "running"], ["s8", "S8 No “AI” icons", "running (Thought), model pill"], ["s9", "S9 Slip head", "finished, slip open"],
+];
+const S = { screen: "done", theme: "dark", calls: "12", day: "busy", fold: false, slip: false, mode: "auto", panel: false, scope: "turn", shot: false };
+for (const [k] of SW) S[k] = "cur";
+const NEW = (k) => S[k] === "new";
+
+// ── icons (Lucide paths) ──────────────────────────────────────────────────────────────────────────────────────────────
+const IP = {
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>', plus: '<path d="M5 12h14M12 5v14"/>',
+  folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  folderOpen: '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
+  gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  panel: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>',
+  side: '<path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
+  zap: '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
+  msg: '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>',
+  brain: '<path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M19.938 10.5a4 4 0 0 1 .585.396"/><path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M19.967 17.484A4 4 0 0 1 18 18"/>',
+  down: '<path d="m6 9 6 6 6-6"/>', right: '<path d="m9 18 6-6-6-6"/>', check: '<path d="M20 6 9 17l-5-5"/>', x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  clip: '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+  up: '<path d="m5 12 7-7 7 7M12 19V5"/>', loader: '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>',
+  branch: '<path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+  copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+};
+const ic = (n, c = "", style = "") => `<svg class="ico ${c}" viewBox="0 0 24 24" style="${style}">${IP[n]}</svg>`;
+const STROKES = ["M5 5h3V4h3v1H8v1H5z", "M5 7h3v1H5z", "M4 9h4v1H4z", "M9 6h1v6H6v-1h3z"].map((d) => `<path d="${d}"/>`).join("");
+const mark = (size, write = false) => `<span class="mk ${write ? "write" : ""}" style="width:${size}px;height:${size}px"><svg viewBox="0 0 16 16" width="${size}" height="${size}" fill="currentColor"><g transform="translate(0.5 0)">${write ? `<g class="guide">${STROKES}</g>` : ""}<g class="st">${STROKES}</g></g></svg></span>`;
+const hair = '<span class="hair"></span>';
+
+// ── numbers: one turn on DeepSeek V4.1 Flash, every figure computed from its calls ───────────────────────────────────
+const PRICE = { in: 0.30, cached: 0.03, out: 1.20 }, WINDOW = 128000, MODEL = "DeepSeek V4.1 Flash";
+const STEP = { ls: ["Ran", "ls -la", true, 0.1], edit: ["Edited", "main.rs", true, 0.0], cat: ["Ran", "cat nope.txt", false, 0.1], write: ["Wrote", "NOTES.md", true, 0.0],
+  readMain: ["Read", "src/main.rs", true, 0.0], readCargo: ["Read", "Cargo.toml", true, 0.0], readMe: ["Read", "README.md", true, 0.0],
+  build: ["Ran", "cargo build", true, 6.8], run: ["Ran", "cargo run", true, 1.2], diff: ["Ran", "git diff --stat", true, 0.1] };
+const C = (role, steps, inp, cached, out, ttft, total) => ({ role, steps, in: inp, cached, out, ttft, total });
+const DATA = {
+  5: [C("Ran", ["ls"], 19100, 15100, 28, 1.1, 2.1), C("Edited", ["edit"], 19300, 19000, 33, 0.9, 2.1), C("Ran", ["cat"], 19600, 19300, 24, 0.8, 1.7),
+    C("Wrote", ["write"], 19900, 19600, 71, 0.9, 3.4), C("answer", [], 20300, 19900, 644, 1.0, 24.1)],
+  // the same turn, its four tools asked for in one call
+  2: [C("ran 2 commands, edited 2 files", ["ls", "edit", "cat", "write"], 19100, 15100, 182, 1.1, 7.6), C("answer", [], 19800, 19100, 618, 0.9, 22.9)],
+  // the same turn, the agent reading and checking more
+  12: [C("Ran", ["ls"], 19100, 15100, 28, 1.1, 2.1), C("Read", ["readMain"], 19400, 19000, 33, 0.9, 2.1), C("Read", ["readCargo"], 19800, 19300, 19, 0.7, 1.4),
+    C("Read", ["readMe"], 20100, 19700, 22, 0.8, 1.6), C("Edited", ["edit"], 20600, 20000, 71, 0.9, 3.4), C("Ran", ["build"], 20900, 20500, 24, 1.4, 2.3),
+    C("Ran", ["cat"], 21100, 20800, 36, 0.8, 2.1), C("Wrote", ["write"], 21300, 21000, 54, 0.9, 2.8), C("Ran", ["run"], 21600, 21200, 30, 2.1, 3.2),
+    C("Read", ["readMain"], 21900, 21500, 41, 0.8, 2.3), C("Ran", ["diff"], 22200, 21800, 47, 0.9, 2.6), C("answer", [], 22600, 22100, 395, 1.0, 15.1)],
+};
+const callCost = (c) => ((c.in - c.cached) * PRICE.in + c.cached * PRICE.cached + c.out * PRICE.out) / 1e6;
+const usd = (x) => x === 0 ? "$0" : x < 0.01 ? "$" + x.toFixed(4) : x < 0.1 ? "$" + x.toFixed(3) : "$" + x.toFixed(2);
+const tok = (n) => n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(Math.round(n));
+const secs = (s) => s < 10 ? s.toFixed(1) + " s" : Math.round(s) + " s";
+const dur = (s) => s < 1 ? "<1 s" : Math.round(s) + " s";
+const share = (x) => `${x >= 1 ? 100 : Math.min(99, Math.round(x * 100))}%`;
+const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : null; };
+const tpsOf = (c) => c.out / Math.max(0.1, c.total - c.ttft);
+function words(steps) {
+  const n = (v) => steps.filter((s) => v.includes(s[0])).length, out = [];
+  const r = n(["Read"]), e = n(["Edited", "Wrote"]), x = n(["Ran"]);
+  if (r) out.push(`read ${r} file${r === 1 ? "" : "s"}`); if (e) out.push(`edited ${e} file${e === 1 ? "" : "s"}`); if (x) out.push(`ran ${x} command${x === 1 ? "" : "s"}`);
+  return out.join(", ");
+}
+function summary(calls, live = null) {
+  const steps = calls.flatMap((c) => c.steps.map((k) => STEP[k]));
+  const S2 = (f) => calls.reduce((a, c) => a + f(c), 0);
+  const inp = S2((c) => c.in), cached = S2((c) => c.cached), out = S2((c) => c.out), cost = S2(callCost), tools = steps.reduce((a, s) => a + s[3], 0);
+  return { calls, steps, inp, cached, out, cost, tools, time: live ?? S2((c) => c.total) + tools, hit: cached / inp, ttftMed: median(calls.map((c) => c.ttft)),
+    tps: out / S2((c) => c.total - c.ttft), ctx: calls[calls.length - 1].in, fold: words(steps), failed: steps.filter((s) => !s[2]).length, n: calls.length,
+    perTtft: calls.map((c) => c.ttft), perTps: calls.map(tpsOf), perHit: calls.map((c) => c.cached / c.in) };
+}
+// the running moment (screen 4): four calls done, the answer being written, 12 s in
+const RUN = { at: 12, done: 4 };
+let live = { secs: RUN.at, tps: 28 };
+
+// ── pieces ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+const CONV = [
+  ["Change the greeting in main.rs to hello, tazuna and add a notes file", "proj", "4m"],
+  ["Write me a haiku about autumn", "chat", "1h"],
+  ["Add a --name flag to the greeting", "proj", "3h"],
+];
+// a new day: the same conversations, last run yesterday
+const YDAY = CONV.map(([t, p], i) => [t, p, ["6:12pm", "5:30pm", "2:48pm"][i]]);
+const srow = ([t, p, a], on, running) => `<div class="srow ${on ? "on" : ""}"><div class="t">${running ? ic("loader", "xs spin", "color:var(--live)") : ""}<span>${t}</span></div><div class="s"><span>${p}</span><span class="age">${running ? "" : a}</span></div></div>`;
+function sidebar(kind) {
+  const conv = kind !== "start", run = kind === "run";
+  const today = run ? CONV.slice(1) : CONV, newDay = kind === "start" && S.day === "new";
+  return `<aside class="side">
+    <div class="brand">${mark(20)}<span>tazuna</span></div>
+    <div class="search">${ic("search", "s")}Search<kbd>⌘K</kbd></div>
+    <div class="act first">${ic("plus")}New chat</div><div class="act">${ic("folder")}Open folder</div>
+    <div class="list">
+      ${run ? `<div class="grp"><span>Working</span><span>1</span></div>${srow(CONV[0], true, true)}` : ""}
+      ${newDay ? `<div class="grp"><span>Yesterday</span></div>${YDAY.map((c) => srow(c)).join("")}<div class="grp"><span>This week</span></div>${srow(["Refund for a train ticket", "chat", "Mon"])}`
+        : `<div class="grp"><span>Today</span></div>${today.map((c, i) => srow(c, conv && !run && i === 0)).join("")}<div class="grp"><span>Yesterday</span></div>${srow(["Refund for a train ticket", "chat", "9:41pm"])}`}
+      <div class="grp"><span>Projects</span></div><div class="act" style="margin:0;color:var(--ink-2)">${ic("right", "xs", "color:var(--faint)")}proj</div>
+    </div>
+    <div class="settings"><div class="act">${ic("gear")}Settings</div></div>
+  </aside>`;
+}
+function header(kind) {
+  const crumb = kind === "start" ? `<span class="crumb">Chat</span><span class="faint">/</span><span class="ttl">New chat</span>`
+    : kind === "startp" ? `<span class="crumb">proj</span><span class="faint">/</span><span class="ttl">New chat</span>`
+    : `<span class="crumb">proj</span><span class="faint">/</span><span class="ttl">Change the greeting in main.rs to hello, tazuna and add a…</span><span class="fulltl">— notes file</span>`;
+  const btns = kind.startsWith("start") ? `<span>${ic("panel")}</span>` : `<span>${ic("side")}</span><span class="${S.panel ? "on" : ""}" data-act="panel">${ic("panel")}</span>`;
+  return `<div class="head">${crumb}<span class="hb">${btns}</span></div>`;
+}
+function statusBar(sm) {
+  const right = sm && !NEW("s3") ? `<span>context <b>${Math.round(sm.ctx / WINDOW * 100)}%</b> of 128k</span><span>cache <b>${share(sm.hit)}</b></span><span>this chat <b>${usd(sm.cost)}</b></span>` : "";
+  return `<div class="sbar"><span class="l"><span class="sdot"></span>Usage<span style="margin-left:9px;color:var(--faint);display:grid">${ic("refresh", "xxs")}</span></span><span class="sp"></span>${right}<span class="faint">tazuna 0.1.102</span></div>`;
+}
+// the composer's pills: where (start pages), mode, model
+function pills({ where, busy }) {
+  const np = NEW("s2"), noZap = np || NEW("s8"), full = S.mode === "full", dis = busy ? "dis" : "";
+  const dn = `<svg class="ico dn" viewBox="0 0 24 24">${IP.down}</svg>`;
+  const out = [];
+  if (where) out.push(np ? `<span class="pill np ${dis}">${where === "chat" ? "Chat" : "proj"}${dn}</span>`
+    : `<span class="pill ${dis}">${ic(where === "chat" ? "msg" : "folderOpen", "s")}${where === "chat" ? "Chat" : "proj"}${dn}</span>`);
+  if (full) out.push(np ? `<span class="pill np full">Full · never asks${dn}</span>` : `<span class="pill full">${ic("shield", "s", "fill:currentColor")}full · never asks${dn}</span>`);
+  else out.push(np ? `<span class="pill np ${dis}">Auto${dn}</span>` : `<span class="pill ${dis}">${ic("shield", "s")}auto${dn}</span>`);
+  out.push(np ? `<span class="pill np ${dis}">${MODEL}<span class="lvl">&nbsp;·&nbsp;high</span>${dn}</span>`
+    : `<span class="pill ${dis}">${noZap ? "" : ic("zap", "s")}${MODEL}<span class="lvl">${hair}high</span>${dn}</span>`);
+  return out.join("");
+}
+function composer({ where, busy, under, style = "" }) {
+  const ph = busy ? "Type your next message: it goes after this reply · ⌘↵ sends it now" : NEW("s2") ? "/ for commands, @ for files" : "Ask anything, or describe a change…&nbsp; / for commands, @ for files";
+  return `<div class="foot" style="${style}"><div class="composer focus"><div class="ph">${ph}</div>
+    <div class="pills">${pills({ where, busy })}<span class="clip">${ic("clip")}</span>
+      <span class="send ${busy ? "stop" : ""}">${busy ? `<svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" rx="1.5" fill="currentColor"/></svg>` : ic("up", "s")}</span></div></div>
+    ${under ? `<div class="under">${under}</div>` : ""}</div>`;
+}
+// S3: what stands under the box
+function underLine({ news, sm, running }) {
+  const n = news ? `<span>→ ${news}</span>` : "";
+  if (!NEW("s3") || !sm) return n;
+  const runPart = running ? ` · <span data-live="tps">${live.tps}</span> t/s · ↓ ${tok(sm.out)}` : "";
+  return `${running || !sm ? "" : ""}<span class="meter" data-act="meter" title="Open Stats in the work panel">${tok(sm.ctx)} of 128k · ${usd(sm.cost)} · ${share(sm.hit)} cached${runPart}</span>`;
+}
+const NEWS = { chat: `${MODEL} on DeepSeek, paid, about $0.0004 a message`, proj: `${MODEL} on DeepSeek, paid, about $0.005 a message` };
+
+// ── the start pages ───────────────────────────────────────────────────────────────────────────────────────────────────
+function startPage(proj) {
+  const busy = S.day === "busy", rows = (busy ? CONV : YDAY).filter((c) => !proj || c[1] === "proj");
+  const box = composer({ where: proj ? "proj" : "chat", under: underLine({ news: proj ? NEWS.proj : NEWS.chat }), style: "padding:0;width:100%;max-width:700px" });
+  if (NEW("s1")) {
+    const hl = busy ? "Today: 14 runs, $0.41 paid, 94% from the cache." : "Nothing run yet today.";
+    return `<div class="startw"><div class="startc">
+      <div class="hl" ${busy ? 'title="Today on this machine, from the run log · opens the usage page"' : ""}>${hl}</div>
+      ${proj ? `<div class="branch"><span class="mono">master</span> · 2 files uncommitted</div>` : ""}
+      ${box}
+      <div class="recent">${rows.map(([t, p, a]) => `<div class="rec"><span class="t">${t}</span>${proj ? "" : `<span class="p">${p}</span>`}<span class="a">${a}</span></div>`).join("")}</div>
+    </div></div>`;
+  }
+  const ledger = busy ? `<div class="ledger"><span class="tdy">Today</span><b>14</b>runs${hair}<b>$0.41</b>paid${hair}<b>94%</b>from the cache</div>`
+    : `<div class="what">${proj ? "A change in this project, or a question about it." : "A question for a chat, or a change in one of your projects."}</div>`;
+  const pick = `<section class="card"><div class="hd">Pick up where you left off</div>${rows.map(([t, p, a]) => `<div class="r"><span class="tx"><span>${t}</span><span>${p}</span></span><span class="age">${a}</span></div>`).join("")}</section>`;
+  const startIn = `<section class="card"><div class="hd">Start in a project</div>
+    <div class="r">${ic("folderOpen", "s")}<span class="tx"><span>proj</span><span>~/proj${hair}2 conversations</span></span></div>
+    <div class="r">${ic("plus", "s")}<span class="tx"><span>Open a folder…</span><span>any project on this machine</span></span></div></section>`;
+  return `<div class="startw"><div class="startc">
+    <div style="margin-bottom:20px">${mark(40)}</div>
+    <div class="ques">${proj ? "What are we working on in proj?" : "What are we working on?"}</div>${ledger}
+    ${box}
+    <div class="cards ${proj ? "" : "two"}">${pick}${proj ? "" : startIn}</div>
+    <div class="keys">${proj ? "<span>Mode<kbd>⇧Tab</kbd></span>" : ""}<span>Shortcuts<kbd>⌘/</kbd></span></div>
+  </div></div>`;
+}
+
+// ── the conversation ──────────────────────────────────────────────────────────────────────────────────────────────────
+const USER = "change the greeting in main.rs to hello, tazuna and add a notes file";
+function stepRow([verb, target, ok, t]) {
+  return `<div class="step">${ok ? ic("check", "s", "color:var(--ok)") : ic("x", "s", "color:var(--bad)")}<span>${verb}</span><span class="tg">${target}</span><span class="tm">${t.toFixed(1)} s</span>${ic("right", "xs", "color:var(--faint)")}</div>`;
+}
+function thoughtRow() {
+  const icon = NEW("s8") ? `<span class="slot"></span>` : ic("brain", "s", "color:var(--faint)");
+  return `<div class="step">${icon}<span>Thought</span><span class="hair" style="margin:0 -2px"></span><span class="tm" style="font-size:12.5px">~20 tokens</span>${ic("right", "xs", "color:var(--faint)")}</div>`;
+}
+function foldLine(sm, running) {
+  const open = running || S.fold;
+  const cnt = `${sm.fold ? `<span class="cnt">${hair}${sm.fold}</span>` : ""}${sm.failed ? `<span class="cnt bad">${hair}${sm.failed} failed</span>` : ""}`;
+  let head;
+  if (!running) head = `<span>Worked ${dur(sm.time)}</span>`;
+  else if (NEW("s7")) head = `${mark(16, true)}<span style="margin-left:2px">Working <span data-live="secs" class="num">${live.secs} s</span></span><span class="cnt">${hair}↓ ${tok(sm.out)} tokens</span>`;
+  else head = `${mark(10, true)}<span><span class="shim" style="font-weight:500">Working</span> <span data-live="secs" class="num">${live.secs} s</span></span><span class="cnt">${hair}↓ ${tok(sm.out)} tokens</span>`;
+  const steps = open ? `<div class="steps"><div class="said">I'll look at the folder first.</div>${thoughtRow()}${sm.steps.map(stepRow).join("")}</div>` : "";
+  return `<div><span class="fold ${open ? "open" : ""}" data-act="${running ? "" : "fold"}">${ic("right", "xs")}${head}${cnt}</span></div>${steps}`;
+}
+const ANSWER = `<div class="prose"><p>Done. The greeting now says <b>hello, tazuna</b>, on two lines:</p>
+  <ul><li><code>main.rs</code>: the <code>println!</code> changed, and a second line added</li><li><code>NOTES.md</code>: new, a note on the change</li></ul>
+  <p><code>cat nope.txt</code> failed because the file does not exist; nothing depends on it.</p></div>`;
+const PARTIAL = `<div class="prose"><p>Done. The greeting now says <b>hello, tazuna</b>, on two lines:</p><ul><li><code>main.rs</code>: the <code>println!</code> changed, and a second</li></ul></div>`;
+const CHANGE = `<div class="cc">
+  <div class="f">${ic("file", "s")}<span class="p">NOTES.md</span><span class="st">added</span><span class="n ok">+3</span><span class="btn">Diff</span></div>
+  <div class="f">${ic("file", "s")}<span class="p">main.rs</span><span class="n"><span class="ok">+2</span><span class="bad">−1</span></span><span class="btn">Diff</span></div>
+  <div class="ft">2 files changed in this turn<span class="btn">Review</span><span class="btn">Undo</span></div></div>`;
+function receiptLine(sm) {
+  return `<div class="rrow"><span class="rline ${S.slip ? "open" : ""}" data-act="slip">${ic("right", "xs")}<b>${usd(sm.cost)}</b>${hair}${tok(sm.inp)} in<span class="q">(${share(sm.hit)} cached)</span>${hair}${tok(sm.out)} out${hair}${dur(sm.time)}</span>
+    <span class="copy">${ic("copy", "xs")}Copy</span></div>`;
+}
+function slip(sm) {
+  const np = NEW("s9");
+  const rows = sm.calls.map((c, i) => `<tr><td><span class="n">${i + 1}</span>${MODEL} <span class="faint">${c.role}</span></td><td>${tok(c.in)}</td><td>${tok(c.cached)}<span class="sh2">${share(c.cached / c.in)}</span></td>
+    <td>${tok(c.out)}</td><td>${secs(c.ttft)}</td><td>${Math.round(tpsOf(c))} t/s</td><td>${secs(c.total)}</td><td>${usd(callCost(c))}</td></tr>`).join("");
+  const tools = `<tr><td colspan="4"><span class="n"></span>Tools <span class="faint">${sm.fold}</span></td><td></td><td></td><td>${secs(sm.tools)}</td><td></td></tr>`;
+  const tot = `<tr class="tot"><td><span class="n"></span>Total</td><td>${tok(sm.inp)}</td><td>${tok(sm.cached)}<span class="sh2">${share(sm.hit)}</span></td><td>${tok(sm.out)}</td>
+    <td>${secs(sm.ttftMed)}<span class="med">med</span></td><td>${Math.round(sm.tps)} t/s</td><td>${dur(sm.time)}</td><td>${usd(sm.cost)}</td></tr>`;
+  const bare = sm.inp * PRICE.in / 1e6 + sm.out * PRICE.out / 1e6;
+  const head = np ? `<div class="first">${sm.n} model calls</div>` : `<div class="sh">${mark(20)}<span class="tt">Receipt</span><span class="rgt">${sm.n} model calls</span></div>`;
+  const sums = np ? `<div class="sum q" style="margin-top:7px"><span>Paid to DeepSeek · the same without the cache ${usd(bare)}</span></div>`
+    : `<div class="dash"></div><div class="sum"><span>Paid to DeepSeek</span><b>${usd(sm.cost)}</b></div><div class="dash"></div><div class="sum q"><span>The same without the cache</span><span>${usd(bare)}</span></div>`;
+  return `<div class="slipw ${np ? "full" : ""}"><div class="slip">${head}
+    <table class="rt"><thead><tr><th>Call</th><th>In</th><th>Cached</th><th>Out</th><th>TTFT</th><th>Speed</th><th>Time</th><th>Price</th></tr></thead><tbody>${rows}${tools}${tot}</tbody></table>${sums}</div></div>`;
+}
+
+// ── the work panel ────────────────────────────────────────────────────────────────────────────────────────────────────
+function sparkPath(vals, max, w, h, inset = 0) {
+  const hi = max ?? Math.max(...vals) * 1.1, n = vals.length;
+  return vals.map((v, i) => `${i ? "L" : "M"}${(inset + (n < 2 ? w / 2 : i * (w - 2 * inset) / (n - 1))).toFixed(1)},${(h - (v / hi) * h).toFixed(1)}`).join("");
+}
+function statsCurrent(sm, running) {
+  const spark = (vals, max) => `<div class="sparkc"><svg viewBox="0 0 100 26" preserveAspectRatio="none"><path d="${sparkPath(vals, max, 100, 26)}" fill="none" stroke="var(--live)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>
+    <i style="position:absolute;right:4px;top:${4 + 26 - (vals[vals.length - 1] / (max ?? Math.max(...vals) * 1.1)) * 26}px;width:7px;height:7px;margin:-3.5px -3.5px 0 0;border-radius:50%;background:var(--live);box-shadow:0 0 0 2px var(--desk)"></i></div>`;
+  const lastTps = sm.perTps[sm.perTps.length - 1];
+  return `<div class="tiles">
+      <div class="box"><div class="l">In</div><div class="v">${tok(sm.inp)}</div><div class="s">${share(sm.hit)} from cache</div><div class="bar"><i style="width:${(sm.hit * 100).toFixed(1)}%"></i></div></div>
+      <div class="box"><div class="l">Out</div><div class="v">${tok(sm.out)}</div><div class="s"><span ${running ? 'data-live="tps"' : ""}>${running ? live.tps : Math.round(sm.tps)}</span> t/s writing</div></div>
+      <div class="box"><div class="l">Cost</div><div class="v">${usd(sm.cost)}</div><div class="s">${running ? "so far" : "paid to DeepSeek"}</div></div>
+      <div class="box"><div class="l">Calls</div><div class="v">${sm.n}</div><div class="s">${running ? `<span data-live="secs">${live.secs} s</span>` : dur(sm.time)} working</div></div></div>
+    <div class="box metric"><div class="top"><span class="l">Time to first token</span><span class="v2">${secs(sm.perTtft[sm.n - 1])}</span><span class="s">median ${secs(sm.ttftMed)}</span></div>${spark(sm.perTtft)}</div>
+    <div class="box metric"><div class="top"><span class="l">Writing speed</span><span class="v2">${Math.round(lastTps)} t/s</span><span class="s">median ${Math.round(median(sm.perTps))} t/s</span></div>${spark(sm.perTps)}</div>
+    <div class="box metric"><div class="top"><span class="l">Cache hit rate</span><span class="v2">${share(sm.perHit[sm.n - 1])}</span><span class="s">${share(sm.hit)} overall</span></div>${spark(sm.perHit.map((x) => x * 100), 100)}</div>
+    <div class="box metric"><div class="top"><span class="l">Context</span><span class="v2">${tok(sm.ctx)}</span><span class="s">of 128k</span></div><div class="bar" style="margin:7px 0 4px"><i style="width:${(sm.ctx / WINDOW * 100).toFixed(1)}%"></i></div></div>`;
+}
+// S4 proposed: rows on the desk; a row with nothing to say is left out, a zero is quiet, a line only from 8 calls
+function statsProposed(sm, running) {
+  const lines = sm.n >= 8;
+  const sp = (vals, max) => lines ? `<svg viewBox="0 0 56 14" preserveAspectRatio="none"><path d="${sparkPath(vals, max, 56, 14, 1)}" fill="none" stroke="var(--live)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>` : "";
+  const rows = [
+    ["In", null, tok(sm.inp), sm.inp], ["From the cache", null, share(sm.hit), sm.hit, sp(sm.perHit.map((x) => x * 100), 100)],
+    ["Out", null, tok(sm.out), sm.out],
+    ["Writing speed", null, running ? `<span data-live="tps">${live.tps}</span> t/s` : `${Math.round(sm.tps)} t/s`, sm.tps, sp(sm.perTps)],
+    ["Time to first token", "median", secs(sm.ttftMed), sm.ttftMed, sp(sm.perTtft)],
+    ["Cost", running ? "so far" : "paid to DeepSeek", usd(sm.cost), sm.cost], ["Calls", null, String(sm.n), sm.n],
+    ["Working", null, running ? `<span data-live="secs">${live.secs} s</span>` : dur(sm.time), sm.time], ["Context", null, `${tok(sm.ctx)} of 128k`, sm.ctx],
+  ].filter((r) => r[3] != null);
+  return `<div class="ledg">${rows.map(([l, q, v, raw, s = ""]) => `<div class="lrow"><span>${l}${q ? `<span class="q2">${q}</span>` : ""}</span><span>${s}</span><span class="v ${raw === 0 ? "zero" : ""}">${v}</span></div>`).join("")}</div>`;
+}
+function workPanel(sm, running) {
+  const np = NEW("s4");
+  const seg = `<span class="seg"><span class="${S.scope === "turn" ? "on" : ""}" data-act="scope-turn">This turn</span><span class="${S.scope === "all" ? "on" : ""}" data-act="scope-all">Conversation</span></span>`;
+  const dot = running && !np ? `<span class="livedot"><i class="pulse"></i>live</span>` : "";
+  return `<aside class="rail">
+    <div class="sec"><h4>Stats ${dot}${seg}</h4>${np ? statsProposed(sm, running) : statsCurrent(sm, running)}</div>
+    <div class="sec"><h4>${ic("branch", "s", "color:var(--muted)")}Changes<span class="n"><span class="ok">+5</span><span class="bad">−1</span></span></h4>
+      <div class="fr"><span>NOTES.md</span><span class="n ok">+3</span></div><div class="fr"><span>main.rs</span><span class="n"><span class="ok">+2</span><span class="bad">−1</span></span></div>
+      <span class="btn">Review</span></div>
+  </aside>`;
+}
+
+// ── the window ────────────────────────────────────────────────────────────────────────────────────────────────────────
+function conversation(running) {
+  const calls = S.screen === "panel" ? DATA[S.calls] : DATA[5];
+  const sm = running ? summary(calls.slice(0, RUN.done), live.secs) : summary(calls);
+  const open = S.screen === "panel" || S.panel;
+  // the reading column keeps the left edge it had with the panel shut and gives up width on the right (700 → 614)
+  const docStyle = open ? "margin:0 0 0 214px;max-width:none;width:670px" : "";
+  const footStyle = open ? "margin-left:214px;width:670px" : "max-width:756px;width:100%;margin:0 auto";
+  let body = `<div class="you">${USER}</div>${foldLine(sm, running)}`;
+  if (running) body += `${PARTIAL}<div class="queued"><div class="you">also print the notes file when it starts</div><div class="qline"><span>Queued: goes after this reply</span><b>Send now</b></div></div>`;
+  else body += `${ANSWER}${CHANGE}${receiptLine(sm)}${S.slip ? slip(sm) : ""}`;
+  const under = underLine({ news: NEW("s3") ? null : NEWS.proj, sm, running });
+  const cols = `248px minmax(0, 1fr)${open ? " 300px" : ""}`;
+  return `<div class="win"><div class="cols" style="grid-template-columns:${cols}">${sidebar(running ? "run" : "conv")}
+    <main class="main" style="${open ? "margin-right:0" : ""}">${header("conv")}${open ? "" : `<span class="ptab" data-act="panel">${ic("branch", "xs")}Changes <b>2</b></span>`}
+      <div class="scrollw"><div class="scroll" id="scroll"><div class="doc" style="${docStyle}">${body}</div></div><div class="edge t"></div><div class="edge b"></div></div>
+      ${composer({ busy: running, under, style: footStyle })}
+    </main>${open ? workPanel(sm, running) : ""}</div>${statusBar(sm)}</div>`;
+}
+function startWin(proj) {
+  return `<div class="win"><div class="cols" style="grid-template-columns:248px minmax(0, 1fr)">${sidebar("start")}
+    <main class="main">${header(proj ? "startp" : "start")}${startPage(proj)}</main></div>${statusBar(null)}</div>`;
+}
+
+// ── the terminal: before / after, cell by cell in the terminal's palette (src/ui/mod.rs DARK / LIGHT) ─────────────────
+const TP = {
+  dark: { bg: "#171613", surface: "#211f1b", field: "#2a2823", border: "#3a3731", text: "#ece8df", ink2: "#d2cdc2", dim: "#afaa9e", faint: "#9a958d", accent: "#8f9bf0", warn: "#e0b46a", err: "#e08b7f", ok: "#7cc08f" },
+  light: { bg: "#f6f4ef", surface: "#fffefb", field: "#efebe3", border: "#d8d2c5", text: "#23221e", ink2: "#3f3c35", dim: "#5b574f", faint: "#69655d", accent: "#3d4aa8", warn: "#a76a14", err: "#b4473a", ok: "#3b7d4f" },
+};
+const COLS = 92;
+const mixc = (a, b, t) => { const p = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)); const x = p(a), y = p(b); return "#" + x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, "0")).join(""); };
+const seglen = (segs) => segs.reduce((n, [t = "", , o = {}]) => n + (o.w2 ? 2 : [...t].length), 0);
+const lr = (left, right) => [...left, [" ".repeat(Math.max(1, COLS - seglen(left) - seglen(right)))], ...right];
+function term(lines, theme) {
+  const P = TP[theme], col = (c) => (c in P ? P[c] : c);
+  const rows = lines.map((ln) => {
+    const segs = Array.isArray(ln) ? ln : ln.segs, band = Array.isArray(ln) ? null : ln.band;
+    let used = 0;
+    const spans = segs.map(([text = "", fg = "text", o = {}]) => {
+      const st = [`color:${col(fg)}`]; if (o.bg) st.push(`background:${col(o.bg)}`); if (o.b) st.push("font-weight:700"); if (o.i) st.push("font-style:italic");
+      if (o.w2) { used += 2; return `<span class="w2 ${o.pulse ? "tpulse" : ""}" style="${st.join(";")};--sh-hi:${P.accent};--sh-base:${mixc(P.accent, P.bg, .45)}">${text}</span>`; }
+      used += [...text].length;
+      if (o.shimmer) return `<span class="tsh" style="${st.join(";")}">${[...text].map((ch, i) => `<span style="--sh-base:${col(fg)};--sh-hi:${P.accent};animation-delay:${i * 90}ms">${ch}</span>`).join("")}</span>`;
+      return `<span style="${st.join(";")}">${text.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</span>`;
+    }).join("");
+    return `<div class="tl" style="${band ? `background:${col(band)}` : ""}">${spans}<span>${" ".repeat(Math.max(0, COLS - used))}</span></div>`;
+  }).join("");
+  return `<div class="tw"><div class="pad" style="background:${P.bg}"><div class="tc" style="color:${P.text}">${rows}</div></div></div>`;
+}
+const RULE = [["─".repeat(COLS), "border"]];
+const PROMPT = [["› ", "accent"], ["say something…", "faint", { i: true }]];
+const head = (model, right = "≈$0") => lr([["tazuna", "faint", { i: true }]], [[model, "dim"], ["    "], [right, "text", { b: true }]]);
+const LOGO = [[" "], ["▐", "accent"], ["手", "bg", { bg: "accent", w2: true }], ["▌", "accent"], [" "], ["tazuna", "text", { b: true }], [" 0.1.227", "dim"]];
+const PATH = [["      /private/tmp/tzrev/r14/projcli", "text"], ["  on ", "dim"], ["master", "text", { b: true }]];
+const YOU = (t) => ({ band: "surface", segs: [["▎ ", "accent"], [t, "text", { b: true }]] });
+const DONE = [["✓ Done", "ok", { b: true }], ["  2 s  $0   ", "dim"], ["main.rs ", "text"], ["+2", "ok"], [" −1", "err"], ["  NOTES.md ", "text"], ["+3", "ok"], ["   ctrl-o diffs", "faint"]];
+const ANSWER_T = [
+  [["Done. The greeting now says ", "text"], ["hello, tazuna", "text", { b: true }], [", on two lines:", "text"]], [],
+  [["• ", "dim"], ["main.rs", "text", { b: true, bg: "field" }], [": the ", "text"], ["println!", "text", { b: true, bg: "field" }], [" changed, and a second line added", "text"]],
+  [["• ", "dim"], ["NOTES.md", "text", { b: true, bg: "field" }], [": new, a note on the change", "text"]], [],
+  [["cat nope.txt", "text", { b: true, bg: "field" }], [" failed because the file does not exist; nothing depends on it.", "text"]], [],
+];
+// the status line's right end: today dots ("● auto   ● ready"), proposed coloured words
+const AUTO = (now) => now ? [[" ● ", "ok", { bg: "surface" }], ["auto ", "dim", { bg: "surface" }]] : [["auto", "ok"]];
+const STATE = (now, word, color, dotColor = color) => now ? [["  ● ", dotColor], [word, color]] : [["   " + word, color]];
+function TERM(now) {
+  const w = [
+    head("Sonnet 5.5 medium"), [], LOGO, PATH, [],
+    now ? [["      Try \"how is this repo laid out?\", or /keys for every key", "dim"]] : [["      lean profile · 3 tracked files · /keys for every key", "dim"]],
+    RULE, lr(PROMPT, [...AUTO(now), ...STATE(now, "ready", "dim")]),
+  ];
+  const working = [
+    YOU("change the greeting to hello tazuna"), [],
+    now ? [["⠸ ", "accent"], ["thinking", "dim"]] : [["thinking", "dim"]], [],
+    now ? [["手", "accent", { w2: true, pulse: true }], [" "], ["Working", "text", { b: true, shimmer: true }], ["  2 s · ↓ 20 tokens · thinking", "faint"]]
+      : [["手", "accent", { w2: true, pulse: true }], [" "], ["Working", "text", { b: true }], ["  2 s · ↓ 20 tokens · thinking", "faint"]],
+    RULE, lr(PROMPT, [...AUTO(now), ...(now ? [["  ⠸ working", "accent"]] : [["   working", "accent"]]), [" · esc stops", "faint"]]),
+  ];
+  const done = [
+    YOU("change the greeting to hello tazuna"), [],
+    now ? [["⌁ ", "faint"], ["thinking", "dim"]] : [["thinking", "dim"]], [],
+    [["I'll look at the folder first.", "text", { b: true }]], [],
+    [...(now ? [["⌁ ", "faint"]] : []), ["ran 4 tools", "dim"], ["   bash ×2  edit ×1  write ×1   12 lines   thought ~20 tok   ", "faint"], ["1 failed", "err"]], [],
+    ...ANSWER_T, DONE, RULE, lr(PROMPT, [...AUTO(now), ...(now ? [["  ✓ done", "ok"]] : [["   done", "ok"]])]),
+  ];
+  const approval = now ? [
+    DONE, [], YOU("guard: clean and push"), [],
+    [["⌁ ", "faint"], ["ran 1 tool", "dim"], ["   bash ×1   8 lines", "faint"]],
+    [["? ", "warn", { b: true }], ["bash", "text", { b: true }], ["   git push --force origin main", "dim"], ["  · waits for your answer", "faint"]], [],
+    RULE,
+    [["? allow bash?", "warn", { b: true }]],
+    [["  once only · auto asks: git push --force: rewrites the remote's", "dim"]],
+    [["  history", "dim"]],
+    [["  git push --force origin main", "text"]],
+    lr([["  y ", "accent", { b: true }], ["allow once", "text", { b: true }], ["   n ", "accent", { b: true }], ["no", "text", { b: true }]], [...AUTO(true), ...STATE(true, "needs you", "warn")]),
+  ] : [
+    DONE, [], YOU("guard: clean and push"), [],
+    [["ran 1 tool", "dim"], ["   bash ×1   8 lines", "faint"]],
+    [["? ", "warn", { b: true }], ["bash", "text", { b: true }], ["   git push --force origin main", "dim"], ["  · waits for your answer", "faint"]], [], [],
+    RULE,
+    [["? Allow this command?", "warn", { b: true }]],
+    [["  git push --force rewrites the remote's history", "dim"]],
+    [["  git push --force origin main", "text"]],
+    lr([["  y ", "accent", { b: true }], ["allow", "text", { b: true }], ["   n ", "accent", { b: true }], ["decline", "text", { b: true }]], [...AUTO(false), ...STATE(false, "needs you", "warn")]),
+  ];
+  return { w, working, done, approval };
+}
+function termPage() {
+  const th = S.theme, A = TERM(true), B = TERM(false);
+  const row = (k, label) => `<div class="lab">${label}</div><div class="lab new">${label}, proposed</div>${term(A[k], th)}${term(B[k], th)}`;
+  return `<div class="tpage"><h1>The terminal, today and proposed</h1>
+    <div class="lede">Left: tazuna 0.1.227 (the r14 captures). Right: its own welcome line, no ✻ or ⌁ (the 手 pulse alone marks work), coloured words for the status dots, the question as one. The ▎ bar and the Done line stay.</div>
+    <div class="tgrid">${row("w", "Start")}${row("working", "Working")}${row("done", "Done")}${row("approval", "An approval")}</div></div>`;
+}
+
+// ── render, the live clock and the switch panel ───────────────────────────────────────────────────────────────────────
+function fit() { const f = document.getElementById("frame"), st = f.parentElement; if (S.shot) { f.style.transform = ""; return; } f.style.transform = `translate(-50%, -50%) scale(${Math.min(1, (st.clientWidth - 32) / 1440, (st.clientHeight - 32) / 900)})`; }
+function render() {
+  const pm = document.body.classList.contains("pmin");
+  document.body.className = [S.theme, NEW("s5") ? "acc-ai" : "", NEW("s6") ? "ui-sys" : "", pm ? "pmin" : "", S.shot ? "shot" : ""].join(" ");
+  const f = document.getElementById("frame");
+  f.innerHTML = S.screen === "start" ? startWin(false) : S.screen === "startp" ? startWin(true) : S.screen === "term" ? termPage() : conversation(S.screen === "run");
+  const sc = document.getElementById("scroll"); if (sc) sc.scrollTop = sc.scrollHeight;
+  fit(); panel();
+  location.replace("#" + new URLSearchParams(Object.entries(S).filter(([k, v]) => k !== "shot" || v).map(([a, b]) => [a, typeof b === "boolean" ? (b ? "1" : "0") : b])).toString());
+}
+// the running reply's clock: its seconds count, its speed moves; the numbers ease to their new values (450 ms)
+function tween(el, to) {
+  const from = parseFloat(el.textContent) || to, t0 = performance.now();
+  const step = (t) => { const p = Math.min(1, (t - t0) / 450), e = 1 - Math.pow(1 - p, 3); el.textContent = Math.round(from + (to - from) * e); if (p < 1) requestAnimationFrame(step); };
+  requestAnimationFrame(step);
+}
+const JITTER = [0, 1, -1, 0, 1, 0, -1, 1];
+setInterval(() => {
+  if (S.shot || S.screen !== "run") return;
+  live.secs++; live.tps = 28 + JITTER[live.secs % JITTER.length];
+  document.querySelectorAll('[data-live="secs"]').forEach((el) => el.textContent = `${live.secs} s`);
+  document.querySelectorAll('[data-live="tps"]').forEach((el) => tween(el, live.tps));
+}, 1000);
+function panel() {
+  const b = (k, v, n) => `<button data-k="${k}" data-val="${v}" class="${String(S[k]) === String(v) ? "on" : ""}">${n}</button>`;
+  const row = (title, k, opts) => `<b>${title}</b><div class="opts">${opts.map(([v, n]) => b(k, v, n)).join("")}</div>`;
+  const sub = S.screen === "panel" ? row("Stats data", "calls", [["2", "2 calls"], ["12", "12 calls"]])
+    : S.screen.startsWith("start") ? row("The day", "day", [["busy", "14 runs"], ["new", "A new day"]]) + row("Mode", "mode", [["auto", "Auto"], ["full", "Full · never asks"]])
+    : S.screen === "done" ? row("Steps / slip / panel", "fold", [[false, "Fold shut"], [true, "Fold open"]]) + `<div class="opts" style="margin-top:4px">${b("slip", false, "Slip shut")}${b("slip", true, "Slip open")}${b("panel", false, "Panel shut")}${b("panel", true, "Panel open")}</div>`
+    : S.screen === "run" ? row("Work panel", "panel", [[false, "Shut"], [true, "Open (or click the meter)"]]) : "";
+  const allCur = SW.every(([k]) => S[k] === "cur"), allNew = SW.every(([k]) => S[k] === "new");
+  document.getElementById("proto").innerHTML = `<span class="min" data-min>–</span><h3>Design review 14 · less machine-made</h3>
+    ${row("Screen", "screen", [["start", "1 Start: chat"], ["startp", "2 Start: project"], ["done", "3 Finished"], ["run", "4 Running"], ["panel", "5 Work panel"], ["term", "Terminal"]])}
+    ${sub}
+    ${row("Theme", "theme", [["dark", "Dark"], ["light", "Light"]])}
+    <b>Switches</b><div class="opts" style="margin-bottom:4px"><button data-all="cur" class="${allCur ? "on" : ""}">All current</button><button data-all="new" class="${allNew ? "on" : ""}">All proposed</button></div>
+    ${SW.map(([k, n, where]) => `<div class="sw ${S[k] === "new" ? "flip" : ""}"><span class="nm">${n}<small>${where}</small></span><span class="opts">${b(k, "cur", "Current")}${b(k, "new", "Proposed")}</span></div>`).join("")}
+    <div class="note">${S.screen === "term" ? "The terminal shows today and the proposal side by side; the switches are for the window." : "Click the fold line, the receipt line, the Changes tab, the header's panel button, or (S3) the meter."}</div>`;
+}
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-min]")) { document.getElementById("proto").classList.toggle("small"); document.body.classList.toggle("pmin"); fit(); return; }
+  const all = e.target.closest("[data-all]"); if (all) { for (const [k] of SW) S[k] = all.dataset.all; render(); return; }
+  const t = e.target.closest("[data-k]");
+  if (t) { const v = t.dataset.val; S[t.dataset.k] = v === "true" ? true : v === "false" ? false : v; if (t.dataset.k === "screen") { S.panel = false; live = { secs: RUN.at, tps: 28 }; } render(); return; }
+  const a = e.target.closest("[data-act]"); if (!a || !a.dataset.act) return;
+  const act = a.dataset.act;
+  if (act === "fold") S.fold = !S.fold; else if (act === "slip") S.slip = !S.slip;
+  else if (act === "panel") { if (S.screen === "panel") S.screen = "done"; else S.panel = !S.panel; }
+  else if (act === "meter") { S.panel = true; S.scope = "turn"; }
+  else if (act === "scope-turn") S.scope = "turn"; else if (act === "scope-all") S.scope = "all";
+  render();
+});
+addEventListener("resize", fit);
+// a link opens a state
+for (const [k, v] of new URLSearchParams(location.hash.slice(1))) if (k in S) S[k] = typeof S[k] === "boolean" ? v === "1" || v === "true" : v;
+render();
+</script>
+</body>
+</html>

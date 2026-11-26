@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronRight, ExternalLink, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { core, type Accounts, type ModelChoice } from "../lib/tazuna";
+import { core, type Accounts, type ClaudeSetup, type ModelChoice } from "../lib/tazuna";
 import { useDialog } from "../lib/dialog";
 import { planName, summarize, type Day, type Row } from "../lib/usage";
 import { modelLabel } from "../lib/types";
@@ -66,7 +66,9 @@ function Figure({ label, value, caption, more = [], quiet }: { label: string; va
   );
 }
 
-export function UsageView({ onClose, limits, balance, choices = [] }: { onClose: () => void; limits?: [number, number] | null; balance?: number | null;
+export function UsageView({ onClose, limits, balance, choices = [], claude }: { onClose: () => void; limits?: [number, number] | null; balance?: number | null;
+  /** Claude Code as setup found it: why there is no plan reading, said truly (not installed, not signed in) */
+  claude?: ClaudeSetup | null;
   /** the model catalog: names the provider of an API run the run log did not record (one recorded since 0.1.182) */
   choices?: ModelChoice[] }) {
   const [rows, setRows] = useState<Row[] | null>(null);
@@ -104,8 +106,9 @@ export function UsageView({ onClose, limits, balance, choices = [] }: { onClose:
           <button onClick={onClose} title="Close (Esc)" aria-label="Close" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
         </div>
         <div className="overflow-auto bg-main px-6 pb-7 pt-5">
-          <Section title="Right now" note="How much of each account is used (your Claude plan, your OmniRoute accounts), and the credit left with each provider.">
-            <RightNow acc={acc} limits={limits} balance={balance} />
+          {/* in words for anyone: it named "your OmniRoute accounts" to a new user (design review 14) */}
+          <Section title="Right now" note="How much of each plan and account is used, and the credit left with each provider.">
+            <RightNow acc={acc} limits={limits} balance={balance} claude={claude} />
           </Section>
 
           {/* the range by the sections it changes, not in the page's header: there it read as changing "Right now" too,
@@ -114,11 +117,12 @@ export function UsageView({ onClose, limits, balance, choices = [] }: { onClose:
             <Segmented label="Days" value={String(days)} options={RANGES.map((d) => [String(d), `${d} days`] as const)} onChange={(d) => setDays(Number(d))} />} note={`The last ${days} days from the run log. A plan's runs are counted at API prices, not billed.`}>
             {!s ? <div className="px-3.5 py-2.5 text-[12.5px] text-faint">Reading the run log…</div> : <>
               <div className="grid grid-cols-3 divide-x divide-line-soft">
-                <Figure label="API providers" value={s.api > 0 ? money(s.api) : "Nothing billed in these days"} quiet={s.api <= 0} caption="billed" more={[[`${apiRuns}`, "runs"]]} />
+                {/* nothing is said once, under the figures ("Nothing spent in these days."), not in each of them (design review 14) */}
+                <Figure label="API providers" value={s.api > 0 ? money(s.api) : "–"} quiet={s.api <= 0} caption="billed" more={[[`${apiRuns}`, "runs"]]} />
                 {/* each plan by its provider (the user, 2026-11-25: a Mistral Vibe run read "Claude plan"): one by name, several
                     as Plans with each one's part */}
                 {/* plans with no reference price run at $0: counted by their runs, "not billed", never "$0" (the review of 2026-11-25) */}
-                <Figure label={plans} value={!planRuns ? "No plan runs in these days" : s.plan > 0 ? money(s.plan) : "not billed"} quiet={!planRuns} caption={s.plan > 0 ? "at API prices, not billed" : undefined}
+                <Figure label={plans} value={!planRuns ? "–" : s.plan > 0 ? money(s.plan) : "not billed"} quiet={!planRuns} caption={s.plan > 0 ? "at API prices, not billed" : undefined}
                   more={[...(s.plans.length > 1 ? s.plans.map((p) => [p.cost > 0 ? money(p.cost) : "not billed", p.name] as [string, string]) : []), [`${planRuns}`, "runs"]]} />
                 <Figure label="From the cache" value={s.read ? `${Math.round((100 * s.cached) / s.read)}%` : "Nothing read yet"} quiet={!s.read} caption="of the input" more={[[big(s.cached), "tokens"]]} />
               </div>
@@ -183,7 +187,7 @@ const groupHead = "flex flex-wrap items-center gap-y-0.5 bg-field/40 px-3.5 py-1
 const who = (p: string) => (p.startsWith("openai-compatible") ? "OpenAI-compatible" : p);
 
 /** Every account's windows and credits, one row each. */
-function RightNow({ acc, limits, balance }: { acc: Accounts | null | undefined; limits?: [number, number] | null; balance?: number | null }) {
+function RightNow({ acc, limits, balance, claude }: { acc: Accounts | null | undefined; limits?: [number, number] | null; balance?: number | null; claude?: ClaudeSetup | null }) {
   if (acc === undefined) return <div className="px-3.5 py-2.5 text-[12.5px] text-faint">Asking your accounts…</div>;
   // no reading from claude's /usage: the plan as the last reply's rate limits said it, if any
   const plan = acc?.plan ?? (limits ? [{ label: "Current session", used: limits[0], resets: "" }, { label: "Current week (all models)", used: limits[1], resets: "" }] : []);
@@ -193,7 +197,9 @@ function RightNow({ acc, limits, balance }: { acc: Accounts | null | undefined; 
   const busy = acc?.omniroute.filter((a) => !idle(a)) ?? [], quiet = acc?.omniroute.filter(idle) ?? [];
   const quietWindows = quiet.reduce((n, a) => n + a.windows.length, 0);
   const unread = credits.filter((c) => !c.left);
-  if (!plan.length && !credits.length && !acc?.omniroute.length) return <div className="px-3.5 py-2.5 text-[12.5px] text-muted">No account readings: claude is not logged in to a subscription, and no provider key is set.</div>;
+  // the true state of Claude: not installed, or not signed in (it said "not logged in to a subscription" with no claude at all)
+  const why = claude?.claude === null ? "Claude Code isn't installed" : claude?.claude_login === false ? "Claude isn't signed in" : "no plan has reported its use yet";
+  if (!plan.length && !credits.length && !acc?.omniroute.length) return <div className="px-3.5 py-2.5 text-[12.5px] text-muted">Nothing to read yet: {why}, and no provider key is set.</div>;
   return <>
     {/* each account a group under its heading, as OmniRoute's (until desktop 0.1.82 "Claude plan" and "credit" under every row) */}
     {plan.length > 0 && <div className={groupHead}><span className="font-medium text-ink-2">Claude plan</span></div>}
