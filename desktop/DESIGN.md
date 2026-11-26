@@ -515,7 +515,13 @@ arrows; a row's line is 56 × 14 px with no mark), usage bar, status bar. Reuse 
   the first visit's bar (src-tauri/src/console.js): a fixed bar at the top, paper text on ink (#23221e, light's `ink`;
   the dark accent's Done), its words saying what it keeps ("Only names of fields are kept."), then what it found; "Move
   down" takes it off the page's own header. Reading in the background is a hidden window, one at a time, none at all while
-  no provider is tracked by its console.
+  no provider is tracked by its console. The window and its sign-in popups stay on the provider's sites, its own sign-in
+  hosts and a short list of common sign-ins (Google, Apple, Microsoft, GitHub's sign-in pages; main.rs `nav_ok`), over
+  https; a link anywhere else opens in the browser (one tab every few seconds at most, an OAuth code or token never) and
+  the window goes back to its last page; a page that keeps sending it away closes it (a hidden reading opens nothing). It
+  reaches one command, `report`; every app command answers only the main window on the app's own page, called from that
+  page (`main_only`, by the request's Origin: the CSP's `connect-src ipc:` keeps Tauri's IPC on its own protocol, which
+  carries one).
 - One clock (`clock`, lib/health.ts): "9:39pm". A tooltip repeats nothing the control already shows whole; a cut title's
   tooltip is the whole title (the first message), never the cut one.
 

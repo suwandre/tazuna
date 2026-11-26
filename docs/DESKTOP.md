@@ -778,6 +778,13 @@ in a tazuna window with a store of its own; a learn visit records only field nam
 sign-in open in child windows without it; Forget sign-in clears the store and the reading. The status bar and usage page
 show tracked providers only. Also: closing a window other than the main one no longer stops every core.
 
+0.1.134 (with tazuna 0.1.232): hardening around the console reader. Every app command answers only the main window on
+the app's own origin (checked from the request's Origin; the CSP now lets Tauri's IPC channel carry it). Console windows
+and their sign-in popups load only the provider's sites and a list of sign-in hosts (Google, Apple, Microsoft, GitHub's
+sign-in pages, Alibaba's for Qwen, Mistral's auth, id.ai for Caffeine); anything else opens in the browser, at most one tab
+every 3 s per window, a URL carrying a sign-in code only as its site's root; a page bouncing back three times in 10 s
+closes its window.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

@@ -10,6 +10,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 #[cfg(unix)]
@@ -812,21 +813,45 @@ fn set_profile(core: State<Core>, tid: String, name: String) -> Result<(), Strin
 
 /// A provider whose usage page tazuna may read: its name as the core says it, the page its window opens on (its LOGINS
 /// page), the exact hosts of its console (capabilities/console.json lists the same; sign-in pages elsewhere get no script
-/// and no command), and its
+/// and no command), the hosts of its own sign-in (its window may go there too, nav_ok), and its
 /// extractor: a JS function (path, json) => {left, total, unit, used_pct, resets} | null, written from its learn file
 /// (Phase 2; until then none, and nothing is read in the background).
 struct Console {
     name: &'static str,
     start: &'static str,
     sites: &'static [&'static str],
+    sign_in: &'static [&'static str],
     read: Option<&'static str>,
 }
 
+// sign-in hosts as each sign-in page sends them (2026-11-26): Qwen's goes through its account site to Alibaba Cloud's
+// (passport: its identity check); Mistral's is Ory on auth and v2.auth; Caffeine's is Internet Identity on id.ai (its
+// II_URL; not the older identity.ic0.app)
 const CONSOLES: [Console; 3] = [
-    Console { name: "Qwen Cloud Token Plan", start: "https://home.qwencloud.com/api-keys?region=ap-southeast-1", sites: &["home.qwencloud.com"], read: None },
-    Console { name: "Mistral Vibe", start: "https://chat.mistral.ai/code/extensions", sites: &["chat.mistral.ai", "console.mistral.ai", "admin.mistral.ai"], read: None },
-    Console { name: "Caffeine", start: "https://caffeine.ai/inference/api-keys", sites: &["caffeine.ai", "www.caffeine.ai"], read: None },
+    Console { name: "Qwen Cloud Token Plan", start: "https://home.qwencloud.com/api-keys?region=ap-southeast-1", sites: &["home.qwencloud.com"],
+        sign_in: &["account.qwencloud.com", "account.alibabacloud.com", "passport.alibabacloud.com"], read: None },
+    Console { name: "Mistral Vibe", start: "https://chat.mistral.ai/code/extensions", sites: &["chat.mistral.ai", "console.mistral.ai", "admin.mistral.ai"],
+        sign_in: &["auth.mistral.ai", "v2.auth.mistral.ai"], read: None },
+    Console { name: "Caffeine", start: "https://caffeine.ai/inference/api-keys", sites: &["caffeine.ai", "www.caffeine.ai"], sign_in: &["id.ai"], read: None },
 ];
+
+/// The sign-ins the providers' pages offer, open to every console window: Google (Qwen, Mistral), Apple and Microsoft's
+/// work and personal accounts (Mistral), GitHub's sign-in and OAuth pages alone (Qwen), and Google's and Microsoft's own steps
+/// in a sign-in (a recovery check, a phone to confirm). "host/part": only paths whose first part it is. A company's own
+/// single sign-on is not here: it opens in the browser.
+const SIGN_IN: [&str; 10] = ["accounts.google.com", "myaccount.google.com", "gds.google.com", "appleid.apple.com", "login.microsoftonline.com", "login.live.com",
+    "account.live.com", "github.com/login", "github.com/session", "github.com/sessions"];
+
+/// Where a console window or its sign-in popup may be (console_page, popup): about:blank (a popup's first page), or over
+/// https on its provider's sites or sign-in hosts or SIGN_IN, exactly (no host under them, no port).
+fn nav_ok(c: &Console, url: &str) -> bool {
+    let Ok(u) = tauri::Url::parse(url) else { return false };
+    let first = u.path_segments().and_then(|mut s| s.next()).unwrap_or_default();
+    u.as_str() == "about:blank" || (u.scheme() == "https" && u.port().is_none() && c.sites.iter().chain(c.sign_in).chain(&SIGN_IN).any(|h| {
+        let (host, part) = h.split_once('/').map_or((*h, None), |(h, p)| (h, Some(p)));
+        u.host_str() == Some(host) && part.is_none_or(|p| p == first)
+    }))
+}
 
 const CONSOLE_JS: &str = include_str!("console.js");
 
@@ -1152,9 +1177,9 @@ fn own_stores() -> Result<(), String> {
     Ok(())
 }
 
-/// A provider's console window on `url`: its own store, the script only on its sites, https only.
+/// A provider's console window on `url`: its own store, the script only on its sites, https only, its pages on nav_ok's list.
 #[inline(never)]
-fn console_window(app: &AppHandle, c: &Console, mode: &str, url: &str, visible: bool) -> Result<tauri::WebviewWindow, String> {
+fn console_window(app: &AppHandle, c: &'static Console, mode: &str, url: &str, visible: bool) -> Result<tauri::WebviewWindow, String> {
     let label = if visible { label_of(c.name) } else { format!("{}-read", label_of(c.name)) };
     #[cfg(target_os = "macos")]
     own_stores()?;
@@ -1165,12 +1190,8 @@ fn console_window(app: &AppHandle, c: &Console, mode: &str, url: &str, visible: 
         .title(format!("{} usage — tazuna", c.name))
         .inner_size(1100.0, 780.0)
         .visible(visible)
-        .initialization_script(script)
-        .on_navigation(|u| u.scheme() == "https" || u.as_str() == "about:blank");
-    // a sign-in in a popup (window.open: Google's, Internet Identity's): a window of its own, outside console-* (no report),
-    // on the opener's webview configuration (its store), https only
-    let (handle, owner) = (app.clone(), c.name);
-    let b = b.on_new_window(move |url, features| popup(&handle, owner, url, features));
+        .initialization_script(script);
+    let b = guard(b, app, c, visible);
     #[cfg(target_os = "macos")]
     let b = b.data_store_identifier(store_id(c.name));
     #[cfg(not(target_os = "macos"))]
@@ -1178,19 +1199,121 @@ fn console_window(app: &AppHandle, c: &Console, mode: &str, url: &str, visible: 
     b.build().map_err(|e| e.to_string())
 }
 
+/// A console or sign-in window's rules (console_window, popup), with one record (Nav) for both: frames over https alone, its
+/// pages on nav_ok's list (console_page), the windows its pages open (popup).
 #[inline(never)]
-fn popup(app: &AppHandle, owner: &str, url: tauri::Url, features: tauri::webview::NewWindowFeatures) -> tauri::webview::NewWindowResponse<tauri::Wry> {
+fn guard<'a>(b: tauri::WebviewWindowBuilder<'a, tauri::Wry, AppHandle>, app: &AppHandle, c: &'static Console, visible: bool) -> tauri::WebviewWindowBuilder<'a, tauri::Wry, AppHandle> {
+    let (nav, handle) = (std::sync::Arc::new(Mutex::new(Nav::default())), app.clone());
+    let opens = nav.clone();
+    b.on_navigation(|u| u.scheme() == "https" || u.as_str() == "about:blank")
+        .on_page_load(move |w, p| console_page(w, c, visible, &nav, p.url(), matches!(p.event(), tauri::webview::PageLoadEvent::Finished)))
+        .on_new_window(move |url, features| popup(&handle, c, visible, &opens, url, features))
+}
+
+/// A console or sign-in window's record (Nav::load, Nav::open): the last page it finished on nav_ok's list, the last page it
+/// sent to the browser and when, its bounces back (to which page, how many, since when), and the host of the off-list page
+/// it acted on at that page's start (its finish is the same page: nothing more).
+#[derive(Default)]
+struct Nav {
+    last: Option<tauri::Url>,
+    sent: Option<(String, Instant)>,
+    bounce: Option<(tauri::Url, u32, Instant)>,
+    acted: Option<String>,
+}
+
+/// Where a window goes after a page load.
+#[derive(Debug, PartialEq)]
+enum Go {
+    Stay,
+    Back(tauri::Url),
+    Close,
+}
+
+impl Nav {
+    /// A page load (its start, or its finish): a page on the list stays; one off it opens in the browser (Nav::open; never
+    /// from a hidden reading) and the window goes back to its last page on the list, else the console's first page; a third
+    /// bounce to the same page within 10 s closes the window instead (a page that keeps sending it off the list).
+    fn load(&mut self, c: &Console, url: &tauri::Url, finished: bool, visible: bool, now: Instant) -> (Go, Option<String>) {
+        if nav_ok(c, url.as_str()) {
+            if finished && url.scheme() == "https" {
+                (self.last, self.acted) = (Some(url.clone()), None);
+            }
+            return (Go::Stay, None);
+        }
+        let host = url.host_str().unwrap_or_default().to_string();
+        if finished && self.acted.as_ref() == Some(&host) {
+            return (Go::Stay, None);
+        }
+        if !finished {
+            self.acted = Some(host);
+        }
+        let open = if visible { self.open(url, now) } else { None };
+        let Some(back) = self.last.clone().or_else(|| tauri::Url::parse(c.start).ok()) else { return (Go::Close, open) };
+        let (n, since) = match &self.bounce {
+            Some((b, n, since)) if *b == back && now.duration_since(*since) < Duration::from_secs(10) => (n + 1, *since),
+            _ => (1, now),
+        };
+        self.bounce = Some((back.clone(), n, since));
+        (if n > 2 { Go::Close } else { Go::Back(back) }, open)
+    }
+
+    /// A page for the browser, or None: one every 3 s at most per window and the same page once per 30 s (a page's script
+    /// opens windows and changes its address without a click; wry does not say which came from one), and a URL carrying a
+    /// code or a token (an OAuth callback's) as its site's root alone.
+    fn open(&mut self, url: &tauri::Url, now: Instant) -> Option<String> {
+        let secret = |s: Option<&str>| s.unwrap_or_default().split('&').any(|kv| {
+            let k = kv.split('=').next().unwrap_or_default().to_ascii_lowercase();
+            k.contains("code") || k.contains("token")
+        });
+        let target = if secret(url.query()) || secret(url.fragment()) { format!("{}://{}/", url.scheme(), url.host_str().unwrap_or_default()) } else { url.to_string() };
+        let ago = |t: &Instant| now.duration_since(*t);
+        if self.sent.as_ref().is_some_and(|(s, t)| ago(t) < Duration::from_secs(3) || (*s == target && ago(t) < Duration::from_secs(30))) {
+            return None;
+        }
+        self.sent = Some((target.clone(), now));
+        Some(target)
+    }
+}
+
+/// A console or sign-in window's page load, its main frame's (on_navigation sees the frames inside a page too, a captcha's or
+/// a payment form's, without telling them apart, so it keeps them to https alone): Nav::load decides, this does it, off
+/// WebKit's own page-load call.
+#[inline(never)]
+fn console_page(w: tauri::WebviewWindow, c: &Console, visible: bool, nav: &Mutex<Nav>, url: &tauri::Url, finished: bool) {
+    let (go, open) = nav.lock().unwrap().load(c, url, finished, visible, Instant::now());
+    if go == Go::Stay {
+        return;
+    }
+    eprintln!("tazuna desktop: {} left its pages for {}: {}", w.label(), url.host_str().unwrap_or_default(), if go == Go::Close { "closed" } else { "back" });
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(u) = open {
+            let _ = open_link(u);
+        }
+        let _ = match go {
+            Go::Back(u) => w.navigate(u),
+            _ => w.destroy(),
+        };
+    });
+}
+
+/// A window a console or sign-in page opens: a sign-in on nav_ok's list gets a window of its own, under the same rules (so a
+/// sign-in's own step may open one: Internet Identity's Google or Apple); any other https page opens in the browser
+/// (Nav::open); a hidden reading opens nothing.
+#[inline(never)]
+fn popup(app: &AppHandle, c: &'static Console, visible: bool, nav: &Mutex<Nav>, url: tauri::Url, features: tauri::webview::NewWindowFeatures) -> tauri::webview::NewWindowResponse<tauri::Wry> {
     static N: AtomicU64 = AtomicU64::new(0);
-    if url.scheme() != "https" {
+    if !visible || url.scheme() != "https" || !nav_ok(c, url.as_str()) {
+        let open = if visible && url.scheme() == "https" { nav.lock().unwrap().open(&url, Instant::now()) } else { None };
+        if let Some(u) = open {
+            tauri::async_runtime::spawn_blocking(move || open_link(u));
+        }
         return tauri::webview::NewWindowResponse::Deny;
     }
-    let label = format!("popup-{}-{}", slug(owner), N.fetch_add(1, Ordering::SeqCst));
-    let built = tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::External("about:blank".parse().expect("about:blank")))
+    let label = format!("popup-{}-{}", slug(c.name), N.fetch_add(1, Ordering::SeqCst));
+    let b = tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::External("about:blank".parse().expect("about:blank")))
         .window_features(features)
-        .title(format!("{owner} sign-in — tazuna"))
-        .on_navigation(|u| u.scheme() == "https" || u.as_str() == "about:blank")
-        .build();
-    match built {
+        .title(format!("{} sign-in — tazuna", c.name));
+    match guard(b, app, c, true).build() {
         Ok(window) => tauri::webview::NewWindowResponse::Create { window },
         Err(_) => tauri::webview::NewWindowResponse::Deny,
     }
@@ -1319,6 +1442,36 @@ fn window_gone(w: &tauri::Window) {
     }
 }
 
+/// The app's own page: tauri://localhost (on Windows http or https://tauri.localhost; elsewhere that is an ordinary host), or
+/// a development build's dev server (devUrl). Not a panel's or a plugin's scheme.
+fn local_page(url: &tauri::Url, dev: Option<&tauri::Url>) -> bool {
+    let at = (url.scheme(), url.host_str().unwrap_or_default(), url.port());
+    matches!(at, ("tauri", "localhost", None)) || (cfg!(windows) && matches!(at, ("http" | "https", "tauri.localhost", None)))
+        || dev.is_some_and(|d| d.origin() == url.origin())
+}
+
+/// The one caller of every app command (main_only): the main window on the app's own page, calling from that page itself
+/// (the request's Origin, where it carries one: Tauri's IPC requests do; not a panel's sandboxed frame, "null").
+fn main_caller(label: &str, top: &tauri::Url, origin: Option<&str>, dev: Option<&tauri::Url>) -> bool {
+    label == "main" && local_page(top, dev) && origin.is_none_or(|o| tauri::Url::parse(o).is_ok_and(|o| local_page(&o, dev)))
+}
+
+/// Every app command passes here first (the console plugin's `report` does not): only main_caller reaches one, whatever the
+/// capabilities say. Tauri refuses a remote page's call by itself today (no app manifest: build.rs); this keeps a console
+/// window, a sign-in popup, a frame or a main window showing some other site out if that changes.
+#[inline(never)]
+fn main_only(invoke: tauri::ipc::Invoke, commands: fn(tauri::ipc::Invoke) -> bool) -> bool {
+    let w = invoke.message.webview_ref();
+    let dev = if tauri::is_dev() { w.config().build.dev_url.as_ref() } else { None };
+    let origin = invoke.message.headers().get("origin").map(|o| o.to_str().unwrap_or("null"));
+    if w.url().is_ok_and(|u| main_caller(w.label(), &u, origin, dev)) {
+        return commands(invoke);
+    }
+    eprintln!("tazuna desktop: {} refused to window {} ({})", invoke.message.command(), w.label(), origin.unwrap_or("no origin"));
+    invoke.resolver.reject("not allowed from this window");
+    true
+}
+
 /// The macOS menu bar: the system's own items (Quit, Hide, the Edit menu that copy and paste need) and tazuna's (new chat,
 /// open folder, the palette, the shortcuts, light or dark). tazuna's send a `menu` event with their id; their shortcuts
 /// are the window's (docs/DESKTOP.md "Desktop habits").
@@ -1350,6 +1503,7 @@ fn menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
 }
 
 fn main() {
+    let commands: fn(tauri::ipc::Invoke) -> bool = tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, image_data, paste_image, paste_clipboard_image, open_key_page, open_link, open_in, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, plugins_export, plugins_import, plugins_import_file, hotkey, update_check, update_install, interrupt, new_chat, set_profile, console_open, console_forget, console_refresh, console_learned];
     tauri::Builder::default()
         .register_uri_scheme_protocol("tzwidget", |ctx, req| {
             // the main window's alone (a panel's frame is inside it): a console page gets nothing
@@ -1400,7 +1554,7 @@ fn main() {
         })
         .manage(Core::default())
         .manage(Consoles::default())
-        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, image_data, paste_image, paste_clipboard_image, open_key_page, open_link, open_in, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, plugins_export, plugins_import, plugins_import_file, hotkey, update_check, update_install, interrupt, new_chat, set_profile, console_open, console_forget, console_refresh, console_learned])
+        .invoke_handler(move |invoke| main_only(invoke, commands))
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
                 window_gone(w);
@@ -1633,6 +1787,109 @@ mod tests {
         }
         // the script ends in the function main.rs calls
         assert!(super::CONSOLE_JS.trim_end().ends_with("})") && super::CONSOLE_JS.contains("plugin:console|report"));
+    }
+
+    /// The app's commands answer only the main window on the app's own page, called from that page: not a console or sign-in
+    /// window, the main window showing another site, or a frame inside it (a panel's sandboxed frame sends Origin "null").
+    #[test]
+    fn app_commands_answer_only_the_main_window_on_its_own_page() {
+        let u = |s: &str| tauri::Url::parse(s).unwrap();
+        let dev = u("http://localhost:1420");
+        let main = |top: &str, origin: Option<&str>| super::main_caller("main", &u(top), origin, Some(&dev));
+        for (top, origin) in [("tauri://localhost", Some("tauri://localhost")), ("tauri://localhost/index.html", None), ("http://localhost:1420/", Some("http://localhost:1420"))] {
+            assert!(main(top, origin), "{top} {origin:?}");
+        }
+        // Windows serves the app from tauri.localhost; elsewhere that is any host's name
+        for (top, origin) in [("http://tauri.localhost/", "http://tauri.localhost"), ("https://tauri.localhost/settings", "https://tauri.localhost")] {
+            assert_eq!(main(top, Some(origin)), cfg!(windows), "{top}");
+        }
+        for (label, top) in [("console-Caffeine", "tauri://localhost"), ("console-Caffeine-read", "https://caffeine.ai/"), ("popup-Caffeine-0", "tauri://localhost/")] {
+            assert!(!super::main_caller(label, &u(top), None, Some(&dev)), "{label}");
+        }
+        for top in ["https://caffeine.ai/", "https://tauri.localhost.evil.example/", "tauri://localhost.evil.example/", "https://evil.example/tauri://localhost",
+            "https://tauri.localhost:8443/", "http://localhost:1421/", "https://localhost:1420/", "tzwidget://localhost/demo", "tzplugin://localhost/demo", "about:blank"] {
+            assert!(!main(top, None), "{top}");
+        }
+        // a frame inside the main window: its own origin, whatever the window's page
+        for origin in ["null", "tzwidget://localhost", "http://tzwidget.localhost", "https://evil.example", "http://localhost:1421", "not a url"] {
+            assert!(!main("tauri://localhost", Some(origin)), "{origin}");
+        }
+        assert!(!super::main_caller("main", &u("http://localhost:1420/"), None, None), "no dev server in a release build");
+    }
+
+    /// A console window's page loads (Nav, console_page's decisions): an off-list page opens in the browser once and the window
+    /// goes back; a page that keeps sending it off the list stops after two bounces; its start and finish act once; a hidden
+    /// reading opens nothing; a burst of windows opens one tab; a code or a token never reaches the browser.
+    #[test]
+    fn a_console_window_goes_back_from_off_list_pages_without_looping() {
+        use super::{Go, Nav};
+        let u = |s: &str| tauri::Url::parse(s).unwrap();
+        let s = |n: u64| std::time::Duration::from_secs(n);
+        let m = super::console_of("Mistral Vibe").unwrap();
+        let (p, x, t0) = (u("https://chat.mistral.ai/code/usage"), u("https://mistral.ai/terms"), std::time::Instant::now());
+        // no page finished yet: back to the console's first page
+        assert_eq!(Nav::default().load(m, &x, false, true, t0), (Go::Back(u(m.start)), Some(x.to_string())));
+        // a script on P sending the window to X every second: one tab, two bounces, then closed
+        let mut n = Nav::default();
+        let mut opened = vec![];
+        let mut went = vec![];
+        for i in 0..3 {
+            assert_eq!(n.load(m, &p, true, true, t0 + s(i)), (Go::Stay, None));
+            let (go, open) = n.load(m, &x, false, true, t0 + s(i));
+            // the same page's finish (a race with going back) does nothing more
+            assert_eq!(n.load(m, &x, true, true, t0 + s(i)), (Go::Stay, None));
+            opened.extend(open);
+            went.push(go);
+        }
+        assert_eq!((opened, went), (vec![x.to_string()], vec![Go::Back(p.clone()), Go::Back(p.clone()), Go::Close]));
+        // a server redirect from P to X (its start is P's, its finish X's): the same
+        let mut n = Nav::default();
+        n.load(m, &p, true, true, t0);
+        let went: Vec<Go> = (0..3).map(|i| { n.load(m, &p, false, true, t0 + s(i)); n.load(m, &x, true, true, t0 + s(i)).0 }).collect();
+        assert_eq!(went, [Go::Back(p.clone()), Go::Back(p.clone()), Go::Close]);
+        // bounces 10 s or more apart are the user's clicks: never closed
+        let mut n = Nav::default();
+        n.load(m, &p, true, true, t0);
+        assert!((0..5).all(|i| n.load(m, &x, false, true, t0 + s(11 * i)).0 == Go::Back(p.clone())));
+        // a hidden reading opens nothing
+        let mut n = Nav::default();
+        assert_eq!(n.load(m, &x, false, false, t0).1, None);
+        // the browser: one page every 3 s, the same page once per 30 s (popup's window.open burst and console_page share it)
+        let mut n = Nav::default();
+        let burst: Vec<_> = (0..10).filter_map(|i| n.open(&u(&format!("https://ads.example/{i}")), t0)).collect();
+        assert_eq!(burst, ["https://ads.example/0"]);
+        assert_eq!(n.open(&u("https://ads.example/1"), t0 + s(4)), Some("https://ads.example/1".into()));
+        assert_eq!(n.open(&u("https://ads.example/1"), t0 + s(20)), None);
+        assert_eq!(n.open(&u("https://ads.example/1"), t0 + s(40)), Some("https://ads.example/1".into()));
+        // an OAuth callback's code or token: the site's root alone
+        for (i, secret) in ["https://cb.example/callback?state=1&code=abc", "https://cb.example/cb#access_token=abc", "https://cb.example/#/cb?id_token=x", "https://cb.example/x?Token=1"].iter().enumerate() {
+            assert_eq!(Nav::default().open(&u(secret), t0 + s(100 * i as u64)), Some("https://cb.example/".into()), "{secret}");
+        }
+    }
+
+    /// A console window and its popups stay on their provider's sites, its sign-in hosts and the common sign-ins, over
+    /// https, exactly; anything else goes to the browser.
+    #[test]
+    fn a_console_window_stays_on_its_sign_in_pages() {
+        let c = |name: &str| super::console_of(name).unwrap();
+        let (q, m, k) = (c("Qwen Cloud Token Plan"), c("Mistral Vibe"), c("Caffeine"));
+        for (c, url) in [(q, "https://home.qwencloud.com/usage"), (q, "https://account.alibabacloud.com/sso/login.htm?x=1"), (m, "https://v2.auth.mistral.ai/login?flow=1"),
+            (m, "https://accounts.google.com/o/oauth2/v2/auth"), (m, "https://appleid.apple.com/auth/authorize"), (m, "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"),
+            (q, "https://github.com/login/oauth/authorize?client_id=x"), (q, "https://github.com/login"), (q, "https://github.com/session"), (q, "https://github.com/sessions/two-factor/app"),
+            (k, "https://id.ai/authorize#authorize"), (k, "about:blank"), (m, "https://gds.google.com/web/recoveryoptions"), (q, "https://myaccount.google.com/"),
+            (m, "https://account.live.com/proofs/Add")] {
+            assert!(super::nav_ok(c, url), "{} {url}", c.name);
+        }
+        for (c, url) in [(m, "https://accounts.google.com.evil.example/"), (m, "https://evil-accounts.google.com/"), (m, "https://evil.accounts.google.com/"),
+            (m, "https://accounts.google.com:8443/"), (m, "https://accounts.google.com@evil.example/"), (m, "http://accounts.google.com/"), (m, "http://chat.mistral.ai/"),
+            (m, "data:text/html,<p>hi"), (m, "javascript:alert(1)"), (m, "blob:https://chat.mistral.ai/1"), (m, "file:///etc/passwd"), (m, "about:srcdoc"), (m, "not a url"),
+            (m, "https://mistral.ai/terms"), (q, "https://github.com/"), (q, "https://github.com/evil/repo"), (q, "https://github.com/loginx"), (q, "https://gist.github.com/login"),
+            (m, "https://home.qwencloud.com/"), (k, "https://auth.mistral.ai/"), (k, "https://identity.ic0.app/")] {
+            assert!(!super::nav_ok(c, url), "{} {url}", c.name);
+        }
+        for c in &super::CONSOLES {
+            assert!(super::nav_ok(c, c.start), "{}", c.name);
+        }
     }
 
     /// The dry run's page for a plugin, written to TAZUNA_DRYRUN_OUT for a browser to run (the window's own check).
