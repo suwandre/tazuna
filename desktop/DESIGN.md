@@ -209,17 +209,25 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   B, 2026-11-19), a click on the plan opening the usage page. This conversation's numbers: the composer's own strip along
   its lower edge, inside its border (design review 14, M-A of `mockups/v13.html`): 32 px, the box's full width, a ground of
   `field` at 40% on the card, 12.5 px, 14 px Lucide icons; its context (the last call's input and output) against the
-  model's window ("20.3k of 128k", a bar and "16%" where the window is known), its cost (the compact rule: "$0.0053 this chat"; on a plan "$0.521 at API prices ·
+  model's window ("20.3k of 128k", a bar and "16%" where the window is known), its cost (the compact rule: "$0.0053 this chat"; on a plan "$0.521 at API prices,
   not billed", the plan named on hover; "not billed (Z.ai Coding Plan)" where the plan has no reference price; "free on
   this machine" on a local model, "free" on another free one; while a reply runs the Stats' "$0.54 so far" (on a plan,
-  with every finished turn on it, "at API prices · not billed" as after it), the finished
+  with every finished turn on it, "at API prices, not billed" as after it), the finished
   turns' sum where its calls bring no price yet, so the part never goes and comes back), the cache's share ("95.2% cached", to a tenth of a percent everywhere
   it is said — the receipt, this strip, the status bar, Stats, the usage page and the start page's ledger; the user, 2026-11-26; none where the provider reports
-  none) and a speed, last, so nothing moves: while a model call streams (Live stats) its time to first token counting
+  none), on Claude how long its cache stays warm (the core's `cache`: "warm 4m"; "warm <1m" and "cold" in `warn`, the
+  tooltip one sentence on what the next message re-reads once cold, ≈ dollars where known, "of plan usage" on the plan;
+  the user, 2026-11-27) and a speed, last, so nothing moves: while a model call streams (Live stats) its time to first token counting
   ("0.8 s"), then its own speed ("188 t/s") once the core's rule can time it; between calls the reply's, eased; once a reply
   has ended the last reply's average writing speed ("210 t/s", "Average writing speed of the last reply"; `writing`; where
   that reply wrote too little to time, the last one before it that could be timed, and its tooltip says so), and
-  none before any reply (the reply's "↓ tokens" stay on its Working row). They start at the box's text edge; a short row drops the cache, then the cost's words, then "of 128k", and never
+  none before any reply (the reply's "↓ tokens" stay on its Working row). From 85% of the window (`CONTEXT_WARN`) the
+  context's bar and percent are `warn`, here, in Stats and in the status bar, no glow; on Claude between replies a quiet
+  Compact button follows them (here and in the status bar), sending `/compact` to the core as it is, never through the
+  box's edit or its draft ("Compacting…" until the turn runs, then gone); none while an earlier message is being edited,
+  nor where claude takes no commands (a plain chat, the Lean profile).
+  They start at the box's text edge; a short row drops the cache's share, then the cost's words, then "of 128k", then
+  the cache's warmth (last: with Compact and a plan's cost words a 700 px row had no room for it at 85%), and never
   wraps. Each is a button (a Tab stop; with the strip above the box, Shift+Tab from the box reaches it): the cost opens the
   conversation's slip from it, the speed the work panel at Stats over this turn, the rest Stats over the conversation
   (nothing while a side chat or a subagent has the column). The Stats' and the status bar's own
@@ -262,12 +270,15 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   selected, a click on its row shows it rather than a second copy; its draft, queue and panel choice stay).
 - The message box completes: `/` at its start lists the conversation's commands with what each does, `@` anywhere lists
   the project's files, in one menu over the box (arrows, Enter or Tab to take, Esc to shut); its placeholder says only that
-  ("/ for commands, @ for files"; while a reply runs, how a message waits).
+  ("/ for commands, @ for files"; while a reply runs, how a message waits; once Claude's cache is cold, "Cache cold: the next
+  message re-reads 514k tokens", as the terminal says it).
   Attachments are chips over the text, an image with its thumbnail. An answer that names an image file shows it under
   the answer (a click shows it whole); nothing loads from the network.
 - Settings is one part at a time, chosen in a list on its left (Appearance first: theme, accent, text size, the type answers
   are set in, the Stats as tiles or rows, where the conversation's numbers stand, Live stats on or off; its rows have no line under them, the
-  labels and controls say it: design review 14); a provider's key field shows when asked for. Claude is the first of your providers: signed in, or how to sign
+  labels and controls say it: design review 14); a provider's key field shows when asked for. Claude is the first of your providers, Claude auto-compact
+  under it (Claude's default, 50, 70, 80 or 90% of its auto-compact window: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE as each claude
+  starts, a spinner by it until the settings come back with it, "Not saved" where it did not take): signed in, or how to sign
   in (`claude auth login` with Copy, and Check again), or its install page; the first-run dialog ticks it only when it is
   signed in. A provider's row has a Usage line under it (review 14, usage sources, and its fix after the user's review): the
   Track switch and, while it is on, how the usage is read (a Segmented where there are several: API, CLI, Console, Count
@@ -472,7 +483,7 @@ arrows; a row's line is 56 × 14 px with no mark), usage bar, status bar. Reuse 
   chat answer beside the agent keeps its own call (the agent's count does not reset or end with it). Its output counts
   from where it stands to the core's newest figure over the time the last step took (`Count`, lib/live.ts, with its
   check): never past that figure, never back. The context grows by it; the cost is the finished calls' plus the input's
-  and the counted output at its price (the price rules above: a reply on a plan says "at API prices · not billed" while
+  and the counted output at its price (the price rules above: a reply on a plan says "at API prices, not billed" while
   it runs too, when it and the finished turns are all on the plan; a paid call among them, "so far"; free stays free); the
   speed is its output since the first token over the time since then, by the core's rule for timing one (20 tokens, 5
   pieces, half a second, no burst over 1,000 t/s), and its time to first token counts until the token comes. A call's

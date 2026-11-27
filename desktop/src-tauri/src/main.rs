@@ -787,7 +787,7 @@ fn op(core: State<Core>, tid: String, msg: serde_json::Value) -> Result<(), Stri
 }
 
 fn is_window_op(msg: &serde_json::Value) -> bool {
-    msg.get("type").is_none() && matches!(msg["op"].as_str(), Some("models" | "refresh_model_list" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route" | "full" | "rename" | "hide" | "rewind" | "mcp" | "mcp_on" | "mcp_add" | "mcp_remove" | "mcp_check" | "hook" | "setup" | "gallery" | "gallery_get" | "accounts" | "review" | "piece" | "allow_root" | "fork" | "usage" | "spend_cap" | "worktree_new" | "worktrees" | "worktree_remove" | "pr" | "create" | "create_enable" | "create_discard" | "retry" | "complete" | "agent" | "task_stop" | "usage_sources" | "usage_track" | "usage_allowance"))
+    msg.get("type").is_none() && matches!(msg["op"].as_str(), Some("models" | "refresh_model_list" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route" | "full" | "rename" | "hide" | "rewind" | "mcp" | "mcp_on" | "mcp_add" | "mcp_remove" | "mcp_check" | "hook" | "setup" | "gallery" | "gallery_get" | "accounts" | "review" | "piece" | "allow_root" | "fork" | "usage" | "spend_cap" | "worktree_new" | "worktrees" | "worktree_remove" | "pr" | "create" | "create_enable" | "create_discard" | "retry" | "complete" | "agent" | "task_stop" | "usage_sources" | "usage_track" | "usage_allowance" | "autocompact"))
 }
 
 #[tauri::command]

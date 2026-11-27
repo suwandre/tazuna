@@ -115,7 +115,7 @@ const log = [];
       // the Stats beside the conversation (1440): this turn, then the conversation
       await step(p, `${T}-turn`, async () => { await p.getByTitle(/^Open the work panel/).click(); await p.waitForTimeout(700);
         const s = await stats(p); log.push(`${T} turn: ${JSON.stringify(s)}`);
-        must(s && s.first && s.calls === "3" && s.in === "469.9k" && s.out === "910" && s.text.includes("at API prices · not billed") && s.text.includes("t/s") && !/tok\/s|\d \/s/.test(s.text), `this turn: ${JSON.stringify(s)}`);
+        must(s && s.first && s.calls === "3" && s.in === "469.9k" && s.out === "910" && s.text.includes("at API prices, not billed") && s.text.includes("t/s") && !/tok\/s|\d \/s/.test(s.text), `this turn: ${JSON.stringify(s)}`);
         must(s.wide <= 0 && !s.cut.length && s.strokes.length === 3 && s.strokes.every((c) => c === s.live), `fit and colour: ${JSON.stringify(s)}`); });
       await step(p, `${T}-conversation`, async () => { await p.getByRole("radio", { name: "Conversation" }).click(); await p.waitForTimeout(300);
         const s = await stats(p); must(s.calls === "11" && s.in === "1.7M", `the conversation: ${JSON.stringify(s)}`); });
@@ -412,7 +412,7 @@ const log = [];
         log.push(`${T} mid: Out ${[...new Set(outs)].slice(0, 6).join(" → ")}… (${new Set(outs).size} values), strip ${r.strip}`);
         must(seen.every((x) => x.cut <= 0), `the strip spills: ${r.cut}`);
         // on the plan (each call says so): at API prices, not billed, while it runs too; a sparkline's tile does not come for the call in flight
-        must(r.strip.includes("at API prices · not billed") && !r.strip.includes("so far"), `the plan's words: ${r.strip}`);
+        must(r.strip.includes("at API prices, not billed") && !r.strip.includes("so far"), `the plan's words: ${r.strip}`);
         must(layout !== "tiles" || !r.stats.includes("Writing speed"), `a speed tile for the call in flight: ${r.stats}`);
         if (mode === "on") {
           must(outs.every((o, i) => !i || num(o) >= num(outs[i - 1])) && new Set(outs).size >= 12, `the count: ${outs.join(" ")}`);
@@ -691,7 +691,7 @@ const log = [];
       await p.evaluate(() => document.querySelector("main > header button[data-panel]")?.click()); await p.waitForTimeout(400);
       // a plan at API prices (the Mistral Vibe plan), then one with no reference price (Z.ai Coding Plan)
       await step(p, `${T}-plan`, async () => { await open(p, VIBE); await p.mouse.move(5, 400); const s = await strip(p); log.push(`${T} plan: ${JSON.stringify(s)}`);
-        ok(/\$[\d.]+ at API prices · not billed/.test(s.text) && s.titles.some((t) => /On your Mistral Vibe plan/.test(t)), `the plan's cost: ${JSON.stringify(s)}`); await box("plan"); });
+        ok(/\$[\d.]+ at API prices, not billed/.test(s.text) && s.titles.some((t) => /On your Mistral Vibe plan/.test(t)), `the plan's cost: ${JSON.stringify(s)}`); await box("plan"); });
       await step(p, `${T}-plan-no-ref`, async () => { await open(p, "Rename the config loader"); await p.mouse.move(5, 400);
         // every turn on the plan with no reference price (the mock's last one was paid)
         await p.evaluate(() => window.__again((v) => ({ ...v, blocks: v.blocks.map((b) => (b.kind === "done" ? { ...b, plan: true, provider: "Z.ai Coding Plan", price_m: undefined, model: b.model ?? "glm-5.3", cost: 0, run_cost: 0 } : b)) }))); await p.waitForTimeout(300);
@@ -1074,6 +1074,298 @@ const log = [];
       await c2.close();
     }
     if (process.env.ONLY === "r14") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok"); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
+  }
+  // the conversation's context and Claude's cache (the user, 2026-11-27; ONLY=ctx: these alone): the strip's context in the
+  // warning colour from 85% (84, 85, 94, 99, 100%) with Claude's Compact button, pending until the turn runs and then gone;
+  // how long the cache stays warm ("warm 59m" of an hour, "warm <1m" and "cold" in the warning colour), its tooltip, and the
+  // cold box's placeholder; an own-loop conversation with neither; narrow rows dropping the cache's share before its warmth;
+  // the status bar's placement; Stats' Context bar and row; Settings' Claude auto-compact and its pending state; the Changes
+  // section's long branch wrapped, never cut
+  if (!process.env.ONLY || process.env.ONLY === "ctx") {
+    const ok = (c, what) => { if (!c) throw new Error(what); };
+    // __REFUSE__: the core refuses the next /compact as it refuses a send (a notice marked rejected, no send_rejected: the
+    // window sent no draft)
+    const LC = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T), inv = T.invoke.bind(T);
+      T.emit = (e, p) => { if (p?.msg?.type === "view") window.__lastView = p; return emit(e, p); };
+      window.__again = (f) => { const { tid, msg } = window.__lastView; T.view(tid, f({ ...msg, from: 0 })); };
+      window.__pr = (m) => T.emit("tazuna-view", { tid: window.__lastView.tid, msg: { type: "pr", ...m } });
+      T.invoke = async (c, a) => { if (c === "send" && a?.text === "/compact" && window.__REFUSE__) { setTimeout(() => window.__again((v) => ({ ...v,
+        blocks: [...v.blocks, { kind: "notice", text: "the conversation is busy elsewhere", error: true, rejected: true }] })), 30); return null; } return inv(c, a); }; })();`;
+    const M = 60_000;
+    // a Claude conversation at `c` tokens of a 1M window between replies, its cache warm `left` ms more (negative: cold) of
+    // `ttl`, the next message re-reading `re` tokens once cold (at Opus's cache-write price unless `usd`)
+    // (the strip's context is the last call's input and output: 200 out, so 940,000 reads "940.2k"); its turns on the Claude
+    // plan, so the cost says "at API prices, not billed", the longest words it has
+    // `more`: the cache's own flags otherwise (plan false: billed by an API key; compact false: claude takes no commands)
+    const at = (p, c, left, ttl = 300_000, re = c, usd = null, more = {}) => p.evaluate(([c, left, ttl, re, usd, more]) => window.__again((v) => ({ ...v, model: "claude-opus-5-5", activity: "Done", context: c, context_window: 1_000_000, cost: 1.84,
+      usage: { input: 14_000, cache_write: 60_000, cache_read: 1_120_000, output: 9_000 },
+      blocks: v.blocks.map((b) => (b.kind === "done" ? { ...b, cost: 1.84, run_cost: 1.84, model: "claude-opus-5-5", plan: true, provider: null, price_m: [5, 0.5, 25] } : b)),
+      calls: [{ block: 1, fresh: 60_000, cached: 1_120_000, out: 200, cost: 1.84, first_ms: 1400, tps: 74, total_ms: 9000, model: "claude-opus-5-5", estimate: true, plan: true }],
+      cache: { ttl_ms: ttl, warm_until: Date.now() + left, rebuild: re >= 50_000 ? re : null, rebuild_usd: usd ?? (re >= 50_000 ? (re / 1e6) * 4 * (ttl < 3_600_000 ? 1.25 : 2) : null), plan: true, compact: true, ...more } })), [c, left, ttl, re, usd, more]);
+    const colour = (p, c) => p.evaluate((c) => { const d = document.createElement("i"); d.style.color = c; document.body.append(d); const r = getComputedStyle(d).color; d.remove(); return r; }, c);
+    // what the strip shows: its text, whether it runs over, the percent's and the bar's colours, the warmth and Compact
+    const strip = (p) => p.evaluate(() => { const g = document.querySelector(".tz-nums"); if (!g) return null;
+      const pct = [...g.querySelectorAll("span")].find((e) => /^\d+%$/.test(e.textContent.trim())), bar = g.querySelector("span.h-\\[5px\\] > i");
+      const warm = [...g.querySelectorAll("button")].find((b) => /^(warm|cold)/.test(b.textContent.trim())), compact = [...g.querySelectorAll("button")].find((b) => /^Compact/.test(b.textContent.trim()));
+      const shown = (e) => !!e && getComputedStyle(e.closest(".tz-n4") ?? e).display !== "none";
+      return { text: g.innerText.replace(/\s+/g, " ").trim(), over: g.scrollWidth - g.clientWidth, drop: g.dataset.drop, pct: pct && getComputedStyle(pct).color, bar: bar && getComputedStyle(bar).backgroundColor,
+        warm: shown(warm) ? warm.innerText.replace(/\s+/g, " ").trim() : null, warmTitle: warm?.title ?? null, warmColour: warm && getComputedStyle(warm.querySelector("span")).color,
+        compact: compact ? compact.innerText.trim() : null, compactTitle: compact?.title ?? null, placeholder: [...document.querySelectorAll("[data-composer] textarea")].map((t) => t.placeholder).find(Boolean) }; });
+    const box = (p, name) => p.locator("[data-composer]").screenshot({ path: `${OUT}/${name}.png` });
+    for (const theme of ["dark", "light"]) {
+      const T = `ctx-${theme[0]}`, [ctx, p] = await ctxOf({ theme, extra: LC, scale: 2 });
+      const warn = await colour(p, "var(--warn)");
+      await open(p, "Names for a grey cat");
+      // [name, context, warm for, cache life, re-read, its dollars, the warmth shown]
+      for (const [n, c, left, ttl, re, usd, said] of [["84", 840_000, 4.5 * M, 300_000, 840_000, null, "warm 4m"], ["85", 850_000, 4.5 * M, 300_000, 850_000, null, "warm 4m"],
+        ["94", 940_000, 59.5 * M, 3_600_000, 940_000, null, "warm 59m"], ["99", 990_000, 30_000, 300_000, 990_000, null, "warm <1m"], ["100-cold", 1_000_000, -1000, 3_600_000, 1_200_000, 9.6, "cold"]]) {
+        await step(p, `${T}-${n}`, async () => {
+          await at(p, c, left, ttl, re, usd); await p.waitForTimeout(300);
+          const s = await strip(p), hot = c >= 850_000; log.push(`${T} ${n}: ${JSON.stringify(s)}`);
+          ok((s.pct === warn) === hot && (s.bar === warn) === hot, `${n}: the percent ${s.pct}, the bar ${s.bar} (warn ${warn})`);
+          ok(!!s.compact === hot && (!hot || s.compactTitle === "Summarise the conversation to free context (Claude's /compact)"), `${n}: Compact ${s.compact} "${s.compactTitle}"`);
+          ok(s.warm === said && (s.warmColour === warn) === /<1m|cold/.test(said), `${n}: the warmth "${s.warm}" in ${s.warmColour}`);
+          ok(s.over <= 0 && +s.drop < 4, `${n}: the strip runs over by ${s.over} (drop ${s.drop})`);
+          ok(n !== "100-cold" || s.placeholder === "Cache cold: the next message re-reads 1.2M tokens", `${n}: the placeholder "${s.placeholder}"`);
+          ok(n === "100-cold" || s.placeholder === "/ for commands, @ for files", `${n}: the placeholder "${s.placeholder}"`);
+          ok(!s.warmTitle.includes("·"), `${n}: a middle dot in "${s.warmTitle}"`);
+          await box(p, `${T}-${n}-box`);
+        });
+      }
+      // the warmth's sentence for each kind of cache: an hour's, under a minute, cold, too small to re-read much, billed
+      await step(p, `${T}-tooltips`, async () => {
+        const want = { "94": "Claude's 1-hour cache stays warm for 59 more minutes; once cold, the next message re-reads 940k tokens (≈ $7.52 of plan usage)",
+          "99": "Claude's 5-minute cache stays warm for less than a minute; once cold, the next message re-reads 990k tokens (≈ $4.95 of plan usage)",
+          cold: "Claude's 1-hour cache is cold: the next message re-reads 1.2M tokens (≈ $9.60 of plan usage)", small: "Claude's 5-minute cache stays warm for 2 more minutes",
+          billed: "Claude's 1-hour cache stays warm for 59 more minutes; once cold, the next message re-reads 940k tokens (≈ $7.52)" };
+        for (const [n, c, left, ttl, re, usd, more] of [["94", 940_000, 59.5 * M, 3_600_000, 940_000], ["99", 990_000, 30_000, 300_000, 990_000], ["cold", 1_000_000, -1000, 3_600_000, 1_200_000, 9.6],
+          ["small", 30_000, 2.2 * M, 300_000, 30_000], ["billed", 940_000, 59.5 * M, 3_600_000, 940_000, null, { plan: false }]]) {
+          await at(p, c, left, ttl, re, usd, more); await p.waitForTimeout(150);
+          const t = (await strip(p)).warmTitle; log.push(`${T} tooltip ${n}: ${t}`); ok(t === want[n], `${n}: "${t}"`);
+        }
+      });
+      await step(p, `${T}-warm-tooltip`, async () => {
+        await at(p, 940_000, 59.5 * M, 3_600_000); await p.waitForTimeout(200);
+        await p.locator(".tz-nums button").filter({ hasText: "warm" }).hover(); await p.mouse.move(5, 5, { steps: 1 }); await p.locator(".tz-nums button").filter({ hasText: "warm" }).hover({ position: { x: 10, y: 8 } }); await p.waitForTimeout(900);
+        const tip = await p.evaluate(() => document.querySelector(".tz-tip")?.textContent ?? "");
+        ok(/^Claude's 1-hour cache stays warm for 59 more minutes; once cold, the next message re-reads 940k tokens \(≈ \$7\.52 of plan usage\)$/.test(tip), `the tooltip: "${tip}"`);
+        await p.screenshot({ path: `${OUT}/${T}-warm-tooltip-box.png`, clip: { x: 200, y: 520, width: 1080, height: 280 } });
+      });
+      await step(p, `${T}-cold-tooltip`, async () => {
+        await p.mouse.move(5, 5); await at(p, 1_000_000, -1000, 3_600_000, 1_200_000, 9.6); await p.waitForTimeout(200);
+        await p.locator(".tz-nums button").filter({ hasText: "cold" }).hover({ position: { x: 10, y: 8 } }); await p.waitForTimeout(900);
+        const tip = await p.evaluate(() => document.querySelector(".tz-tip")?.textContent ?? "");
+        ok(tip === "Claude's 1-hour cache is cold: the next message re-reads 1.2M tokens (≈ $9.60 of plan usage)", `the tooltip: "${tip}"`);
+        await p.screenshot({ path: `${OUT}/${T}-cold-tooltip-box.png`, clip: { x: 200, y: 520, width: 1080, height: 280 } });
+      });
+      await p.mouse.move(5, 5);
+      await step(p, `${T}-compact-pending`, async () => {
+        await at(p, 940_000, 59.5 * M, 3_600_000); await p.waitForTimeout(200);
+        await p.locator(".tz-nums button").filter({ hasText: "Compact" }).click(); await p.waitForTimeout(150);
+        const s = await strip(p), sent = await p.evaluate(() => window.__SENT__.filter(([c]) => c === "send").pop());
+        ok(s.compact === "Compacting…", `pending: "${s.compact}"`);
+        ok(sent?.[1]?.text === "/compact" && sent[1].draft == null, `sent ${JSON.stringify(sent)}`);
+        await box(p, `${T}-compact-pending-box`);
+      });
+      await step(p, `${T}-compact-running`, async () => {
+        await p.evaluate(() => window.__again((v) => ({ ...v, activity: "Thinking", blocks: [...v.blocks, { kind: "prompt", text: "/compact" }] }))); await p.waitForTimeout(300);
+        const s = await strip(p); ok(!s.compact, `Compact while the reply runs: ${s.compact}`);
+        await box(p, `${T}-compact-running-box`);
+      });
+      // its turn ends with the context the summary left (compact_boundary's post_tokens): no warning, no Compact
+      await step(p, `${T}-compact-done`, async () => {
+        await p.evaluate(() => window.__again((v) => ({ ...v, activity: "Done", context: 36_948, blocks: [...v.blocks, { kind: "notice", text: "── context compacted: earlier turns are now a summary ──", error: false },
+          { kind: "done", ok: true, secs: 54, turns: 1, cost: 0.2, usage: { input: 0, cache_write: 0, cache_read: 0, output: 0 }, stopped: false }] }))); await p.waitForTimeout(300);
+        const s = await strip(p); log.push(`${T} compacted: ${JSON.stringify(s)}`);
+        ok(!s.compact && s.pct !== warn && /^37\.1k of 1M 4%/.test(s.text), `after compaction: ${JSON.stringify(s)}`);
+        await box(p, `${T}-compact-done-box`);
+      });
+      // while an earlier message is being edited, no Compact (it would have gone through the edit's rewind); back after
+      await step(p, `${T}-compact-editing`, async () => {
+        await at(p, 940_000, 59.5 * M, 3_600_000); await p.evaluate(() => window.__again((v) => ({ ...v, edit_points: [{ cp: 0, block: 0 }] }))); await p.waitForTimeout(300);
+        await p.locator("[data-msg]").first().hover(); await p.getByRole("button", { name: "Edit from here" }).first().click(); await p.waitForTimeout(300);
+        const s = await strip(p); ok(!s.compact && await p.getByText("Editing an earlier message").count() === 1, `Compact while editing: ${JSON.stringify(s)}`);
+        await p.screenshot({ path: `${OUT}/${T}-compact-editing-box.png`, clip: { x: 200, y: 420, width: 1080, height: 380 } });
+        await p.getByRole("button", { name: "Cancel" }).click(); await p.waitForTimeout(300);
+        ok((await strip(p)).compact === "Compact", "Compact did not come back after the edit");
+      });
+      // refused (the core's notice): the box's draft is left as it was, nothing put back in it, and the button is free again
+      await step(p, `${T}-compact-refused`, async () => {
+        const box2 = p.locator("[data-composer] textarea:not([aria-hidden])");
+        await box2.fill("half-typed draft"); await p.evaluate(() => { window.__REFUSE__ = true; });
+        await p.locator(".tz-nums button").filter({ hasText: "Compact" }).click(); await p.waitForTimeout(400);
+        const s = await strip(p), draft = await box2.inputValue();
+        ok(draft === "half-typed draft" && s.compact === "Compact", `refused: the draft "${draft}", the button "${s.compact}"`);
+        await box(p, `${T}-compact-refused-box`);
+        await p.evaluate(() => { window.__REFUSE__ = false; }); await box2.fill("");
+      });
+      // where claude takes no commands (a plain chat, the Lean profile): the warmth, no Compact
+      await step(p, `${T}-no-commands`, async () => {
+        await at(p, 940_000, 59.5 * M, 3_600_000, 940_000, null, { compact: false }); await p.waitForTimeout(300);
+        const s = await strip(p); ok(!s.compact && s.warm === "warm 59m" && s.pct === warn, `no commands: ${JSON.stringify(s)}`);
+        await box(p, `${T}-no-commands-box`);
+      });
+      // the clock alone, no new view: warm 1m to <1m, then <1m to cold (the box's placeholder with it), refitted each time
+      await step(p, `${T}-timer`, async () => {
+        await p.evaluate(() => { document.querySelector("[data-composer]").style.maxWidth = "520px"; });
+        await at(p, 940_000, 61_200, 300_000); await p.waitForTimeout(250);
+        const a = await strip(p); await p.waitForTimeout(2600); const b = await strip(p);
+        await at(p, 940_000, 1_400, 300_000); await p.waitForTimeout(250);
+        const c = await strip(p); await p.waitForTimeout(2600); const d = await strip(p);
+        log.push(`${T} timer: ${[a, b, c, d].map((x) => `${x.warm} (drop ${x.drop}, over ${x.over})`).join(" -> ")}; placeholder "${d.placeholder}"`);
+        ok(a.warm === "warm 1m" && b.warm === "warm <1m" && c.warm === "warm <1m" && d.warm === "cold" && [a, b, c, d].every((x) => x.over <= 0), "the clock's changes");
+        ok(d.placeholder === "Cache cold: the next message re-reads 940k tokens", `the placeholder "${d.placeholder}"`);
+        await box(p, `${T}-timer-cold-box`);
+        await p.evaluate(() => { document.querySelector("[data-composer]").style.maxWidth = ""; });
+      });
+      // a core that never answers: the button is free again after 15 s
+      if (theme === "dark") await step(p, `${T}-compact-release`, async () => {
+        await at(p, 940_000, 59.5 * M, 3_600_000); await p.waitForTimeout(200);
+        await p.locator(".tz-nums button").filter({ hasText: "Compact" }).click(); await p.waitForTimeout(200);
+        const a = (await strip(p)).compact; await p.waitForTimeout(15_200); const b = (await strip(p)).compact;
+        ok(a === "Compacting…" && b === "Compact", `released: ${a} -> ${b}`);
+      });
+      await step(p, `${T}-own-loop`, async () => {
+        await p.evaluate(() => window.__again((v) => ({ ...v, model: "deepseek-v4.1-flash", activity: "Done", context: 940_000, context_window: 1_000_000, cache: null }))); await p.waitForTimeout(300);
+        const s = await strip(p); log.push(`${T} own loop: ${JSON.stringify(s)}`);
+        ok(!s.warm && !s.compact && s.pct === warn && s.placeholder === "/ for commands, @ for files", `own loop: ${JSON.stringify(s)}`);
+        await box(p, `${T}-own-loop-box`);
+      });
+      // narrow rows: the strip never runs over; the cache's share goes before its warmth, which goes last
+      for (const w of [1100, 1000, 960, 820, 760]) await step(p, `${T}-narrow-${w}`, async () => {
+        await p.setViewportSize({ width: w, height: 800 }); await at(p, 940_000, 59.5 * M, 3_600_000); await p.waitForTimeout(400);
+        // [the cache's share shown, its warmth shown]: the warmth goes last
+        const s = await strip(p), n1 = await p.evaluate(() => [".tz-n1", ".tz-n4"].map((c) => [...document.querySelectorAll(`.tz-nums ${c}`)].some((e) => getComputedStyle(e).display !== "none")));
+        log.push(`${T} ${w}: drop ${s.drop}, over ${s.over}, ${s.text}`);
+        ok(s.over <= 0 && n1.length === 2 && (n1[1] || !n1[0]) && s.compact === "Compact", `${w}: ${JSON.stringify(s)} ${n1}`);
+        await box(p, `${T}-narrow-${w}-box`);
+      });
+      await p.setViewportSize({ width: 1280, height: 800 });
+      // the box narrower than any window makes it (a reading column of 580 beside a wide work panel, then less): the drops
+      // in order, the warmth last, Compact kept
+      for (const bw of [580, 520, 470, 420]) await step(p, `${T}-box-${bw}`, async () => {
+        await at(p, 940_000, 59.5 * M, 3_600_000); await p.evaluate((bw) => { document.querySelector("[data-composer]").style.maxWidth = `${bw}px`; }, bw); await p.waitForTimeout(400);
+        const s = await strip(p), n1 = await p.evaluate(() => [".tz-n1", ".tz-n4"].map((c) => [...document.querySelectorAll(`.tz-nums ${c}`)].some((e) => getComputedStyle(e).display !== "none")));
+        log.push(`${T} box ${bw}: drop ${s.drop}, over ${s.over}, ${s.text}`);
+        ok(s.over <= 0 && (n1[1] || !n1[0]) && s.compact === "Compact", `box ${bw}: ${JSON.stringify(s)} ${n1}`);
+        await box(p, `${T}-box-${bw}-box`);
+      });
+      await p.evaluate(() => { document.querySelector("[data-composer]").style.maxWidth = ""; });
+      // in the status bar (Settings › Appearance › Conversation numbers)
+      await toBar(p);
+      for (const [n, c, left, ttl, re, usd, want] of [["84", 840_000, 4.5 * M, 300_000, 840_000, null, /context 84% of 1M.*warm 4m/], ["94", 940_000, 59.5 * M, 3_600_000, 940_000, null, /context 94% of 1M.*warm 59m/],
+        ["99", 990_000, 30_000, 300_000, 990_000, null, /context 99% of 1M.*warm <1m/], ["cold", 1_000_000, -1000, 3_600_000, 1_200_000, 9.6, /context 100% of 1M.*cold/]]) {
+        await step(p, `${T}-bar-${n}`, async () => {
+          await at(p, c, left, ttl, re, usd); await p.waitForTimeout(300);
+          const bar = p.locator("footer[aria-label=Status]"), t = (await bar.innerText()).replace(/\s+/g, " ");
+          const pc = await bar.locator("[title=\"This conversation's context\"] span").evaluate((e) => getComputedStyle(e).color);
+          ok(want.test(t) && (pc === warn) === (c >= 850_000) && !(await p.locator(".tz-nums").count()), `the bar: "${t}" ${pc}`);
+          ok((await bar.getByRole("button", { name: "Compact" }).count()) === (c >= 850_000 ? 1 : 0), `the bar's Compact at ${n}`);
+          await bar.screenshot({ path: `${OUT}/${T}-bar-${n}-strip.png` });
+        });
+      }
+      // the bar's Compact: the same pending state, gone once the turn runs
+      await step(p, `${T}-bar-compact`, async () => {
+        await at(p, 940_000, 59.5 * M, 3_600_000); await p.waitForTimeout(300);
+        const bar = p.locator("footer[aria-label=Status]");
+        await bar.getByRole("button", { name: "Compact" }).click(); await p.waitForTimeout(150);
+        ok(await bar.getByText("Compacting…").count() === 1, "the bar's Compact has no pending state");
+        await bar.screenshot({ path: `${OUT}/${T}-bar-compact-pending-strip.png` });
+        // another conversation at 94%: its own Compact, not the first one's pending state
+        await side(p).locator('a[title^="Fix the flaky retry test"], a[title^="The retry test fails"]').first().click({ timeout: 4000 }); await p.waitForTimeout(800);
+        await at(p, 940_000, 59.5 * M, 3_600_000); await p.waitForTimeout(300);
+        ok(await bar.getByRole("button", { name: "Compact" }).count() === 1 && await bar.getByText("Compacting…").count() === 0, "the pending state followed into another conversation");
+        await p.evaluate(() => window.__again((v) => ({ ...v, activity: "Thinking", blocks: [...v.blocks, { kind: "prompt", text: "/compact" }] }))); await p.waitForTimeout(300);
+        ok(await bar.getByText(/Compact/).count() === 0, "the bar's Compact while the reply runs");
+      });
+      // a narrow bar: nothing runs past it (its scroll width, not its text); the cache's share goes first, the context with
+      // its Compact next, the warmth last
+      for (const w of [1100, 960, 900, 820, 760]) await step(p, `${T}-bar-narrow-${w}`, async () => {
+        await p.setViewportSize({ width: w, height: 800 }); await at(p, 940_000, 59.5 * M, 3_600_000); await p.waitForTimeout(400);
+        const bar = p.locator("footer[aria-label=Status]");
+        const g = await bar.evaluate((f) => { const r = f.getBoundingClientRect(), shown = [...f.querySelectorAll("*")].filter((e) => e.getBoundingClientRect().width > 0);
+          return { over: f.scrollWidth - f.clientWidth, past: Math.max(...shown.map((e) => e.getBoundingClientRect().right)) - r.right, text: f.innerText.replace(/\s+/g, " ").trim() }; });
+        log.push(`${T} bar ${w}: ${JSON.stringify(g)}`);
+        ok(g.over <= 0 && g.past <= 0 && (/warm 59m/.test(g.text) || !/context/.test(g.text)), `the bar at ${w}: ${JSON.stringify(g)}`);
+        await bar.screenshot({ path: `${OUT}/${T}-bar-narrow-${w}-strip.png` });
+      });
+      await p.setViewportSize({ width: 1280, height: 800 });
+      await p.evaluate(() => { localStorage.setItem("tazuna.numbers", "under"); window.dispatchEvent(new Event("tz-looks")); });
+      // Stats over the conversation: the Context bar (tiles) and row in the warning colour
+      await step(p, `${T}-stats-context`, async () => {
+        await at(p, 940_000, 59.5 * M, 3_600_000); await p.waitForTimeout(300);
+        await p.locator(".tz-nums button").first().click(); await p.waitForTimeout(700);
+        const sec = p.locator("section[aria-label=Stats]"), bar = await sec.locator(".bg-warn").count();
+        ok(bar === 1, `Stats' Context bar in the warning colour: ${bar}`);
+        await sec.screenshot({ path: `${OUT}/${T}-stats-context-tiles.png` });
+        await p.evaluate(() => { localStorage.setItem("tazuna.stats", "rows"); window.dispatchEvent(new Event("tz-looks")); }); await p.waitForTimeout(300);
+        const row = await sec.locator("div").filter({ hasText: /^Context/ }).last().locator("span.text-warn").count();
+        ok(row === 1, `Stats' Context row in the warning colour: ${row}`);
+        await sec.screenshot({ path: `${OUT}/${T}-stats-context-rows.png` });
+        await p.evaluate(() => { localStorage.setItem("tazuna.stats", "tiles"); window.dispatchEvent(new Event("tz-looks")); });
+      });
+      // a large cost in its tile (the user, 2026-11-27: "about $243.…" cut, "at API prices · not billed"): the figure steps
+      // down until it fits, never cut, and the plan's words carry no middle dot
+      await step(p, `${T}-stats-cost-large`, async () => {
+        await p.evaluate(() => window.__again((v) => ({ ...v, cost: 1243.57, blocks: v.blocks.map((b) => (b.kind === "done" ? { ...b, cost: 1243.57, run_cost: 1243.57, estimate: true } : b)),
+          calls: v.calls.map((c) => ({ ...c, cost: 1243.57, estimate: true })) }))); await p.waitForTimeout(500);
+        const sec = p.locator("section[aria-label=Stats]");
+        const t = await sec.evaluate((s) => { const l = [...s.querySelectorAll("div")].find((d) => d.textContent === "Cost" && d.className.includes("text-faint")), v = l.nextElementSibling;
+          return { value: v.textContent, over: v.scrollWidth - v.clientWidth, size: getComputedStyle(v).fontSize, sub: v.nextElementSibling?.textContent.replace(/\s+/g, " ") ?? null }; });
+        log.push(`${T} cost tile: ${JSON.stringify(t)}`);
+        ok(t.over <= 0 && /^about \$1,243/.test(t.value) && t.sub === "at API prices, not billed", `the Cost tile: ${JSON.stringify(t)}`);
+        await sec.screenshot({ path: `${OUT}/${T}-stats-cost-large.png` });
+      });
+      await esc(p);
+      // Settings › Providers: Claude auto-compact, the choice at once with a spinner until the settings come back
+      await step(p, `${T}-settings-autocompact`, async () => {
+        await p.evaluate(() => { window.__SETTINGS_MS__ = 1500; localStorage.setItem("tazuna.settings.tab", "Providers"); });
+        await side(p).locator("button", { hasText: "Settings" }).last().click(); await p.waitForTimeout(1900);
+        const group = p.getByRole("radiogroup", { name: "Claude auto-compact" }), dialog = p.locator("[role=dialog][aria-label=Settings]");
+        ok(await group.getByRole("radio", { name: "Claude's default" }).getAttribute("aria-checked") === "true", "Claude's default is not chosen at first");
+        await dialog.screenshot({ path: `${OUT}/${T}-settings-default.png` });
+        await group.getByRole("radio", { name: "80%" }).click(); await p.waitForTimeout(200);
+        ok(await group.getByRole("radio", { name: "80%" }).getAttribute("aria-checked") === "true" && await dialog.locator("[aria-label=Saving]").count() === 1, "no pending state on 80%");
+        await dialog.screenshot({ path: `${OUT}/${T}-settings-pending.png` });
+        await p.waitForTimeout(1700);
+        ok(await p.evaluate(() => window.__AUTOCOMPACT__) === 80 && await dialog.locator("[aria-label=Saving]").count() === 0 && await group.getByRole("radio", { name: "80%" }).getAttribute("aria-checked") === "true", "80% not saved");
+        await dialog.screenshot({ path: `${OUT}/${T}-settings-80.png` });
+        await group.getByRole("radio", { name: "Claude's default" }).click(); await p.waitForTimeout(1900);
+        ok(await p.evaluate(() => window.__AUTOCOMPACT__) === null, `Claude's default sent as ${await p.evaluate(() => window.__AUTOCOMPACT__)}`);
+        // not written: the settings come back without it, and after 6 s the row says so and shows what holds
+        await p.evaluate(() => { window.__AUTOCOMPACT_FAIL__ = true; window.__SETTINGS_MS__ = 20; });
+        await group.getByRole("radio", { name: "50%" }).click(); await p.waitForTimeout(6400);
+        ok(await dialog.getByText("Not saved").count() === 1 && await dialog.locator("[aria-label=Saving]").count() === 0
+          && await group.getByRole("radio", { name: "Claude's default" }).getAttribute("aria-checked") === "true", "a value not written is not said");
+        await dialog.screenshot({ path: `${OUT}/${T}-settings-not-saved.png` });
+        // the settings coming back later with it after all: the note goes, the value shows
+        await p.evaluate(() => { window.__AUTOCOMPACT_FAIL__ = false; window.__AUTOCOMPACT__ = 50; window.__TAURI_INTERNALS__.invoke("op", { tid: window.__lastView.tid, msg: { op: "settings" } }); });
+        await p.waitForTimeout(300);
+        ok(await dialog.getByText("Not saved").count() === 0 && await group.getByRole("radio", { name: "50%" }).getAttribute("aria-checked") === "true", "a late reply with the value left the note");
+        await p.evaluate(() => { window.__AUTOCOMPACT__ = null; });
+      });
+      await esc(p);
+      // the Changes section's branch: a long one wraps under itself, nothing cut, at 300 and at 260
+      await step(p, `${T}-branch`, async () => {
+        await side(p).locator('a[title^="Fix the flaky retry test"], a[title^="The retry test fails"]').first().click({ timeout: 4000 }); await p.waitForTimeout(800);
+        await p.evaluate(() => window.__pr({ number: 42, title: "Offer retry backoff for long-running uploads", state: "OPEN", headRefName: "fix/offer-retry-backoff-for-long-running-uploads-section", baseRefName: "main", statusCheckRollup: [], reviews: [], comments: [] }));
+        if (!(await p.locator("aside[aria-label='The work']").count())) { await p.evaluate(() => document.querySelector("main > header button[data-panel]").click()); await p.waitForTimeout(450); }
+        for (const w of [300, 260]) {
+          if (w === 260) { await p.locator("[role=separator][aria-label='Width of the work panel']").focus(); await p.keyboard.press("Home"); await p.waitForTimeout(300); }
+          const b = await p.evaluate(() => { const e = [...document.querySelectorAll("aside[aria-label='The work'] div.font-mono")].find((d) => d.textContent.includes(" → ")), a = document.querySelector("aside[aria-label='The work']");
+            const r = e.getBoundingClientRect(), ar = a.getBoundingClientRect(); return { text: e.textContent, lines: Math.round(r.height / parseFloat(getComputedStyle(e).lineHeight)), over: e.scrollWidth - e.clientWidth, past: r.right - ar.right }; });
+          log.push(`${T} branch at ${w}: ${JSON.stringify(b)}`);
+          ok(b.text === "fix/offer-retry-backoff-for-long-running-uploads-section → main" && b.lines >= 2 && b.over <= 0 && b.past <= 0, `the branch at ${w}: ${JSON.stringify(b)}`);
+          // the section with a margin round it, so its right edge shows whole
+          const bb = await p.locator("aside[aria-label='The work'] section").filter({ hasText: "Changes" }).first().boundingBox();
+          await p.screenshot({ path: `${OUT}/${T}-branch-${w}.png`, clip: { x: bb.x - 12, y: bb.y - 8, width: bb.width + 24, height: bb.height + 16 } });
+        }
+        await p.locator("[role=separator][aria-label='Width of the work panel']").focus(); await p.keyboard.press("Enter"); await p.waitForTimeout(200);
+      });
+      if (p.errs.length) log.push(`FAIL ${T} page errors: ${p.errs.join(" | ")}`);
+      await ctx.close();
+    }
+    if (process.env.ONLY === "ctx") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok"); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
   }
   // review 14, a step's insides (ONLY=steps: these alone; review/mock.js "Order the summary lines"): every kind of step
   // unfolded, its code drawn as code: a read's numbers in a gutter (none in a copy) and its long lines hanging under their

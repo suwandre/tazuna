@@ -99,8 +99,8 @@ export function stats(v: View, scope: "turn" | "all") {
   const about = turns.some((b) => b.estimate) || running.some((c) => c.estimate);
   // a payee nobody named (a model on this machine, a gateway it cannot name): no word, as the receipt has none
   const payees = [...new Set(turns.map((b) => paidTo({ plan: b.plan, provider: b.provider ?? undefined, providers: b.providers })))];
-  const how = noMoney ? "not billed" : cost == null || !said && !running.length ? undefined : planNow ? "at API prices · not\u00a0billed" : running.length ? "so far"
-    : plan.length === turns.length ? "at API prices · not\u00a0billed" : !plan.length ? (payees.every(Boolean) ? (payees.length === 1 ? `paid to ${payees[0]}` : "paid") : undefined)
+  const how = noMoney ? "not billed" : cost == null || !said && !running.length ? undefined : planNow ? "at API prices, not\u00a0billed" : running.length ? "so far"
+    : plan.length === turns.length ? "at API prices, not\u00a0billed" : !plan.length ? (payees.every(Boolean) ? (payees.length === 1 ? `paid to ${payees[0]}` : "paid") : undefined)
     : `${planned > 0 ? `${usd(planned)} ` : ""}not\u00a0billed + ${usd(paid)} paid`;
   // the finished turns' own time (the receipt line's), and the running one's calls so far
   const secs = turns.reduce((a, b) => a + b.secs, 0) + (scope === "all" || open ? after : []).reduce((a, c) => a + (c.total_ms ?? 0) / 1000, 0);
@@ -406,7 +406,7 @@ export function demoView() {
   const two = three.slice(0, 2), free = { ...vibe, provider: "Z.ai Coding Plan", price_m: null, run_cost: 0, cost: 0 };
   const cases: [string, ReturnType<typeof stats>, unknown[]][] = [
     ["running", stats(sv("Tool", three), "turn"), [1, 2000, 2000, 100, 200, 200, 0.002, false, "so far", 3, [[1, 1]], 1, 1]],
-    ["finished plan", stats(sv("Done", two), "turn"), [2, 2000, 900, 45, 400, 80, 0.05, false, "at API prices · not\u00a0billed", 4, [[1, 2]], 2, 2]],
+    ["finished plan", stats(sv("Done", two), "turn"), [2, 2000, 900, 45, 400, 80, 0.05, false, "at API prices, not\u00a0billed", 4, [[1, 2]], 2, 2]],
     ["a paid reply running after a plan turn", stats(sv("Tool", three), "all"), [3, 4000, 2900, 72.5, 600, 100, 0.05 + 0.002, false, "so far", 7, [[1, 2], [3, 1]], 3, 3]],
     ["no reference price", stats(sv("Done", two, { ...vibe, price_m: null }), "turn"), [2, 2000, 900, 45, 400, 80, null, false, "not billed", 4, [[1, 2]], 2, 2]],
     ["paid", stats(sv("Done", two, { ...vibe, plan: false, provider: "SubRouter" }), "turn"), [2, 2000, 900, 45, 400, 80, 0.05, false, "paid to SubRouter", 4, [[1, 2]], 2, 2]],
@@ -482,10 +482,19 @@ export function heldTurn(v: View | null, last: { prompts: number; at: number } |
 /** The messages waiting behind the reply now running (sent during it; the core holds them until it ends). */
 export const queued = (v: View) => messages(v).flatMap((m) => (m.role === "user" && m.queued ? [m.text] : []));
 
+/** Tokens said short: "514k", "1.2M". */
+export const short = (n: number) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
+/** The share of the model's window from which the context is drawn in the warning colour (the bar and the percent: the
+ * composer's strip, Stats, the status bar), and Claude's Compact button shows. */
+export const CONTEXT_WARN = 85;
+/** Claude's Compact button shows (the strip's and the status bar's): claude takes /compact here, the context is from
+ * CONTEXT_WARN of a known window, and no reply runs. */
+export const compactable = (cache: View["cache"], u: Pick<Usage, "contextPct" | "contextMax">, busy: boolean) => !!cache?.compact && !!u.contextMax && u.contextPct >= CONTEXT_WARN && !busy;
+
 export function usage(v: View): Usage {
   // a window the core does not know (null, core C9: a local model) has no share: "context 1% of 200k" was made up
   const win = v.context_window === null ? 0 : v.context_window ?? 200000;
-  const k = (n: number) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
+  const k = short;
   const u = v.usage, read = u.input + u.cache_write + u.cache_read;
   return { contextPct: win ? Math.min(100, Math.round((100 * v.context) / win)) : 0, contextUsed: k(v.context), contextMax: win ? k(win) : "",
     plan5h: v.limits ? Math.round(v.limits[0]) : null, plan5hReset: resetIn(v.limits_reset), planWeek: v.limits ? Math.round(v.limits[1]) : null,
@@ -508,8 +517,8 @@ export function costSaid(s: ReturnType<typeof stats>, choice: ModelChoice | unde
   if (s.noMoney) return ["not billed", `(${plan})`, `On your ${plan}: it has no reference price, not billed`];
   if (choice && isFree(choice) && !s.cost) return ["free", /^https?:\/\/(localhost|127\.|\[::1\])/.test(choice.url ?? "") ? "on this machine" : "", "Nothing paid"];
   if (busy) { const n = s.cost ?? s.done;
-    return n && s.planNow ? [money(n), "at API prices · not billed", `On your ${plan}: what it would cost at API prices so far, not billed`] : [n ? money(n) : "–", "so far", "This conversation's cost so far"]; }
-  if (s.cost && s.planOnly) return [money(s.cost), "at API prices · not billed", `On your ${plan}: what it would cost at API prices, not billed`];
+    return n && s.planNow ? [money(n), "at API prices, not billed", `On your ${plan}: what it would cost at API prices so far, not billed`] : [n ? money(n) : "–", "so far", "This conversation's cost so far"]; }
+  if (s.cost && s.planOnly) return [money(s.cost), "at API prices, not billed", `On your ${plan}: what it would cost at API prices, not billed`];
   return s.cost ? [money(s.cost), "this chat", `This conversation's cost${s.how ? `, ${s.how}` : ""}`] : null;
 }
 
@@ -521,7 +530,7 @@ export function demoStrip() {
   const said = (v: View, busy: boolean, choice?: ModelChoice) => costSaid(stats(v, "all"), choice, busy)?.slice(0, 2).join(" ") ?? "none";
   const plan3 = [done(0.2), done(0.2), done(0.13)], p = { kind: "prompt", text: "go" };
   const cases: [string, string, string][] = [
-    ["three Claude plan turns", said(view(plan3, [call(0), call(1), call(2)], "Done", 0.53), false), "$0.53 at API prices · not billed"],
+    ["three Claude plan turns", said(view(plan3, [call(0), call(1), call(2)], "Done", 0.53), false), "$0.53 at API prices, not billed"],
     // the 2026-11-25 bug class: a paid reply after plan turns is "so far", never "not billed"
     ["then a paid reply running", said(view([...plan3, p], [call(0), call(1), call(2), call(4, { model: "deepseek-v4.1-flash", cost: 0.01 })], "Tool", 0.53), true), "$0.54 so far"],
     // calls with no model (Claude's Sonnet): no running sum, the finished turns' stays
@@ -529,8 +538,8 @@ export function demoStrip() {
     ["the first reply running with no price", said(view([p], [call(1)], "Tool"), true), "– so far"],
     // the review of 2026-11-26: a reply running on the plan after plan turns is at API prices, not billed, as they are; after a
     // paid turn, or with a call not on the plan, "so far"
-    ["a plan reply running after plan turns", said(view([...plan3, p], [call(0), call(1), call(2), call(4, { model: "claude-opus-5-5", cost: 0.01, plan: true })], "Writing", 0.53), true), "$0.54 at API prices · not billed"],
-    ["the first plan reply running", said(view([p], [call(1, { model: "claude-opus-5-5", cost: 0.01, plan: true })], "Writing"), true), "$0.01 at API prices · not billed"],
+    ["a plan reply running after plan turns", said(view([...plan3, p], [call(0), call(1), call(2), call(4, { model: "claude-opus-5-5", cost: 0.01, plan: true })], "Writing", 0.53), true), "$0.54 at API prices, not billed"],
+    ["the first plan reply running", said(view([p], [call(1, { model: "claude-opus-5-5", cost: 0.01, plan: true })], "Writing"), true), "$0.01 at API prices, not billed"],
     ["a plan reply running after a paid turn", said(view([done(0.02, { plan: false, provider: "DeepSeek" }), p], [call(0), call(2, { model: "claude-opus-5-5", cost: 0.01, plan: true })], "Writing", 0.02), true), "$0.03 so far"],
     ["a plan reply with a paid call", said(view([...plan3, p], [call(0), call(1), call(2), call(4, { model: "claude-opus-5-5", cost: 0.01, plan: true }), call(5, { model: "deepseek-v4.1-flash", cost: 0.01 })], "Tool", 0.53), true), "$0.55 so far"],
     ["a plan with no reference price", said(view([done(0, { provider: "Z.ai Coding Plan", model: "glm-5.3" })], [call(0)]), false), "not billed (Z.ai Coding Plan)"],

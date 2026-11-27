@@ -1,6 +1,8 @@
 import { ArrowUp, Check, ChevronDown, FileText, FolderOpen, Gauge, GitBranch, MessageCircle, Paperclip, Plus, Shield, Square, X, Zap } from "lucide-react";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { composed, type ModelChoice, type Models, type SendDraft } from "../lib/tazuna";
+import { composed, type ModelChoice, type Models, type SendDraft, type View } from "../lib/tazuna";
+import { short } from "../lib/fromView";
+import { useCold } from "../lib/live";
 import { IMAGE_FILE, capital, keysOf, modelLabel, type Session } from "../lib/types";
 import { Slot } from "../lib/slots";
 import { EffortMenu, Menu, ModelPicker, usePlace } from "./ModelPicker";
@@ -41,6 +43,8 @@ type Props = {
   session: Session; threadCost: number; busy?: boolean; sendBlocked?: boolean; onSend?: (text: string, draft: SendDraft) => void; onStop?: () => void;
   /** ⌘↩ during a reply: stop it and send this message at once, instead of after it */
   onSendNow?: (text: string, draft: SendDraft) => void;
+  /** Claude's cache (the view's `cache`): once cold, the placeholder says what the next message re-reads, as the terminal's */
+  cache?: View["cache"];
   /** a new conversation: where it runs (a chat or a project), changed from the box */
   where?: Where;
   /** a plain chat (no project) */
@@ -125,7 +129,7 @@ export const MODES: [string, string][] = [
 // No fill: a hairline on hover and focus (`tz-pill`, styles.css; design review 14, S2 of mockups/v12.html)
 const pill = "tz-pill inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border border-transparent px-2 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-transparent enabled:hover:text-ink disabled:cursor-default disabled:text-muted";
 
-export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSendNow, onStop, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onPasteClipboardImage, onDrop, draft, above, below, numbers, numbersTop, draftKey, complete, onComplete, onImage, onBestOf, commands = {}, readOnly = false, asking = false }: Props) {
+export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSendNow, onStop, cache, models, onModels, onRefreshModelList, onPickModel, onPickEffort, onAddKey, onMode, onPickFiles, onPasteImage, onPasteClipboardImage, onDrop, draft, above, below, numbers, numbersTop, draftKey, complete, onComplete, onImage, onBestOf, commands = {}, readOnly = false, asking = false }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   // attachments are chips over the text, with a thumbnail for an image (until desktop 0.1.87 their paths were typed into
   // the message, and a screenshot was a line of path)
@@ -227,6 +231,7 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSe
     (now && onSendNow ? onSendNow : onSend)?.(t, { text, files }); setText(""); setFiles([]);
   };
   const ready = !readOnly && !sendBlocked && (!!text.trim() || files.length > 0);
+  const cold = useCold(cache);
   return (
     <footer className="px-7 pb-[22px] pt-2.5">
       <div className="mx-auto max-w-[700px]"><Slot name="composer.dock" props={{}} /></div>
@@ -270,7 +275,8 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSe
             if (e.key === "Tab" && e.shiftKey && asking) { e.preventDefault(); [...document.querySelectorAll<HTMLButtonElement>("[data-asking] button:not(:disabled)")].pop()?.focus(); }
             else if (above) { e.preventDefault(); above.focus(); }
             else if (e.key === "Tab" && e.shiftKey && onMode) { e.preventDefault(); nextMode(); } if (e.key === "Escape" && busy) onStop?.(); if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(busy && (e.metaKey || e.ctrlKey)); } }}
-          placeholder={readOnly ? "Try writing here. Nothing will be sent." : busy ? `Type your next message: it goes after this reply · ${keysOf("⌘↵")} sends it now` : "/ for commands, @ for files"} className="max-h-[40vh] w-full resize-none overflow-y-auto bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
+          placeholder={readOnly ? "Try writing here. Nothing will be sent." : busy ? `Type your next message: it goes after this reply. ${keysOf("⌘↵")} sends it now`
+            : cold && cache?.rebuild ? `Cache cold: the next message re-reads ${short(cache.rebuild)} tokens` : "/ for commands, @ for files"} className="max-h-[40vh] w-full resize-none overflow-y-auto bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
         {/* a container: the mode pill says more where the row has room (design review 13, D4) */}
         <div className="tz-pills @container flex items-center gap-1.5">
           <Slot name="composer.pills" props={{ composer: bag }} />

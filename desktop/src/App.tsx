@@ -1003,13 +1003,16 @@ export default function App() {
     } satisfies Record<string, [string, () => void]> : {}),
   } : {};
   const modelRestore = view?.model_restore;
+  /** Claude's Compact (the strip's or the status bar's): /compact to the core as it is, never through the box's ways (an
+   * edit's rewind, a refusal put back in the draft); none while an earlier message is being edited */
+  const compact = inTauri && !modelRestore && !editing ? () => core.send("/compact") : undefined;
   const composer = (
         <Composer key={active} readOnly={!inTauri} asking={!!view?.asking} sendBlocked={!!modelRestore} commands={windowCommands} where={fresh ? where : undefined} chat={inTauri && !folder} draftKey={draftKey} session={session} threadCost={usage.threadCost} busy={busy}
             onSendNow={inTauri ? (text) => { hold(active, text); sendHeldNow(active, text); } : undefined}
             onSend={inTauri ? (text, draft) => {
               if (line?.paid && paidKey && !localStorage.getItem(paidKey)) { setPaidAsk({ text, draft }); return; }
               sendNow(text, draft);
-            } : undefined}
+            } : undefined} cache={fresh ? null : view?.cache}
             below={modelRestore ? (
               <div role="status" className={`text-[11.5px] ${modelRestore.waiting ? "text-muted" : "text-warn"}`}>
                 {modelRestore.waiting ? `Restoring ${modelLabel(modelRestore.model)}…` : `Couldn’t restore ${modelLabel(modelRestore.model)}. Choose a model to send.`}
@@ -1025,7 +1028,8 @@ export default function App() {
               </div>
             )}
             draft={draft} numbersTop={numbersAt === "above"}
-            numbers={!fresh && view && (numbersAt === "under" || numbersAt === "above") ? <ConvNumbers view={view} choice={choice} busy={busy} turns={turnsOf(messages)} top={numbersAt === "above"} /> : null}
+            numbers={!fresh && view && (numbersAt === "under" || numbersAt === "above") ? <ConvNumbers view={view} choice={choice} busy={busy} turns={turnsOf(messages)} top={numbersAt === "above"}
+              onCompact={compact} /> : null}
             above={paidAsk != null ? (
               <div className="mx-auto mb-2 flex max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
                 <span className="flex-1">This goes to <span className="text-ink">{choice?.label}</span> on {choice?.provider}, a paid API{line?.est != null ? `: about ${usd(line.est)} a message` : ""}. Paid spend stops at your cap per 24 hours (Settings).</span>
@@ -1252,7 +1256,8 @@ export default function App() {
         onEnable={(w, on) => widgets.enable(w.id, w.print!, on).then(reloadWidgets).catch((e) => console.error(e))}
         onRemove={(id) => widgets.remove(id).then(reloadWidgets).catch(() => {})} onChanged={reloadWidgets} />}
     </div>
-    {inTauri ? <StatusBar usage={usage} version={appVersion} idle={fresh || failed} numbers={numbersAt === "bar"} accounts={accts} here={hereAccts} turns={turnsOf(messages)} busy={busy}
+    {inTauri ? <StatusBar usage={usage} version={appVersion} idle={fresh || failed} numbers={numbersAt === "bar"} accounts={accts} here={hereAccts} turns={turnsOf(messages)} busy={busy} cache={view?.cache}
+      blocks={view?.blocks.length} onCompact={compact} thread={active}
       onRefresh={haveView ? () => readAccounts() : undefined} refreshing={acct.busy} readAt={readAt} />
       : <footer aria-label="Demo status" className="flex h-7 flex-none items-center bg-desk px-3.5 text-[12px] text-muted">Example data · not live usage</footer>}
     </div>

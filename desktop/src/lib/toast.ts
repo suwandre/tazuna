@@ -18,11 +18,16 @@ export function dismiss(id: number) {
   set(toasts.filter((t) => t.id !== id));
 }
 
+/** While the pointer is on the snackbars or drags them (Toaster), their time does not run out: they go a second after. */
+let held = false;
+export const hold = (on: boolean) => { held = on; };
+
 /** Shows `text` for a few seconds (longer with an action, longer still for an error; a sticky one until closed); the
  * newest three stay. */
 export function toast(text: string, opts: Omit<Toast, "id" | "text"> = {}) {
   const id = next++;
   set([...toasts.filter((t) => !opts.key || t.key !== opts.key).slice(-2), { id, text, ...opts }]);
-  if (!opts.sticky && !opts.modal) setTimeout(() => dismiss(id), opts.kind === "error" ? 9000 : opts.action ? 8000 : 4000);
+  const end = () => (held ? setTimeout(end, 1000) : dismiss(id));
+  if (!opts.sticky && !opts.modal) setTimeout(end, opts.kind === "error" ? 9000 : opts.action ? 8000 : 4000);
   return id;
 }

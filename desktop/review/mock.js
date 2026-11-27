@@ -206,7 +206,11 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
     const m = (msg) => setTimeout(() => T.emit("tazuna-view", { tid: args.tid, msg }), 20);
     if (cmd === "op" && args.msg.op === "diff") { m({ type: "diff", turn: args.msg.turn, path: args.msg.path, text: diff }); return null; }
     if (cmd === "op" && args.msg.op === "review") { m({ type: "review", scope: args.msg.scope, turn: args.msg.turn ?? null, base: "main", text: diff }); return null; }
-    if (cmd === "op" && args.msg.op === "settings") { m({ type: "settings", version: "0.1.176", data_any: false, route: true, spend_cap: 5, spent_24h: 0.41, providers: PROVIDERS }); return null; }
+    // Claude's auto-compact (newer cores): kept here; `__SETTINGS_MS__` holds the reply back, for its pending state;
+    // `__AUTOCOMPACT_FAIL__`: the core could not write it (the settings come back with the old value)
+    if (cmd === "op" && args.msg.op === "autocompact") { if (!window.__AUTOCOMPACT_FAIL__) window.__AUTOCOMPACT__ = args.msg.value; return null; }
+    if (cmd === "op" && args.msg.op === "settings") { setTimeout(() => T.emit("tazuna-view", { tid: args.tid, msg: { type: "settings", version: "0.1.176", data_any: false, route: true, spend_cap: 5, spent_24h: 0.41,
+      autocompact: window.__AUTOCOMPACT__ ?? null, providers: PROVIDERS } }), window.__SETTINGS_MS__ ?? 20); return null; }
     // a sign-in: ChatGPT through the browser, then its welcome; Copilot and SuperGrok show their code and wait there
     if (cmd === "op" && args.msg.op === "login" && PROVIDERS.find((x) => x.name === args.msg.provider)?.sign_in) {
       const p = PROVIDERS.find((x) => x.name === args.msg.provider), say = (o, ms = 20) => setTimeout(() => T.emit("tazuna-view", { tid: args.tid, msg: { type: "signin", provider: p.name, ok: null, first: false, ...o } }), ms);

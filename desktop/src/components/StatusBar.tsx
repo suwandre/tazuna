@@ -6,6 +6,34 @@ import { ChatSlip, priceSaid, type Turn } from "./Receipt";
 import { exactly, untilShort, urgent, whenReset, worst, type Item, type Level } from "../lib/health";
 import { Sep } from "./Sep";
 import { checkUpdate, useUpdate } from "../lib/update";
+import { CONTEXT_WARN, compactable } from "../lib/fromView";
+import { useWarm, warmSaid } from "../lib/live";
+import type { View } from "../lib/tazuna";
+
+/** Claude's Compact pressed (the strip's and the status bar's): pending while the conversation has the blocks it had then
+ * (its message comes with the turn's start; a refusal brings a notice), let go when the send fails or after 15 s (a core
+ * that never answered). `send` sends /compact. */
+export function useCompact(blocks: number, busy: boolean, send?: () => Promise<unknown>): [boolean, () => void] {
+  const [asked, setAsked] = useState<number | null>(null);
+  useEffect(() => { if (asked == null) return; const t = setTimeout(() => setAsked(null), 15_000); return () => clearTimeout(t); }, [asked]);
+  const pending = asked === blocks && !busy;
+  return [pending, () => { if (pending || !send) return; setAsked(blocks); send().catch(() => setAsked(null)); }];
+}
+
+/** The status bar's Compact, its pending state its own conversation's (keyed by the thread where it is drawn: the bar is
+ * not, and a press in one showed "Compacting…" in the next). */
+function BarCompact({ blocks, busy, send }: { blocks: number; busy: boolean; send: () => Promise<unknown> }) {
+  const [pending, press] = useCompact(blocks, busy, send);
+  return <span className="-ml-2 flex max-[900px]:hidden"><CompactButton pending={pending} onClick={press} className="h-5 px-1.5 text-[11.5px]" /></span>;
+}
+
+/** The Compact button: small and quiet, "Compacting…" with a spinner while pending (it goes once the turn runs). */
+export function CompactButton({ pending, onClick, className }: { pending: boolean; onClick: () => void; className: string }) {
+  // tabIndex: WebKit's Tab skips buttons
+  return <button tabIndex={0} aria-busy={pending || undefined} title="Summarise the conversation to free context (Claude's /compact)" onClick={onClick}
+    className={`flex flex-none items-center gap-1.5 rounded-md border border-line-strong bg-card text-ink-2 hover:bg-hover hover:text-ink ${className}`}>
+    {pending && <LoaderCircle size={12} strokeWidth={2} className="animate-spin text-faint" aria-hidden="true" />}{pending ? "Compacting…" : "Compact"}</button>;
+}
 
 // The status bar along the window's bottom: on the left the account this conversation runs on (the plan's 5 hours and
 // week on Claude, the credit on SubRouter, the window on OmniRoute) and, when another account is running low or stopped,
@@ -135,7 +163,10 @@ function Version({ version }: { version: string }) {
 /** "just now", "4 min ago", "2 h ago". */
 const ago = (at: number) => { const m = Math.floor((Date.now() - at) / 60_000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.floor(m / 60)} h ago`; };
 
-export function StatusBar({ usage: u, version, idle, numbers = true, accounts = [], here = [], onRefresh, refreshing, readAt, turns = [], busy }: { usage: Usage; version: string;
+export function StatusBar({ usage: u, version, idle, numbers = true, accounts = [], here = [], onRefresh, refreshing, readAt, turns = [], busy, cache, blocks = 0, onCompact, thread }: { usage: Usage; version: string;
+  /** Claude's cache (the view's `cache`): how long it stays warm, after the cache's share; and Claude's Compact (sends
+   * /compact) by the context, as in the strip, with the conversation's block count for its pending state and its thread */
+  cache?: View["cache"]; blocks?: number; onCompact?: () => Promise<unknown>; thread?: string;
   /** the conversation's context, cache and cost here (Settings › Appearance › Conversation numbers: In the status bar); else
    * they are the composer's, or nowhere: each number once */
   numbers?: boolean;
@@ -155,6 +186,7 @@ export function StatusBar({ usage: u, version, idle, numbers = true, accounts = 
   // the countdown moves on by itself
   const [, tick] = useState(0);
   useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 30_000); return () => clearInterval(t); }, []);
+  const warm = useWarm(numbers && !idle ? cache : null);
   return (
     <footer aria-label="Status" className="relative z-20 flex h-7 flex-none items-center gap-4 overflow-x-clip overflow-y-visible whitespace-nowrap bg-desk px-3.5 text-[12px] tabular-nums text-muted">
       <span className="group/use relative flex flex-none items-center gap-3">
@@ -196,8 +228,14 @@ export function StatusBar({ usage: u, version, idle, numbers = true, accounts = 
       )}
       <span className="flex-1" />
       {/* a zero says nothing yet (a conversation before its first reply, a provider that reports no cache): not shown */}
-      {numbers && !idle && u.contextPct > 0 && <span className={`${item} max-[900px]:hidden`} title="This conversation's context">context <span className={b}>{u.contextPct}%</span> of {u.contextMax}</span>}
+      {numbers && !idle && u.contextPct > 0 && <span className={`${item} max-[900px]:hidden`} title="This conversation's context">context <span className={u.contextPct >= CONTEXT_WARN ? "font-medium text-warn" : b}>{u.contextPct}%</span> of {u.contextMax}</span>}
+      {/* Claude's own compaction by the context it frees, gone with it on a narrow bar */}
+      {numbers && !idle && onCompact && compactable(cache, u, !!busy) && <BarCompact key={thread} blocks={blocks} busy={!!busy} send={onCompact} />}
       {numbers && !idle && u.cachedPct > 0 && <span className={`${item} max-[1100px]:hidden`} title="Input read from the cache in this conversation">cache <span className={b}>{pctText(u.cachedPct)}%</span></span>}
+      {/* Claude's cache: under a minute and cold in the warning colour (the next message re-reads the whole context); on a
+          narrow bar it goes last, after the context */}
+      {cache && warm != null && <span className={`${item} max-[800px]:hidden ${warm < 1 ? "text-warn" : ""}`} title={warmSaid(cache, warm)}>
+        {warm < 0 ? "cold" : <>warm <span className={warm < 1 ? "font-medium" : b}>{warm < 1 ? "<1m" : `${warm}m`}</span></>}</span>}
       {numbers && u.threadCost > 0 && (turns.length ? <ChatCost cost={u.threadCost} turns={turns} busy={busy} className={button}>this chat <span className={b}>{priceSaid(u.threadCost, turns.some((t) => t.estimate))}</span></ChatCost>
         : <button onClick={openUsage} title={`This conversation's cost${usd(u.threadCost) !== usdExact(u.threadCost) ? `, ${usdExact(u.threadCost)}` : ""}`} className={button}>this chat <span className={b}>{usd(u.threadCost)}</span></button>)}
       {version && <Version version={version} />}

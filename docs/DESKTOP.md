@@ -755,7 +755,7 @@ Claude, plus an anti-AI-slop round; the visual proposals wait in mockups/v12.htm
   first; a cd into the project not shown. Very long lines stay plain, so a minified file no longer stalls the window.
 - Live stats (Settings › Appearance, on by default): while a reply streams, the numbers strip, Stats and the Working
   row count up every frame from the core's live figures and settle to the exact ones at each call's end; a plan run
-  says "at API prices · not billed" throughout; after a reply the strip keeps its average writing speed.
+  says "at API prices, not billed" throughout; after a reply the strip keeps its average writing speed.
 - The usage page takes 15 minutes, 1 hour, 3 hours, 24 hours, 7, 30 or 90 days, all time or a custom range, its bars in
   minutes, hours, days, weeks, months or years to fit; it updates while open.
 - The conversation's receipt no longer runs a three-digit turn number into its title, says "1 h 39 min" and "$1,234.46",
@@ -799,6 +799,13 @@ rows' size; "Models ready" only for a list that loaded while the picker was open
 key in Settings"). The Changes section's branch wraps instead of being cut. The console reader's learn file keeps every
 different answer of one address (Qwen's console sends all its calls to one, and kept only the last: an order list, not
 the usage), at most 32 per address, the answers without usage-like fields going first when it is full.
+
+0.1.137 (with tazuna 0.1.234): the context turns the warning colour at 85% of the window; a Compact button beside it
+(Claude conversations whose claude offers /compact, not while a reply runs or an earlier message is edited) in the
+numbers strip and the status bar; Claude's cache warmth after the cache share ("warm 4m", "warm <1m", "cold") and, when
+cold, the box says what the next message re-reads; Settings › Providers › Claude auto-compact (Claude's default, 50, 70,
+80 or 90%). Stats tiles step a too-wide figure down to fit; "at API prices, not billed" without a middle dot. Snackbars
+can be dragged anywhere and come back there; they wait while the pointer is on them, and their text can be selected.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

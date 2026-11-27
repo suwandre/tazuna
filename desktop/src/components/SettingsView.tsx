@@ -53,6 +53,15 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
   const [keysNow, setKeysNow] = useState(() => localStorage.getItem(HOTKEY) ?? defaultHotkey);
   const [hotkeyNote, setHotkeyNote] = useState("");
   const [cap, setCap] = useState<string | null>(null);
+  // Claude's auto-compact: the last choice ("default", "80"), shown at once with a spinner until the settings come back with
+  // it (an older reply does not end it; the newest click wins), a send that failed, or 6 s; then "Not saved" where it did not
+  // take (the core says nothing else: a notice went to the conversation behind the dialog)
+  // (`compactLast`: the last value asked, kept past its wait: a reply after the 6 s that carries it takes the note away)
+  const [compactAt, setCompactAt] = useState<string | null>(null), compactAsk = useRef<string | null>(null), compactLast = useRef<string | null>(null);
+  const [compactNote, setCompactNote] = useState(false);
+  const compactSaid = (v: number | null | undefined) => (v == null ? "default" : String(v));
+  const compactEnd = (saved: boolean) => { compactAsk.current = null; setCompactAt(null); setCompactNote(!saved); };
+  useEffect(() => { if (compactAt == null) return; const t = setTimeout(() => compactEnd(false), 6000); return () => clearTimeout(t); }, [compactAt]);
   const [mcp, setMcp] = useState<Mcp | null>(null);
   const [mcpState, setMcpState] = useState<Record<string, { ok?: boolean; text: string }>>({});
   // sign-ins (core oauth.rs): the one whose warning is being confirmed, each one's progress and outcome, the ChatGPT plan's
@@ -129,7 +138,9 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
   const close = useRef(onClose);
   close.current = onClose;
   useEffect(() => {
-    const off = core.onSettings(setSt);
+    const off = core.onSettings((x) => { setSt(x); const said = compactSaid(x.autocompact);
+      if (said === compactLast.current) setCompactNote(false);
+      if (compactAsk.current != null && said === compactAsk.current) compactEnd(true); });
     const offMcp = core.onMcp(setMcp), offStatus = core.onMcpStatus((m) => setMcpState((all) => ({ ...all, [m.name]: m }))), offHook = core.onHook(setHook);
     const offSign = core.onSignIn((m) => {
       setSigning((all) => ({ ...all, [m.provider]: m }));
@@ -296,6 +307,16 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
           {st && <>
             <Section title="Providers" label="Yours" note="Claude runs on your subscription; other providers take a key or a sign-in.">
               <Row title="Claude" note={<ClaudeNote s={claude} />}><ClaudeButtons s={claude} check={checkClaude} checking={checkingClaude} /></Row>
+              {/* the percent of Claude's auto-compact window where it compacts by itself (CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, which
+                  only lowers Claude's own threshold); a core before it has no such setting */}
+              {st.autocompact !== undefined && <Row title="Claude auto-compact">
+                {compactAt != null ? <LoaderCircle size={12} strokeWidth={2} className="animate-spin text-faint" aria-label="Saving" />
+                  : compactNote && <span role="status" className="text-[12px] text-bad">Not saved</span>}
+                <Segmented label="Claude auto-compact" value={compactAt ?? compactSaid(st.autocompact)}
+                  options={[["default", "Claude's default"], ["50", "50%"], ["70", "70%"], ["80", "80%"], ["90", "90%"]]}
+                  onChange={(v) => { compactAsk.current = compactLast.current = v; setCompactAt(v); setCompactNote(false);
+                    core.setAutocompact(v === "default" ? null : Number(v)).then(refresh, () => { if (compactAsk.current === v) compactEnd(false); }); }} />
+              </Row>}
               {yours.length ? yours.map(provider) : <div className="px-4 py-2.5 text-[12.5px] text-faint">No keys yet: add one under More providers.</div>}
             </Section>
             <Section title="Providers" label={<button onClick={() => setMore(!more)} aria-expanded={more} className="-mx-1.5 flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:text-ink">

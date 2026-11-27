@@ -1,11 +1,11 @@
 // The conversation's numbers while a reply streams (Settings › Appearance › Live stats; desktop/DESIGN.md, Motion): the
 // core's estimate of the model call in flight (`live`), counted between views at the stream's pace, read every animation
 // frame by the few small components that show it and drawn when a digit they show moves; never the transcript.
-import { useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { LIVE, useLook } from "./chrome";
-import { stats } from "./fromView";
+import { short, stats } from "./fromView";
 import type { View } from "./tazuna";
-import { writing } from "./types";
+import { usd, writing } from "./types";
 
 export type Live = NonNullable<View["live"]>;
 const reduce = typeof window === "undefined" ? null : window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -113,6 +113,29 @@ export function useLive(v: View, shown: (live: View) => string) {
   const now = () => liveView(v, Math.round(outNow(v.live!)));
   useFrame(streaming, () => shown(now()));
   return { view: streaming ? now() : settled(v), streaming, on };
+}
+
+type Cache = NonNullable<View["cache"]>;
+const warmIn = (c: Cache) => { const ms = c.warm_until - Date.now(); return ms > 0 ? Math.floor(ms / 60_000) : -1; };
+/** What `said` makes of the whole minutes Claude's cache stays warm (0: under one; -1: cold); null with no cache to tell
+ * (the own loop, before claude's first call). Looked at once a second, drawn again only when what it says changes. */
+function useCacheSaid<T>(c: View["cache"], said: (minutes: number) => T): T | null {
+  const [, seen] = useState(() => (c ? said(warmIn(c)) : null));
+  useEffect(() => { if (!c) return; const t = setInterval(() => seen(said(warmIn(c))), 1000); return () => clearInterval(t); }, [c?.warm_until]);
+  return c ? said(warmIn(c)) : null;
+}
+/** The whole minutes Claude's cache stays warm (0: under one; -1: cold), drawn again as they change; null: no cache. */
+export const useWarm = (c: View["cache"]) => useCacheSaid(c, (m) => m);
+/** Whether Claude's cache is cold, drawn again only when that changes (the box's placeholder). */
+export const useCold = (c: View["cache"]) => useCacheSaid(c, (m) => m < 0) === true;
+/** The cache in a sentence (a tooltip): how long it stays warm, and what the next message re-reads once it is cold, with
+ * ≈ dollars where known, "of plan usage" on the plan (as the terminal says it, main.rs rebuild_text), alone where an API
+ * key, Bedrock or a gateway bills it. */
+export function warmSaid(c: Cache, m: number) {
+  const life = c.ttl_ms >= 3_600_000 ? "1-hour" : "5-minute";
+  const re = c.rebuild ? `the next message re-reads ${short(c.rebuild)} tokens${c.rebuild_usd != null ? ` (≈ ${usd(c.rebuild_usd)}${c.plan === false ? "" : " of plan usage"})` : ""}` : "";
+  if (m < 0) return `Claude's ${life} cache is cold: ${re || "the next message writes it again"}`;
+  return `Claude's ${life} cache stays warm for ${m ? `${m} more minute${m === 1 ? "" : "s"}` : "less than a minute"}${re ? `; once cold, ${re}` : ""}`;
 }
 
 /** A check of the count: `npx tsx -e 'import("./src/lib/live.ts").then(m => m.demoLive())'`. Monotone, never past the

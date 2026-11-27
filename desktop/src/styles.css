@@ -300,9 +300,10 @@ code { font-family: var(--font-mono); font-size: 0.92em; }
    box's text starts. Full and plan keep their tints */
 button.tz-pill:not(.tz-mode-full, .tz-mode-plan):not(:disabled):hover, button.tz-pill:not(.tz-mode-full, .tz-mode-plan):focus-visible { border-color: var(--line-strong); }
 .tz-pills > span:first-child > button.tz-pill:not(.tz-mode-full, .tz-mode-plan) { margin-left: -9px; }
-/* the conversation's numbers in the composer (Stats.tsx ConvNumbers): a short row drops the cache, then the cost's words,
-   then "of 128k" (`data-drop`, set as it fits), and never wraps */
-.tz-nums[data-drop="1"] .tz-n1, .tz-nums[data-drop="2"] :is(.tz-n1, .tz-n2), .tz-nums[data-drop="3"] :is(.tz-n1, .tz-n2, .tz-n3) { display: none; }
+/* the conversation's numbers in the composer (Stats.tsx ConvNumbers): a short row drops the cache's share, then the cost's
+   words, then "of 128k", then the cache's warmth (`data-drop`, set as it fits), and never wraps */
+.tz-nums[data-drop="1"] .tz-n1, .tz-nums[data-drop="2"] :is(.tz-n1, .tz-n2), .tz-nums[data-drop="3"] :is(.tz-n1, .tz-n2, .tz-n3),
+.tz-nums[data-drop="4"] :is(.tz-n1, .tz-n2, .tz-n3, .tz-n4) { display: none; }
 /* a webview without color-mix (Safari 16.1 and older): the field under the warn text (5.0:1 light, 7.0:1 dark) and full borders */
 @supports not (color: color-mix(in srgb, red 50%, blue)) { .tz-mode-full { background-color: var(--field); border-color: var(--warn); } .tz-mode-plan { border-color: var(--live); } }
 /* a spinner still turns (slower): standing still it said "stuck". The reply's own status is the mark, which stands still

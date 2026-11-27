@@ -97,6 +97,12 @@ export type View = {
    * output's price per million at its prices (null: a rough figure, not shown), and its row in `calls`. Its exact numbers
    * come in `calls` at its end (lib/live.ts). */
   live?: { started: number; first: number | null; out: number; deltas: number; in: number; cached: number; in_cost: number | null; out_m: number | null; row: number } | null;
+  /** Claude's cache (null on the own loop and before claude's first call; newer cores): the life claude wrote it with (5
+   * minutes or an hour), until when it stays warm (epoch ms; a call in flight renews it), what the next message re-reads
+   * once it is cold, in tokens and ≈ dollars at API prices (null: too small to mention, or no price for the model), whether
+   * the plan pays (not an API key, Bedrock or a gateway), and whether claude takes /compact here (none in a plain chat or
+   * the Lean profile: claude starts there with no commands) */
+  cache?: { ttl_ms: number; warm_until: number; rebuild: number | null; rebuild_usd: number | null; plan: boolean; compact: boolean } | null;
 };
 /** `key`: where its key comes from ("logged in", "key in the environment", …), empty: no key */
 export type Provider = { name: string; host: string; page: string; place: string; example: string; key: string; trusted: boolean;
@@ -129,7 +135,9 @@ export type SignIn = { provider: string; ok?: boolean | null; text: string; firs
 export type ClaudeSetup = { claude: string | null; claude_login?: boolean | null };
 export type Settings = { providers: Provider[]; data_any: boolean; route: boolean; version: string;
   /** dollars of paid API spend allowed per 24 hours (null: no cap), and what was spent */
-  spend_cap?: number | null; spent_24h?: number };
+  spend_cap?: number | null; spent_24h?: number;
+  /** Claude's auto-compact threshold, a percent (null: Claude's default; absent: a core before it) */
+  autocompact?: number | null };
 /** MCP servers for every model (the core's mcp.json): on for this conversation or not, the list, a refusal to show */
 export type Mcp = { on: boolean; claude: boolean; servers: { name: string; target: string }[]; note: string };
 /** a server's check: progress (a login link) without `ok`, then the outcome */
@@ -273,6 +281,8 @@ export const core = {
   onPr: (cb: (p: import("./pr").Pr, tid: string) => void) => on<import("./pr").Pr>("pr", cb),
   /** the cap on paid API spend per 24 hours (null: none) */
   setSpendCap: (value: number | null) => to("op", { msg: { op: "spend_cap", value } }),
+  /** Claude's auto-compact threshold, a percent (null: Claude's default); taken as each claude process starts */
+  setAutocompact: (value: number | null) => to("op", { msg: { op: "autocompact", value } }),
   /** MCP servers (src/mcpc.rs), as the terminal's /mcp: list, on or off, add (a URL, or a command and its arguments), remove,
    * check (login: log in again first) */
   mcp: () => to("op", { msg: { op: "mcp" } }),

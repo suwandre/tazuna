@@ -1,15 +1,15 @@
-import { Activity, Coins, Database, Gauge } from "lucide-react";
+import { Activity, Coins, Database, Gauge, Timer } from "lucide-react";
 import { useContext, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { LIVE, STATS, useLook } from "../lib/chrome";
-import { costSaid, stats, usage, type Point } from "../lib/fromView";
-import { blend, lastSpeed, liveRow, outNow, settled, still, useFrame, useLive, type Live } from "../lib/live";
+import { CONTEXT_WARN, compactable, costSaid, stats, usage, type Point } from "../lib/fromView";
+import { blend, lastSpeed, liveRow, outNow, settled, still, useFrame, useLive, useWarm, warmSaid, type Live } from "../lib/live";
 import type { ModelChoice, View } from "../lib/tazuna";
 import { median, pctText, tenths, usd } from "../lib/types";
 import { Segmented } from "./Controls";
 import { WorkCtx } from "./Rail";
 import { dur, perSec, tok, type Turn } from "./Receipt";
 import { Sep } from "./Sep";
-import { ChatCost } from "./StatusBar";
+import { ChatCost, CompactButton, useCompact } from "./StatusBar";
 
 // The work panel's Stats (the user, 2026-11-25: "a real-time calculation and statistics section for all numerical
 // metrics… maybe smooth"; mockups/v11.html): this turn's or the whole conversation's tokens, cost, calls and speeds, a
@@ -78,21 +78,38 @@ function Num({ hold, est, className = "", children }: { hold: boolean; est?: boo
 
 const box = "min-w-0 rounded-[10px] border border-line-soft bg-main px-2.5";
 const label = "text-[11.5px] text-faint";
-const Bar = ({ pct }: { pct: number }) => (
-  <div className="mt-[7px] h-1.5 overflow-hidden rounded-[3px] bg-field"><i className="block h-full rounded-[3px] bg-live transition-[width] duration-[450ms] ease-out" style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} /></div>
+/** `warn`: a limit near (the context from CONTEXT_WARN), in the warning colour */
+const Bar = ({ pct, warn }: { pct: number; warn?: boolean }) => (
+  <div className="mt-[7px] h-1.5 overflow-hidden rounded-[3px] bg-field"><i className={`block h-full rounded-[3px] ${warn ? "bg-warn" : "bg-live"} transition-[width] duration-[450ms] ease-out`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} /></div>
 );
 
 /** A zero is quiet text, not a big number (design review 14), on the big one's line. */
 function Tile({ name, value, sub, zero, est, children }: { name: string; value: ReactNode; sub?: string; zero?: boolean; est?: boolean; children?: ReactNode }) {
+  // a figure too wide for its tile steps down in size until it fits, never cut ("about $243.…" in a narrow panel, the user
+  // 2026-11-27): measured when its text's length or the tile's width changes, not every frame of a live reply
+  const ref = useRef<HTMLDivElement>(null), len = useRef(-1);
+  useLayoutEffect(() => {
+    const el = ref.current, n = el?.textContent?.length ?? 0;
+    if (el && n !== len.current) { len.current = n; fitText(el); }
+  });
+  useEffect(() => { const el = ref.current; if (!el) return; const r = new ResizeObserver(() => fitText(el)); r.observe(el); return () => r.disconnect(); }, []);
   return (
     <div className={`${box} py-[9px]`}>
       <div className={label}>{name}</div>
-      <div className={`truncate tabular-nums ${zero ? "text-[13.5px] leading-[25px] text-faint" : `text-[20px] font-semibold leading-tight tracking-[-0.02em] ${est ? "text-muted" : "text-ink"}`}`}>{value}</div>
+      <div ref={ref} className={`truncate tabular-nums ${zero ? "text-[13.5px] leading-[25px] text-faint" : `text-[20px] font-semibold leading-tight tracking-[-0.02em] ${est ? "text-muted" : "text-ink"}`}`}>{value}</div>
       {sub && <div className="text-[11.5px] leading-snug text-muted">{sub}</div>}
       {children}
     </div>
   );
 }
+
+/** A tile's figure at 20 px, else the first of 18, 16, 14 px at which it fits its width; still too wide at 14 px (a work
+ * panel at its narrowest), it ends in an ellipsis and says itself whole on hover. */
+const fitText = (el: HTMLElement) => {
+  el.style.fontSize = "";
+  for (const px of [18, 16, 14]) { if (el.scrollWidth <= el.clientWidth) break; el.style.fontSize = `${px}px`; }
+  el.title = el.scrollWidth > el.clientWidth ? el.textContent ?? "" : "";
+};
 
 /** One line in the live colour, its last point marked, no axes. The pointer, or the arrows once it has the focus (the usage
  * page's bars' way), shows a call's value in a tip over it, and a screen reader hears it. While a reply runs the newest
@@ -204,7 +221,7 @@ function Numbers({ view: core, scope, live, rows }: { view: View; scope: Scope; 
     ttft: useTween(last(s.ttft) ?? 0, live, f), speed: useTween(last(s.speed) ?? 0, live, f), hits: useTween(last(s.hits) ?? 0, live, f) };
   const ttftMed = median(s.ttft.map((p) => p[1])), speedMed = median(s.speed.map((p) => p[1]));
   // "about" where a call's price is at list prices, as the receipt says it
-  const about = s.about && <span className="text-[13px] font-normal tracking-normal text-muted">about </span>;
+  const about = s.about && <span className="text-[0.65em] font-normal tracking-normal text-muted">about </span>;
   if (rows) {
     // a slip in spirit: label left, value right, rules between; a row with nothing to say is left out, a zero is quiet, a
     // line only from 8 calls (fewer read as noise)
@@ -226,7 +243,7 @@ function Numbers({ view: core, scope, live, rows }: { view: View; scope: Scope; 
           <div key={name} className="grid min-h-[29px] grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2.5 border-t border-line text-ink-2 first:border-t-0">
             <span className="min-w-0">{name}{q && <> <span className="ml-0.5 text-faint">{q}</span></>}</span>
             <span>{line || null}</span>
-            <Num hold={live} className={`whitespace-nowrap tabular-nums ${raw === 0 ? "text-faint" : f && name !== "Calls" ? "text-muted" : "text-ink"}`}>{value}</Num>
+            <Num hold={live} className={`whitespace-nowrap tabular-nums ${raw === 0 ? "text-faint" : name === "Context" && u.contextMax && u.contextPct >= CONTEXT_WARN ? "text-warn" : f && name !== "Calls" ? "text-muted" : "text-ink"}`}>{value}</Num>
           </div>
         ))}
       </div>
@@ -251,7 +268,7 @@ function Numbers({ view: core, scope, live, rows }: { view: View; scope: Scope; 
         {/* the last call's input against the model's window (with the call in flight's output so far, live); a window the
             core does not know (a local model) has no bar */}
         <Metric name="Context" value={tok(Math.round(t.ctx))} zero={!view.context} est={f} sub={u.contextMax ? `of ${u.contextMax}` : undefined}>
-          {u.contextMax && <Bar pct={u.contextPct} />}</Metric>
+          {u.contextMax && <Bar pct={u.contextPct} warn={u.contextPct >= CONTEXT_WARN} />}</Metric>
       </div>
     </div>
   );
@@ -263,11 +280,16 @@ function Numbers({ view: core, scope, live, rows }: { view: View; scope: Scope; 
  * stats) its time to first token, counting, then its writing speed; between calls the reply's; once it ended the last
  * reply's average. The cost opens the conversation's receipt (as the status bar's "this chat" does), the speed Stats over
  * this turn, the rest Stats over the conversation. The Stats' and the status bar's own numbers: no sums of its own. A
- * short row drops the cache, then the cost's words, then "of 128k" (`data-drop`, styles.css); never wraps. With Live stats
- * on the numbers follow the call in flight every frame, in `muted` while estimates, each in a box that only grows during
- * the reply, and ease to the exact ones when the call ends. */
-export function ConvNumbers({ view: core, choice, busy, turns, top }: { view: View; choice?: ModelChoice; busy: boolean; turns: Turn[]; top?: boolean }) {
+ * short row drops the cache's share, then the cost's words, then "of 128k", then the cache's warmth (`data-drop`,
+ * styles.css); never wraps. With Live stats on the numbers follow the call in flight every frame, in `muted` while
+ * estimates, each in a box that only grows during the reply, and ease to the exact ones when the call ends. On Claude (the
+ * core's `cache`), after the cache's share, how long its cache stays warm ("warm 4m", "cold"); from CONTEXT_WARN of the
+ * window the bar and the percent in the warning colour and, between replies where claude takes it, a Compact button
+ * (`onCompact` sends /compact; none while an earlier message is being edited), pending until the turn runs. */
+export function ConvNumbers({ view: core, choice, busy, turns, top, onCompact }: { view: View; choice?: ModelChoice; busy: boolean; turns: Turn[]; top?: boolean; onCompact?: () => Promise<unknown> }) {
   const row = useRef<HTMLDivElement>(null);
+  const warm = useWarm(core.cache);
+  const [compacting, compact] = useCompact(core.blocks.length, busy, onCompact);
   const { view, streaming: est, on } = useLive(core, (lv) => { const s = stats(lv, "all"), c = liveRow(lv);
     return [tok(lv.context), usage(lv).contextPct, usd(s.cost ?? s.done), c?.tps ? Math.round(c.tps) : secs((c?.first_ms ?? 0) / 1000)].join(); });
   const settle = on && busy, ctx = Math.round(useTween(view.context, settle, est, true));
@@ -286,14 +308,22 @@ export function ConvNumbers({ view: core, choice, busy, turns, top }: { view: Vi
   const cu = usage(settled(core)), live = est ? " (live estimate)" : "";
   // [its name, the tooltip, what it shows, its text: the row is fitted again when a text's length changes]
   const parts: [string, string, ReactNode, string][] = [];
+  const full = !!u.contextMax && u.contextPct >= CONTEXT_WARN;
   if (ctx > 0) parts.push(["context", `Context: ${tok(settled(core).context)}${cu.contextMax ? ` of the model's ${cu.contextMax} window, ${cu.contextPct}%` : ""}${live}`, <>
     <Gauge size={14} strokeWidth={1.5} className="text-faint" /><Num hold={settle} est={est} className={`font-medium ${est ? "" : "text-ink"}`}>{tok(ctx)}</Num>
     {u.contextMax && <><span className="tz-n3 -ml-0.5">of {u.contextMax}</span><span className="h-[5px] w-10 flex-none overflow-hidden rounded-[3px] bg-line-strong">
-      <i className="block h-full rounded-[3px] bg-live" style={{ width: `${u.contextPct}%` }} /></span><Num hold={settle}>{u.contextPct}%</Num></>}</>, `${tok(ctx)}${u.contextPct}`]);
+      <i className={`block h-full rounded-[3px] ${full ? "bg-warn" : "bg-live"}`} style={{ width: `${u.contextPct}%` }} /></span><Num hold={settle} className={full ? "text-warn" : ""}>{u.contextPct}%</Num></>}</>, `${tok(ctx)}${u.contextPct}`]);
+  // Claude's own compaction, between replies (CompactButton draws it)
+  if (ctx > 0 && onCompact && compactable(core.cache, u, busy)) parts.push(["compact", "", null, compacting ? "Compacting…" : "Compact"]);
   if (paid) parts.push(["cost", paid[2] + live, <><Coins size={14} strokeWidth={1.5} className="text-faint" /><Num hold={settle} est={est} className={`font-medium ${est ? "" : "text-ink"}`}>{paid[0]}</Num>
     {paid[1] && <span className="tz-n2 -ml-0.5">{paid[1]}</span>}</>, paid.join()]);
   if (u.cachedPct > 0) parts.push(["cache", "Input read from the provider's cache in this conversation", <>
     <Database size={14} strokeWidth={1.5} className="text-faint" /><span className="font-medium text-ink">{pctText(u.cachedPct)}%</span><span className="-ml-0.5">cached</span></>, `${u.cachedPct}`]);
+  // under a minute and cold in the warning colour: the next message re-reads the whole context
+  if (core.cache && warm != null) { const left = warm < 1 ? "<1m" : `${warm}m`;
+    parts.push(["warm", warmSaid(core.cache, warm), <>
+      <Timer size={14} strokeWidth={1.5} className={warm < 1 ? "text-warn" : "text-faint"} />{warm < 0 ? <span className="text-warn">cold</span>
+        : <span className={warm < 1 ? "text-warn" : ""}>warm <span className={`font-medium ${warm < 1 ? "" : "text-ink"}`}>{left}</span></span>}</>, warm < 0 ? "cold" : `warm ${left}`]); }
   if (sp) parts.push(["speed", sp[2], <><Activity size={14} strokeWidth={1.5} className="text-live" /><Num hold={settle} est={est} className={`font-medium ${est ? "" : "text-ink"}`}>{sp[0]}</Num>
     {sp[1] && <span className="-ml-0.5">{sp[1]}</span>}</>, sp.slice(0, 2).join()]);
   // fitted when a part comes or goes or a text's length changes, not every frame
@@ -307,10 +337,12 @@ export function ConvNumbers({ view: core, choice, busy, turns, top }: { view: Vi
     <div ref={row} aria-label="This conversation's numbers" role="group"
       className={`tz-nums -ml-4 -mr-3 flex h-8 items-center whitespace-nowrap bg-[color-mix(in_srgb,var(--field)_40%,var(--card))] pl-[9px] pr-[5px] text-[12.5px] tabular-nums text-muted ${top ? "-mt-3 mb-2.5 rounded-t-[11px] border-b border-line" : "-mb-2 mt-2 rounded-b-[11px] border-t border-line"}`}>
       {parts.map(([k, title, inner], i) => (
-        <span key={k} className={`flex flex-none items-center ${k === "cache" ? "tz-n1" : ""}`}>
-          {i > 0 && <i aria-hidden="true" className="mx-[3px] h-3.5 w-px bg-line" />}
-          {k === "cost" && turns.length ? <ChatCost cost={view.cost} turns={turns} busy={busy} className={part} title={`${title} · its receipt`} left>{inner}</ChatCost>
-            : <button tabIndex={0} data-panel onClick={(e) => openStats(k === "speed" ? "turn" : "all", e.currentTarget)} title={`${title} · Stats`} className={part}>{inner}</button>}
+        <span key={k} className={`flex flex-none items-center ${k === "cache" ? "tz-n1" : k === "warm" ? "tz-n4" : ""}`}>
+          {i > 0 && k !== "compact" && <i aria-hidden="true" className="mx-[3px] h-3.5 w-px bg-line" />}
+          {k === "compact" ? <CompactButton pending={compacting} onClick={compact} className="ml-0.5 mr-1 h-[22px] px-2 text-[12px]" />
+            : k === "cost" && turns.length ? <ChatCost cost={view.cost} turns={turns} busy={busy} className={part} title={`${title}. Opens its receipt`} left>{inner}</ChatCost>
+            // the warmth's tooltip is its sentence alone; a click is Stats, as the rest
+            : <button tabIndex={0} data-panel onClick={(e) => openStats(k === "speed" ? "turn" : "all", e.currentTarget)} title={k === "warm" ? title : `${title}. Opens Stats`} className={part}>{inner}</button>}
         </span>
       ))}
     </div>
@@ -326,5 +358,7 @@ export function Tokens({ out = 0, live }: { out?: number; live?: Live | null }) 
   const n = Math.round(useTween(out + (streaming ? outNow(live!) : 0), on, streaming, true));
   return n ? <><Sep /><Num hold={on} className="tabular-nums">↓ {tok(n)} tokens</Num></> : null;
 }
-/** Drops parts until the row fits: the cache, the cost's words, "of 128k" (scrollWidth counts what spills out). */
-const fit = (el: HTMLElement | null) => { if (!el) return; el.dataset.drop = "0"; for (let d = 1; d <= 3 && el.scrollWidth > el.clientWidth; d++) el.dataset.drop = String(d); };
+/** Drops parts until the row fits: the cache's share, the cost's words, "of 128k", the cache's warmth (scrollWidth counts
+ * what spills out). The warmth goes last: at 85% of the window, with Compact and a plan's cost words, a 700 px row had no
+ * room for it, just when the next message would re-read the most. */
+const fit = (el: HTMLElement | null) => { if (!el) return; el.dataset.drop = "0"; for (let d = 1; d <= 4 && el.scrollWidth > el.clientWidth; d++) el.dataset.drop = String(d); };
