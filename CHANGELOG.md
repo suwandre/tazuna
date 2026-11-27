@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.233 (2026-11-27): usage sources, steadier
+
+Fixes after the user tried usage sources (no measurable metric moves).
+- Qwen's CLI does not report Individual Token Plans: when it says the plan is not subscribed, tazuna says nothing about the
+  plan (no false "no Token Plan") and the desktop offers the console instead; a failed CLI read keeps that state.
+- Usage replies echo the desktop's request number (`req`), so the window can tell which click a reply answers; Check
+  re-reads that provider fresh (a key permission just turned on shows at once); the CLI is asked only when it matters.
+- A console reading's status reads "No reading yet" rather than "not signed in yet".
+
 ## 0.1.232 (2026-11-26): choose whose usage tazuna shows, and how
 
 Usage sources (no measurable metric moves).

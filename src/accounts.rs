@@ -266,8 +266,13 @@ fn kept_row(k: &Value, now: u64) -> Option<Value> {
 /// Read again (`read`) once it is a minute old; marked as being read first, so another process meanwhile takes the kept
 /// row; a read that fails keeps the last good row. Without `dir`, read each time.
 fn cached(dir: Option<&std::path::Path>, l: &crate::models::Login, key: &str, now: u64, read: impl FnOnce() -> Option<Reading>) -> Value {
+    cached_within(dir, l, key, now, 60, read)
+}
+
+/// The same, read again once `within` seconds old (0: now, for Settings' Check again).
+fn cached_within(dir: Option<&std::path::Path>, l: &crate::models::Login, key: &str, now: u64, within: u64, read: impl FnOnce() -> Option<Reading>) -> Value {
     let k = kept(dir, l, key);
-    if k["at"].as_u64().is_some_and(|at| now.saturating_sub(at) < 60) && k["row"].is_object() {
+    if k["at"].as_u64().is_some_and(|at| now.saturating_sub(at) < within) && k["row"].is_object() {
         return k["row"].clone();
     }
     let file = dir.map(|d| d.join(slug(l.name)));
@@ -285,7 +290,12 @@ fn cached(dir: Option<&std::path::Path>, l: &crate::models::Login, key: &str, no
             v
         }
         None => {
-            let v = kept_row(&k, now).unwrap_or_else(|| row(l, None));
+            let mut v = kept_row(&k, now).unwrap_or_else(|| row(l, None));
+            // a quiet row (Qwen's CLI without the plan) has no words to keep it by: its mark stays, or a CLI that timed out
+            // would read as signed in
+            if v["left"].is_null() && k["row"]["cli_plan"] == false {
+                v["cli_plan"] = json!(false);
+            }
             save(&json!({"kh": kh, "at": now, "good_at": k["good_at"], "row": v}));
             v
         }
@@ -306,6 +316,8 @@ struct Reading {
     key_limit: bool,
     /// today's free requests, not credit: they come back the next day
     free_requests: bool,
+    /// Qwen's CLI says its account has no Token Plan (CLI_NO_PLAN): a row with nothing in it
+    cli_no_plan: bool,
 }
 
 /// Credit under this many dollars is low (the desktop's threshold, health.ts); yuan, with no rate in the code, about as
@@ -320,9 +332,13 @@ const LOW_CNY: f64 = 14.0;
 /// it), "needs_scope" (the key may not read it), "unknown"; `key_limit` when the money is a key's own limit,
 /// `free_requests` when the reading is today's free requests.
 fn row(l: &crate::models::Login, r: Option<Reading>) -> Value {
-    let Some(r) = r else {
-        return json!({"provider": l.name, "left": null, "short": null, "page": l.page, "usd_left": null, "max_used_pct": null, "state": "unknown"});
-    };
+    let quiet = || json!({"provider": l.name, "left": null, "short": null, "page": l.page, "usd_left": null, "max_used_pct": null, "state": "unknown"});
+    let Some(r) = r else { return quiet() };
+    if r.cli_no_plan {
+        let mut v = quiet();
+        v["cli_plan"] = json!(false);
+        return v;
+    }
     let usd = r.money.and_then(|(x, cur)| match cur { "USD" => Some(x), "IDR" => Some(x / crate::engine::IDR_PER_USD), _ => None });
     let max = r.windows.iter().filter_map(|w| w["used"].as_f64()).max_by(f64::total_cmp);
     let state = r.state.unwrap_or(match (r.money, max) {
@@ -613,18 +629,31 @@ fn qwencloud_signed_in() -> Result<Option<String>, &'static str> {
     if cfg!(test) || !crate::platform::on_path("qwencloud", &std::env::var_os("PATH").unwrap_or_default()) {
         return Err(CLI_MISSING);
     }
-    let status = cli_json("qwencloud", &["auth", "status", "--format", "json"], 5).filter(|s| s["authenticated"] == true).ok_or("Qwen's CLI is not signed in: qwencloud auth login")?;
-    Ok(["account", "email", "username", "user", "accountName"].iter().find_map(|k| status[*k].as_str()).or(status["user"]["email"].as_str()).map(String::from))
+    let status = cli_json("qwencloud", &["auth", "status", "--format", "json"], 5).filter(|s| s["authenticated"] == true).ok_or(CLI_SIGNED_OUT)?;
+    Ok(cli_account(&status))
 }
 
-const CLI_MISSING: &str = "Qwen's CLI is not installed";
+/// The account `qwencloud auth status` names: CLI 1.7.0 says `user.aliyunId`, masked as the CLI prints it
+/// ("someone*****@example.com").
+fn cli_account(status: &Value) -> Option<String> {
+    ["account", "email", "username", "user", "accountName"].iter().find_map(|k| status[*k].as_str())
+        .or(status["user"]["email"].as_str()).or(status["user"]["aliyunId"].as_str()).map(String::from)
+}
+
+/// Why Qwen's CLI cannot read, as the usage line says it (the method's `why`).
+const CLI_MISSING: &str = "Not installed";
+const CLI_SIGNED_OUT: &str = "Not signed in";
+/// Signed in, and its usage says no Token Plan: CLI 1.7.0 says so for an account whose Individual plan the console shows
+/// active (the user, 2026-11-27), so it claims nothing about the account; its console reads the plan.
+const CLI_NO_PLAN: &str = "CLI doesn't show this plan";
 
 /// Its Token Plan (`token_plan`: `remainingCredits` of `totalCredits`, shown at the precision given; `usedPct`;
-/// `resetDate`). None when not subscribed.
+/// `resetDate`); not subscribed, a quiet row (no value, no warning: the CLI may not see the plan) marked for the usage
+/// line (`cli_plan` false). None when it says neither.
 fn qwencloud(v: &Value, account: Option<&str>) -> Option<Reading> {
     let t = if v["token_plan"].is_object() { &v["token_plan"] } else { &v["data"]["token_plan"] };
     if t["subscribed"] == false {
-        return None;
+        return Some(Reading { cli_no_plan: true, ..Default::default() });
     }
     let (rem, total) = (num(&t["remainingCredits"]), num(&t["totalCredits"]).filter(|x| *x > 0.0));
     let used = match (rem, total) { (Some(r), Some(n)) => Some((1.0 - r / n) * 100.0), _ => num(&t["usedPct"]) }?;
@@ -729,7 +758,7 @@ fn steps(l: &crate::models::Login, method: &str) -> (String, &'static str) {
         "api" => (format!("tazuna reads it from {n}'s API with your key, at most once a minute. Nothing to do once the key is saved."), l.page),
         "api_scope" => (format!("tazuna reads it from {n}'s API once the key may read the account: turn on account:read for this key on its dashboard, then check again."), l.page),
         "admin_key" => (format!("{n}'s API tells only this month's spend, and only to an Admin key; tazuna does not read it. Count it here instead, or look on its console."), l.page),
-        "cli" => ("Install Qwen's CLI: npm install -g @qwencloud/qwencloud-cli, then sign in with qwencloud auth login. tazuna reads `qwencloud usage summary`.".into(), QWENCLOUD_CLI),
+        "cli" => ("Install Qwen's CLI (npm install -g @qwencloud/qwencloud-cli) and sign in with the Token Plan's account (qwencloud auth login); tazuna reads qwencloud usage summary.".into(), QWENCLOUD_CLI),
         "console" => (format!("Sign in to {n}'s console once in tazuna's own window (Sign in…); tazuna reads its usage page there, at most every 15 minutes. Experimental: automated reading may break the provider's terms; your own account."), l.page),
         "local" => (format!("tazuna counts its own use of {n} against an allowance you enter (amount, unit, period). Use through other apps is not counted."), l.page),
         _ => (format!("{n} offers no way to read its usage: see its page."), l.page),
@@ -883,34 +912,102 @@ fn track_by_name_in(name: &str, file: Option<&std::path::Path>, base: Option<&st
     Ok(format!("usage: {} tracked ({method}){wait}", l.name))
 }
 
-/// Why `method` cannot read `l`'s usage now; None: it can. `cli` is Qwen's CLI as `qwencloud_signed_in` found it.
+/// Why `method` cannot read `l`'s usage now, in the usage line's few words; None: it can. `cli` is Qwen's CLI as
+/// `qwencloud_signed_in` found it; signed in, the last shared reading says whether it shows the Token Plan.
 fn why_not(l: &crate::models::Login, method: &str, key: Option<&str>, conf: &Value, base: Option<&std::path::Path>, cli: &Result<Option<String>, &'static str>) -> Option<String> {
+    let last = || kept_row(&kept(base.map(|b| b.join("credits")).as_deref(), l, key.unwrap_or_default()), crate::session::unix_now());
     match method {
-        "api" | "api_scope" if key.is_none() => Some("no key saved".into()),
+        "api" | "api_scope" if key.is_none() => Some("No key saved".into()),
         // the last reading said the key may not read the account
-        "api_scope" => (kept_row(&kept(base.map(|b| b.join("credits")).as_deref(), l, key.unwrap_or_default()), crate::session::unix_now()).is_some_and(|r| r["state"] == "needs_scope"))
-            .then(|| "this key may not read the account: turn on account:read".into()),
+        "api_scope" => last().is_some_and(|r| r["state"] == "needs_scope").then(|| "Needs account:read".into()),
         "api" => None,
-        "cli" => cli.as_ref().err().map(|e| e.to_string()),
+        "cli" => match cli {
+            Err(e) => Some(e.to_string()),
+            // the row as last written (kept_row keeps only rows with words, and this one has none)
+            Ok(_) => (kept(base.map(|b| b.join("credits")).as_deref(), l, key.unwrap_or_default())["row"]["cli_plan"] == false).then(|| CLI_NO_PLAN.into()),
+        },
+        // no reading is not signed out: the first visit may have found the page, and the reader comes later
         "console" => match console_reading(base, l, crate::session::unix_now() as i64) {
-            None => Some("not signed in yet: Sign in…".into()),
-            Some(Err(())) => Some("its console reading is not valid".into()),
-            Some(Ok(c)) if c["status"] == "signed_out" => Some("signed out: sign in again".into()),
-            Some(Ok(c)) if c["status"] == "error" => Some("the last reading failed".into()),
+            None => Some("No reading yet".into()),
+            Some(Err(())) => Some("Reading not valid".into()),
+            Some(Ok(c)) if c["status"] == "signed_out" => Some("Signed out".into()),
+            Some(Ok(c)) if c["status"] == "error" => Some("Last reading failed".into()),
             Some(Ok(_)) => None,
         },
-        "local" => allowance_of(conf, l.name).is_none().then(|| "no allowance set".into()),
+        "local" => allowance_of(conf, l.name).is_none().then(|| "No allowance set".into()),
         "admin_key" => Some("tazuna does not read Admin keys".into()),
-        _ => Some("nothing reads it".into()),
+        _ => Some("No usage API".into()),
+    }
+}
+
+/// What to run for Qwen's CLI now, by why it cannot read (the usage line's commands, each with Copy): none once it reads,
+/// nor when it does not show the plan (the console is the way then).
+fn cli_commands(why: Option<&str>) -> Vec<&'static str> {
+    const LOGIN: &str = "qwencloud auth login";
+    match why {
+        Some(CLI_MISSING) => vec!["npm install -g @qwencloud/qwencloud-cli", LOGIN],
+        Some(CLI_SIGNED_OUT) => vec![LOGIN],
+        _ => vec![],
     }
 }
 
 /// The settings page's usage lines (the app server's `usage_sources`): each provider, whether it has a key, its methods
 /// with their steps, link and whether each can read now (`ready`, else `why`), what is tracked, its allowance. Starts
-/// Qwen's CLI once when it is installed (up to 5 s): off the event loop.
+/// Qwen's CLI (up to 5 s, and signed in its usage up to 8 s more where the shared reading is a minute old; the credits read
+/// next take it) only where the op is about Qwen or about every provider (`usage_sources` with no provider: Settings
+/// opening); a change or a Check for another provider says the CLI as last asked, and waits on nothing of Qwen's.
+/// `usage_sources` for one provider is its Check again: its reading read again now, not the shared one of the last minute
+/// (a key just given account:read went on saying it needs it). Off the event loop.
 #[inline(never)]
-pub fn sources() -> Value {
-    sources_in(&usage_conf(usage_file().as_deref()), crate::labels::dir().ok().as_deref(), &|v| crate::models::key(v), &qwencloud_signed_in())
+pub fn sources(cmd: &Value) -> Value {
+    static CLI_LAST: std::sync::Mutex<Option<Result<Option<String>, &'static str>>> = std::sync::Mutex::new(None);
+    let one = cmd["provider"].as_str();
+    let (check, ask_cli) = (cmd["op"] == "usage_sources" && one.is_some(), one.is_none_or(|p| p == QWEN));
+    let last = CLI_LAST.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let cli = match last {
+        Some(c) if !ask_cli => c,
+        _ => {
+            let c = qwencloud_signed_in();
+            *CLI_LAST.lock().unwrap_or_else(|e| e.into_inner()) = Some(c.clone());
+            c
+        }
+    };
+    let (base, now) = (crate::labels::dir().ok(), crate::session::unix_now());
+    let dir = base.as_ref().map(|b| b.join("credits"));
+    let key_of = |l: &crate::models::Login| l.vars.iter().find_map(|v| crate::models::key(v));
+    if let (true, Ok(account), Some(l)) = (ask_cli, &cli, usage_login(QWEN).ok()) {
+        cached_within(dir.as_deref(), l, &key_of(l).unwrap_or_default(), now, if check { 0 } else { 60 },
+            || qwencloud(&cli_json("qwencloud", &["usage", "summary", "--format", "json"], 8)?, account.as_deref()));
+    }
+    if let Some(l) = one.filter(|p| check && *p != QWEN).and_then(|p| usage_login(p).ok()).filter(|l| methods(l.name).iter().any(|m| matches!(*m, "api" | "api_scope"))) {
+        if let Some(k) = key_of(l) {
+            cached_within(dir.as_deref(), l, &k, now, 0, || reading(l, &k));
+        }
+    }
+    sources_in(&usage_conf(usage_file().as_deref()), base.as_deref(), &|v| crate::models::key(v), &cli)
+}
+
+const QWEN: &str = "Qwen Cloud Token Plan";
+
+/// The usage op's lines (the app server's `usage_sources`, `usage_track`, `usage_allowance`): the usage lines with the op's
+/// `seq` and the window's own `req` said back (it knows which click a reply answers), and a refusal's `error`; after a
+/// saved change, the credits read again with the same `seq`. `sources` and `credits` are the readers (stand-ins in tests).
+pub fn usage_lines(cmd: &Value, seq: u64, saved: &Option<Result<(), String>>, sources: impl FnOnce() -> Value, credits: impl FnOnce() -> Value) -> Vec<Value> {
+    let mut v = sources();
+    v["seq"] = json!(seq);
+    if !cmd["req"].is_null() {
+        v["req"] = cmd["req"].clone();
+    }
+    if let Some(Err(e)) = saved {
+        v["error"] = json!(e);
+    }
+    let mut lines = vec![v];
+    if matches!(saved, Some(Ok(()))) {
+        let mut c = credits();
+        c["seq"] = json!(seq);
+        lines.push(c);
+    }
+    lines
 }
 
 fn sources_in(conf: &Value, base: Option<&std::path::Path>, key: &dyn Fn(&str) -> Option<String>, cli: &Result<Option<String>, &'static str>) -> Value {
@@ -918,7 +1015,15 @@ fn sources_in(conf: &Value, base: Option<&std::path::Path>, key: &dyn Fn(&str) -
         let k = l.vars.iter().find_map(|v| key(v));
         let methods: Vec<Value> = methods(l.name).into_iter().map(|m| {
             let ((steps, link), why) = (steps(l, m), why_not(l, m, k.as_deref(), conf, base, cli));
-            json!({"id": m, "steps": steps, "link": link, "ready": why.is_none(), "why": why})
+            let mut v = json!({"id": m, "steps": steps, "link": link, "ready": why.is_none(), "why": why});
+            // what to run now, and the method to use in its place where the CLI does not show the plan
+            if m == "cli" {
+                v["commands"] = json!(cli_commands(why.as_deref()));
+                if why.as_deref() == Some(CLI_NO_PLAN) {
+                    v["instead"] = json!("console");
+                }
+            }
+            v
         }).collect();
         let (on, method) = track(l, conf, k.is_some());
         json!({"provider": l.name, "has_key": k.is_some(), "methods": methods, "track": {"on": on, "method": method}, "allowance": allowance_of(conf, l.name)})
@@ -1075,7 +1180,7 @@ fn ago(at: i64, now: i64) -> String {
 fn console_row(l: &crate::models::Login, c: Option<Result<Value, ()>>, now: i64) -> Value {
     let say = |left: String, short: &str| row(l, Some(Reading { left, short: short.into(), ..Default::default() }));
     let c = match c {
-        None => return say("not read yet: sign in to its console in Settings".into(), "not signed in"),
+        None => return say("no reading from its console yet".into(), "no reading yet"),
         Some(Err(())) => return say("its console reading is not valid".into(), "unreadable"),
         Some(Ok(c)) => c,
     };
@@ -1512,7 +1617,16 @@ mod tests {
             "totalCredits": "2000", "remainingCredits": "1500.25", "usedPct": 24.99, "resetDate": "2026-12-01T00:00:00Z"}, "coding_plan": {"subscribed": false}});
         let q = qwencloud(&usage, Some("someone@example.com")).unwrap();
         assert_eq!((q.left.as_str(), q.short.as_str(), at(&q.windows[0]).0), ("1500.25 of 2000 credits left (qwencloud signed in as someone@example.com)", "25% used", "credits".to_string()));
-        assert!(qwencloud(&json!({"token_plan": {"subscribed": false}}), None).is_none());
+        // CLI 1.7.0's own answers (2026-11-27), for an account whose Individual plan the console shows active: a quiet row
+        // (no value, no warning, nothing claimed), marked for the usage line; the account as `auth status` masks it
+        let real = json!({"period": {"from": "2026-11-01", "to": "2026-11-27"}, "free_tier": [], "coding_plan": {"subscribed": false},
+            "token_plan": {"subscribed": false, "planName": "Token Plan", "totalCredits": 0, "remainingCredits": 0, "usedPct": 0}, "pay_as_you_go": {}});
+        let none = row(login("Qwen Cloud Token Plan"), qwencloud(&real, Some("someone*****@example.com")));
+        assert_eq!((&none["left"], &none["short"], none["state"].as_str(), &none["max_used_pct"], &none["cli_plan"]), (&Value::Null, &Value::Null, Some("unknown"), &Value::Null, &json!(false)));
+        let status = json!({"authenticated": true, "server_verified": true, "auth_mode": "device_flow", "source": "keychain", "user": {"aliyunId": "someone*****@example.com"}});
+        assert_eq!(cli_account(&status).as_deref(), Some("someone*****@example.com"));
+        assert_eq!((cli_account(&json!({"email": "a@b.c"})).as_deref(), cli_account(&json!({"user": {"email": "x@y.z"}})).as_deref(), cli_account(&json!({}))), (Some("a@b.c"), Some("x@y.z"), None));
+        assert!(qwencloud(&json!({"pay_as_you_go": {}}), None).is_none(), "no Token Plan said either way: no reading");
         assert_eq!(qwencloud(&json!({"token_plan": {"subscribed": true, "usedPct": 30}}), None).map(|r| r.left).as_deref(), Some("70% of credits left"));
         // the short lines fit the cockpit's cost box (34 columns inside) with the provider's name beside them
         for r in [&mm.short, &k.short, &q.short, &shown(synthetic(&json!({"subscription": {"limit": 1350, "requests": 27}}))).1, &shown(openrouter(Some(&json!({"data": {"limit": 5000.0, "limit_remaining": 1234.5}})), None)).1, &shown(openrouter(Some(&json!({"data": {"limit": 50.0, "limit_remaining": -1234.5}})), None)).1] {
@@ -1678,7 +1792,7 @@ mod tests {
         assert_eq!(names, [("Mistral", "local"), ("Mistral Vibe", "console"), ("Caffeine", "local")], "Mortera has no key here: not read");
         let rows = rows_of(&tracked, &both, Some(&dir), crate::session::unix_now(), |_, _| None);
         assert_eq!(rows.iter().map(|r| r["left"].as_str().unwrap_or("-")).collect::<Vec<_>>(),
-            ["no allowance set: Settings › Providers", "not read yet: sign in to its console in Settings", "≈ 100% left of $5.00 (use through tazuna on this machine)"]);
+            ["no allowance set: Settings › Providers", "no reading from its console yet", "≈ 100% left of $5.00 (use through tazuna on this machine)"]);
         let api = rows_of(&[(login("Mortera"), "k".into(), "api"), (login("Mistral"), "k".into(), "admin_key")], &both, Some(&dir), crate::session::unix_now(),
             |_, _| Some(money("IDR", 50_000.0)));
         assert_eq!((api[0]["left"].as_str(), api[1]["left"].as_str(), api[1]["page"].as_str()), (Some("Rp 50,000 left"), None, Some(login("Mistral").page)), "admin_key: not read, its page");
@@ -1688,17 +1802,50 @@ mod tests {
         let conf = usage_conf(Some(&f));
         let cli: Result<Option<String>, &str> = Err(CLI_MISSING);
         let why = |name: &str, m: &str, key: Option<&str>| why_not(login(name), m, key, &conf, Some(&dir), &cli);
-        assert_eq!((why("SubRouter", "api", None).as_deref(), why("SubRouter", "api", Some("k"))), (Some("no key saved"), None));
+        assert_eq!((why("SubRouter", "api", None).as_deref(), why("SubRouter", "api", Some("k"))), (Some("No key saved"), None));
         assert_eq!(why("Qwen Cloud Token Plan", "cli", Some("k")).as_deref(), Some(CLI_MISSING));
-        assert_eq!(why("Groq", "local", Some("k")).as_deref(), Some("no allowance set"));
-        assert_eq!(why("Caffeine", "console", Some("k")).as_deref(), Some("not signed in yet: Sign in…"));
+        assert_eq!(why("Groq", "local", Some("k")).as_deref(), Some("No allowance set"));
+        // no reading yet is never "not signed in": the first visit may have been made (the user: Done went back to it)
+        assert_eq!(why("Caffeine", "console", Some("k")).as_deref(), Some("No reading yet"));
         std::fs::create_dir_all(dir.join("console")).unwrap();
         let now = crate::session::unix_now() as i64;
         std::fs::write(dir.join("console/Caffeine.json"), json!({"at": now, "status": "signed_out", "source": "console"}).to_string()).unwrap();
-        assert_eq!(why("Caffeine", "console", Some("k")).as_deref(), Some("signed out: sign in again"));
+        assert_eq!(why("Caffeine", "console", Some("k")).as_deref(), Some("Signed out"));
         std::fs::write(dir.join("console/Caffeine.json"), json!({"at": now, "status": "ok", "source": "console", "numbers": {"unit": "usd", "left": 3, "total": 10, "used_pct": null, "resets": null}}).to_string()).unwrap();
         assert_eq!(why("Caffeine", "console", Some("k")), None);
         assert!(why("Mistral", "admin_key", Some("k")).is_some() && why("Groq", "none", Some("k")).is_some());
+        // Qwen's CLI: missing, signed out, signed in; signed in, its last reading without the plan (the console in its
+        // place); and what each says to run
+        let qwen = login("Qwen Cloud Token Plan");
+        let cli_why = |cli: &Result<Option<String>, &'static str>| why_not(qwen, "cli", Some("k"), &conf, Some(&dir), cli);
+        let me: Result<Option<String>, &'static str> = Ok(Some("someone*****@example.com".into()));
+        assert_eq!((cli_why(&Err(CLI_SIGNED_OUT)).as_deref(), cli_why(&me)), (Some("Not signed in"), None));
+        let t = crate::session::unix_now();
+        let real = json!({"coding_plan": {"subscribed": false}, "token_plan": {"subscribed": false, "planName": "Token Plan", "totalCredits": 0, "remainingCredits": 0, "usedPct": 0}});
+        cached(Some(&dir.join("credits")), qwen, "k", t, || qwencloud(&real, Some("someone*****@example.com")));
+        assert_eq!((cli_why(&me).as_deref(), cli_why(&Ok(None)).as_deref()), (Some(CLI_NO_PLAN), Some(CLI_NO_PLAN)));
+        assert_eq!([cli_commands(None), cli_commands(Some(CLI_MISSING)), cli_commands(Some(CLI_SIGNED_OUT)), cli_commands(Some(CLI_NO_PLAN))],
+            [vec![], vec!["npm install -g @qwencloud/qwencloud-cli", "qwencloud auth login"], vec!["qwencloud auth login"], vec![]]);
+        let src = sources_in(&conf, Some(&dir), &|v: &str| (v == "QWENCLOUD_TOKEN_PLAN_API_KEY").then(|| "k".to_string()), &me);
+        let m = src["providers"].as_array().unwrap().iter().find(|p| p["provider"] == "Qwen Cloud Token Plan").unwrap()["methods"][0].clone();
+        assert_eq!((&m["id"], &m["ready"], &m["why"], &m["commands"], &m["instead"]), (&json!("cli"), &json!(false), &json!(CLI_NO_PLAN), &json!([]), &json!("console")), "{m}");
+        // a CLI that times out next keeps the quiet row's mark: never a false "Signed in"
+        cached(Some(&dir.join("credits")), qwen, "k", t + 61, || None);
+        assert_eq!(cli_why(&me).as_deref(), Some(CLI_NO_PLAN), "a failed read lost the mark");
+        // Check again reads now (cached_within 0), not the shared reading of the last minute
+        assert_eq!(cached_within(Some(&dir.join("credits")), qwen, "k", t + 62, 60, || panic!("read within the minute")).get("cli_plan"), Some(&json!(false)));
+        // the plan bought: reads again
+        cached_within(Some(&dir.join("credits")), qwen, "k", t + 63, 0, || qwencloud(&json!({"token_plan": {"subscribed": true, "usedPct": 30}}), None));
+        assert_eq!(cli_why(&me), None);
+        // the op's lines: its seq, the window's req said back, a refusal's error, the credits only after a saved change
+        let src = || json!({"type": "usage_sources", "providers": []});
+        let cr = || json!({"type": "accounts_credits", "credits": []});
+        let lines = usage_lines(&json!({"op": "usage_track", "provider": "Groq", "req": 7}), 3, &Some(Ok(())), src, cr);
+        assert_eq!((lines.len(), &lines[0]["seq"], &lines[0]["req"], &lines[1]["seq"], lines[1].get("req")), (2, &json!(3), &json!(7), &json!(3), None));
+        let refused = usage_lines(&json!({"op": "usage_track", "req": 8}), 4, &Some(Err("not saved".into())), src, || panic!("no credits for a refusal"));
+        assert_eq!((refused.len(), &refused[0]["req"], &refused[0]["error"]), (1, &json!(8), &json!("not saved")));
+        let older = usage_lines(&json!({"op": "usage_sources"}), 5, &None, src, || panic!("nothing saved"));
+        assert_eq!((older.len(), older[0].get("req")), (1, None), "no req asked: none said back");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1792,7 +1939,7 @@ mod tests {
         let out = console_row(l, Some(Ok(console_check(&file(now, "signed_out", Value::Null), now).unwrap())), now);
         assert_eq!((out["left"].as_str(), out["state"].as_str()), (Some("sign in again in Settings"), Some("unknown")));
         assert_eq!(console_row(l, Some(Ok(console_check(&file(now - 300, "error", Value::Null), now).unwrap())), now)["left"], "its console could not be read (5 min ago)");
-        assert_eq!(console_row(l, None, now)["left"], "not read yet: sign in to its console in Settings");
+        assert_eq!(console_row(l, None, now)["left"], "no reading from its console yet");
         assert_eq!(console_row(l, Some(Err(())), now)["left"], "its console reading is not valid");
         // not valid: a wrong type, a number that is not finite, the future, another source, an unknown unit, a total of 0,
         // a reset that is no time, too long a file

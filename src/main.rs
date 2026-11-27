@@ -1953,19 +1953,10 @@ fn app_server(a: &Args) -> Result<()> {
                         Some("usage_sources" | "usage_track" | "usage_allowance") => {
                             static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                             let (seq, saved) = (SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1, accounts::usage_save(&cmd));
+                            // what the reply needs of the op: which, for whom, and the window's own number to say back
+                            let ask = json!({"op": cmd["op"], "provider": cmd["provider"], "req": cmd["req"]});
                             std::thread::spawn(move || {
-                                let mut v = accounts::sources();
-                                v["seq"] = json!(seq);
-                                if let Some(Err(e)) = &saved {
-                                    v["error"] = json!(e);
-                                }
-                                let mut lines = vec![v];
-                                if matches!(saved, Some(Ok(()))) {
-                                    let mut c = accounts::credits_reading();
-                                    c["seq"] = json!(seq);
-                                    lines.push(c);
-                                }
-                                for v in lines {
+                                for v in accounts::usage_lines(&ask, seq, &saved, || accounts::sources(&ask), accounts::credits_reading) {
                                     let mut o = std::io::stdout().lock();
                                     let _ = writeln!(o, "{v}");
                                     let _ = o.flush();
