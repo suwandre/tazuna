@@ -819,6 +819,13 @@ runs, a "Context compacted" divider, "Compaction failed" when it could not, a Co
 narrow window shuts for the moment only); no middle dots in any text or tooltip; the numbers strip's corners match the
 box's.
 
+0.1.141: the console reader reads a page's visible text, for providers whose usage page draws its numbers instead of
+fetching them: Qwen Cloud Token Plan (Monthly Quota: remaining share of the plan's credits, reset time) and Mistral Vibe
+(the Subscription page's Vibe & Studio allowance in dollars, its reset). A hidden window opens the provider's usage page
+at most every 15 minutes with the window's own sign-in; only the numbers leave the page. Learning a page's text keeps
+short usage lines on the usage page alone, every digit masked; Forget sign-in removes them. A signed-out reading says
+"sign in again"; nothing is read before a sign-in or after Forget.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

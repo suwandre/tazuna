@@ -807,21 +807,24 @@ fn set_profile(core: State<Core>, tid: String, name: String) -> Result<(), Strin
 
 // The console reader (usage sources, review 14; experimental, off by default): a provider's own usage page, read in a window
 // of tazuna's with the user's own sign-in, for the providers whose API tells no usage. The window's initialization script
-// (console.js) watches the JSON the page itself gets and reports through one command (`report`) that checks everything again
-// and writes under ~/.local/share/tazuna, where the core reads it: console-learn/<provider>.json (shapes only, from the first
-// visit) and console/<provider>.json (the numbers). tazuna keeps no password: the sign-in lives in the window's own store.
+// (console.js) watches the JSON the page itself gets and its visible text, and reports through one command (`report`) that
+// checks everything again and writes under ~/.local/share/tazuna, where the core reads it: console-learn/<provider>.json
+// (shapes and digit-masked lines only, from the first visit) and console/<provider>.json (the numbers). tazuna keeps no password: the sign-in lives in the window's own store.
 
 /// A provider whose usage page tazuna may read: its name as the core says it, the page its window opens on (its usage page
 /// for a signed-in account; signed out, the site sends it to its sign-in and back), the exact hosts of its console (capabilities/console.json lists the same; sign-in pages elsewhere get no script
 /// and no command), the hosts of its own sign-in (its window may go there too, nav_ok), and its
-/// extractor: a JS function (path, json) => {left, total, unit, used_pct, resets} | null, written from its learn file
-/// (Phase 2; until then none, and nothing is read in the background).
+/// extractors, written from its learn file (Phase 2; until then none, and nothing is read in the background), either or
+/// both: `read`, a JS function (path, json) => {left, total, unit, used_pct, resets} | null on usage-like JSON the page
+/// gets; `read_text`, a JS function (text, p) => the same, on the page's visible text once it settles, with console.js's
+/// parser as `p` (p.line(text, /re/), p.nums, p.num, p.pct, p.date: review/console.cjs shows one for a typical layout).
 struct Console {
     name: &'static str,
     start: &'static str,
     sites: &'static [&'static str],
     sign_in: &'static [&'static str],
     read: Option<&'static str>,
+    read_text: Option<&'static str>,
 }
 
 // sign-in hosts as each sign-in page sends them (2026-11-26): Qwen's goes through its account site to Alibaba Cloud's
@@ -830,12 +833,56 @@ struct Console {
 // (docs.qwencloud.com/token-plan/token-plan-usage-quota), Mistral's Subscription page with the included monthly usage
 // (docs.mistral.ai/admin/billing-usage/subscriptions; signed out it goes to v2.auth.mistral.ai's sign-in), Caffeine
 // Inference's usage (a route of caffeine.ai's own app, beside its API keys)
+/// Qwen Cloud's Token Plan usage page (2026-11-27, from the user's screenshot): its JSON carries the plan but not the
+/// quota, which the page draws: "Individual Plan", then "Monthly Quota", "Reset time 2026-12-22 17:00:00", "Remaining
+/// 95.8%", "Plan quota 45,000" (credits), then "Credit Pack". Only that block: from the Individual Plan's Monthly Quota to
+/// the next section (a credit pack's or a team plan's "Remaining" is not the plan's), its labels in any case (innerText
+/// keeps a CSS text-transform), a number grouped by a space too ("45 000"). The reset as the page writes it, in the window's
+/// local time.
+const QWEN_TEXT: &str = r#"(t, p) => {
+  var s = String(t).replace(/\s+/g, " "), a = s.search(/individual plan/i);
+  if (a < 0) return null;
+  s = s.slice(a);
+  var q = s.search(/monthly quota/i);
+  if (q < 0) return null;
+  s = s.slice(q);
+  var end = s.search(/credit packs?|team plan|individual plan/i);
+  if (end > 0) s = s.slice(0, end);
+  var N = "(\\d{1,3}(?:[.,\\s\\u00a0\\u202f]\\d{3}(?!\\d))+(?:[.,]\\d+)?|\\d+(?:[.,]\\d+)?)", n = function (x) { return p.num(x.replace(/[\s\u00a0\u202f]/g, "")); };
+  var left = new RegExp("Remaining\\s+" + N + "\\s*%", "i").exec(s), total = new RegExp("Plan quota\\s+" + N, "i").exec(s);
+  var reset = /Reset time\s+(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/i.exec(s);
+  if (!left) return null;
+  var share = n(left[1]), tot = total ? n(total[1]) : null;
+  var at = reset ? Math.floor(new Date(+reset[1], reset[2] - 1, +reset[3], +(reset[4] || 0), +(reset[5] || 0), +(reset[6] || 0)).getTime() / 1000) : null;
+  return { left: tot ? tot * share / 100 : share, total: tot, unit: tot ? "credits" : "percent", used_pct: 100 - share, resets: at };
+}"#;
+
+/// Mistral's Subscription page (2026-11-27, from the user's screenshot), drawn by its server: "Included Vibe & Studio
+/// usage", the amount used ("$49.63") and the allowance ("$150"), "Resets in 3 days": the Vibe plan's own allowance (the
+/// "Included API usage" above it is the API key's). An amount's sign at either end ("$49.63", "49,63 €", "US$49.63"); in
+/// euros a share alone (the core has no euro unit). It resets on the first day of each calendar month at 00:00 UTC: the
+/// block's "Resets in N days" from today's UTC date, else next month's first day.
+const MISTRAL_VIBE_TEXT: &str = r#"(t, p) => {
+  var L = String(t).split("\n").map(function (x) { return x.trim(); }).filter(Boolean), i = -1, money = [], eur = false, days = null;
+  for (var k = 0; k < L.length; k++) if (/^Included Vibe\s*&\s*Studio usage/i.test(L[k])) { i = k; break; }
+  if (i < 0) return null;
+  for (var j = i + 1; j < L.length && j <= i + 8; j++) {
+    if (/^Resets\b/i.test(L[j])) { var r = /\bin\s+(\d+)\s+days?\b/i.exec(L[j]); if (r) days = +r[1]; break; }
+    if (/^Included\b.*\busage$/i.test(L[j])) break;
+    if (/^(US)?[$€]\s?\d|\d\s?[$€]$/i.test(L[j])) { money = money.concat(p.nums(L[j])); eur = eur || L[j].indexOf("€") >= 0; }
+  }
+  if (money.length < 2 || !(money[1] > 0)) return null;
+  var d = new Date(), at = (days != null ? Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + days) : Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1)) / 1000;
+  var used = 100 * money[0] / money[1];
+  return eur ? { left: null, total: null, unit: "percent", used_pct: used, resets: at } : { left: money[1] - money[0], total: money[1], unit: "usd", used_pct: used, resets: at };
+}"#;
+
 const CONSOLES: [Console; 3] = [
     Console { name: "Qwen Cloud Token Plan", start: "https://home.qwencloud.com/analytics/token-plan?region=ap-southeast-1", sites: &["home.qwencloud.com"],
-        sign_in: &["account.qwencloud.com", "account.alibabacloud.com", "passport.alibabacloud.com"], read: None },
+        sign_in: &["account.qwencloud.com", "account.alibabacloud.com", "passport.alibabacloud.com"], read: None, read_text: Some(QWEN_TEXT) },
     Console { name: "Mistral Vibe", start: "https://admin.mistral.ai/subscription", sites: &["chat.mistral.ai", "console.mistral.ai", "admin.mistral.ai"],
-        sign_in: &["auth.mistral.ai", "v2.auth.mistral.ai"], read: None },
-    Console { name: "Caffeine", start: "https://caffeine.ai/inference/usage", sites: &["caffeine.ai", "www.caffeine.ai"], sign_in: &["id.ai"], read: None },
+        sign_in: &["auth.mistral.ai", "v2.auth.mistral.ai"], read: None, read_text: Some(MISTRAL_VIBE_TEXT) },
+    Console { name: "Caffeine", start: "https://caffeine.ai/inference/usage", sites: &["caffeine.ai", "www.caffeine.ai"], sign_in: &["id.ai"], read: None, read_text: None },
 ];
 
 /// The sign-ins the providers' pages offer, open to every console window: Google (Qwen, Mistral), Apple and Microsoft's
@@ -865,9 +912,12 @@ struct Consoles {
     waiting: Mutex<Option<(String, std::sync::mpsc::Sender<&'static str>)>>,
     /// held around a learn file's read, merge and write: reports arrive on several threads at once
     learning: Mutex<()>,
-    /// the usage-like field names each learning window found on this visit (by its label), for its title
-    found: Mutex<std::collections::HashMap<String, Vec<String>>>,
+    /// what each learning window found on this visit (by its label), for its title
+    found: Mutex<std::collections::HashMap<String, Found>>,
 }
+
+/// A learning visit's usage-like field names and lines of text.
+type Found = (Vec<String>, Vec<String>);
 
 fn console_of(provider: &str) -> Option<&'static Console> {
     CONSOLES.iter().find(|c| c.name == provider)
@@ -951,6 +1001,32 @@ fn query_ok(u: &tauri::Url) -> bool {
     u.query_pairs().all(|(k, v)| SAFE_QUERY.iter().any(|(key, values)| *key == k && values.contains(&v.as_ref())))
 }
 
+/// A learned page as console.js pageOf makes it: on the console's sites, a cleaned path, no fragment, SAFE_QUERY's alone.
+fn page_ok(c: &Console, p: &str) -> bool {
+    on_site(c.sites, p) && tauri::Url::parse(p).is_ok_and(|u| u.fragment().is_none() && query_ok(&u) && path_ok(u.path()))
+}
+
+/// The usage-like words of a line of text (console.js WORDS, the same; whole words, any case) and its signs.
+const TEXT_WORDS: [&str; 24] = ["usage", "used", "left", "remaining", "limit", "limits", "quota", "quotas", "credit", "credits", "included", "plan", "plans",
+    "reset", "resets", "renew", "renews", "renewal", "billing", "token", "tokens", "request", "requests", "%"];
+
+/// A line of a page's text as console.js textLines keeps it: a short label and its number, every digit of any script "#"
+/// (a "#" there, no digit), a usage-like word or sign, 8 words and 160 characters at most, no @, no control character,
+/// nothing that may be a value.
+fn text_ok(l: &str) -> bool {
+    let word = |w: &str| TEXT_WORDS.contains(&w.to_ascii_lowercase().as_str());
+    l.contains('#') && l.chars().count() <= 160 && l.split_whitespace().count() <= 8 && !value_like(l)
+        && !l.chars().any(|c| c.is_numeric() || c.is_control() || c == '@' || c == '\u{FF20}')
+        && (l.contains(['%', '€', '$']) || l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).any(word))
+}
+
+/// A URL on a console's start page: its host and path exactly (its query may differ: SAFE_QUERY's region). Text is learned
+/// there alone, the usage page: a chat or an invoice page's lines are someone's words.
+fn on_start(c: &Console, url: &str) -> bool {
+    let (Ok(u), Ok(s)) = (tauri::Url::parse(url), tauri::Url::parse(c.start)) else { return false };
+    u.scheme() == "https" && u.port().is_none() && u.host_str() == s.host_str() && u.path() == s.path()
+}
+
 /// A shape and nothing more: type names as leaves ("string", "number", "boolean", "null"), objects of field names, arrays
 /// of one item at most. A number, a boolean, null or any other string is a value and fails.
 fn shape_ok(v: &serde_json::Value, depth: usize) -> bool {
@@ -983,6 +1059,8 @@ fn usage_keys(v: &serde_json::Value, out: &mut Vec<String>) {
 enum Report {
     /// a response's shape for the learn file: {path, method, status, shape, usage, page?}
     Learn(serde_json::Value),
+    /// a page's usage-like lines for the learn file, digits masked: {page, lines}
+    Text(serde_json::Value),
     /// the numbers for the reading: {left, total, unit, used_pct, resets}, each there (null where not known)
     Read(serde_json::Value),
     SignedOut,
@@ -990,8 +1068,9 @@ enum Report {
 
 /// A console page's report, checked: it is the provider's page talking, and any script on it can call the command. From its
 /// own window (`console-<provider>`) on that provider's sites, 64 KB at most, and only a shape (learn: field names and type
-/// names, a cleaned path, a page on its sites only where usage-like fields appeared) or numbers (read: finite numbers or
-/// null, one unit of four).
+/// names, a cleaned path, a page on its sites only where usage-like fields appeared), lines without a digit (text: 40 at
+/// most, text_ok, from the learning window on its start page alone) or numbers (read: finite numbers or null, one unit of
+/// four).
 fn check_report(label: &str, url: &str, provider: &str, kind: &str, payload: &serde_json::Value) -> Result<Report, String> {
     let c = console_of(provider).ok_or("not a console reader's provider")?;
     if !caller_ok(label, provider) {
@@ -1016,14 +1095,7 @@ fn check_report(label: &str, url: &str, provider: &str, kind: &str, payload: &se
             usage_keys(shape, &mut keys);
             let page = match o.get("page") {
                 None | Some(serde_json::Value::Null) => None,
-                Some(p) => {
-                    let p = p.as_str().filter(|p| on_site(c.sites, p)).ok_or("not a page on its console")?;
-                    let u = tauri::Url::parse(p).map_err(|_| "not a usage page")?;
-                    if u.fragment().is_some() || !query_ok(&u) || !path_ok(u.path()) || keys.is_empty() {
-                        return Err("not a usage page".into());
-                    }
-                    Some(p)
-                }
+                Some(p) => Some(p.as_str().filter(|p| page_ok(c, p) && !keys.is_empty()).ok_or("not a usage page")?),
             };
             let mut entry = serde_json::json!({"path": path, "method": method, "status": status, "shape": shape, "usage": !keys.is_empty()});
             if let Some(p) = page {
@@ -1031,7 +1103,21 @@ fn check_report(label: &str, url: &str, provider: &str, kind: &str, payload: &se
             }
             Ok(Report::Learn(entry))
         }
-        "read" if c.read.is_none() => Err(format!("no reader for {provider} yet")),
+        "text" if label != label_of(provider) || !on_start(c, url) => Err("text comes from the learning window on its start page alone".into()),
+        "text" => {
+            let o = fields(&["page", "lines"]).ok_or("not a text report")?;
+            let page = o.get("page").and_then(|p| p.as_str()).filter(|p| page_ok(c, p) && on_start(c, p)).ok_or("not its start page")?;
+            let lines = o.get("lines").and_then(|l| l.as_array()).filter(|l| !l.is_empty() && l.len() <= 40).ok_or("not 1 to 40 lines")?;
+            let mut kept: Vec<&str> = vec![];
+            for l in lines {
+                let l = l.as_str().filter(|l| text_ok(l)).ok_or("a line with a digit or a value")?;
+                if !kept.contains(&l) {
+                    kept.push(l);
+                }
+            }
+            Ok(Report::Text(serde_json::json!({"page": page, "lines": kept})))
+        }
+        "read" if c.read.is_none() && c.read_text.is_none() => Err(format!("no reader for {provider} yet")),
         "read" => check_numbers(payload),
         "signed_out" if payload.is_null() => Ok(Report::SignedOut),
         _ => Err(format!("not a report: {kind}")),
@@ -1060,6 +1146,10 @@ fn check_numbers(payload: &serde_json::Value) -> Result<Report, String> {
             let unit = n.get("unit").and_then(|u| u.as_str()).filter(|u| matches!(*u, "usd" | "tokens" | "credits" | "percent")).ok_or("not a unit")?;
             if left.is_null() && total.is_null() && used_pct.is_null() {
                 return Err("a reading with no number".into());
+            }
+            // below zero only in dollars (a balance spent past its credit); tokens, credits or a share left are not
+            if unit != "usd" && left.as_f64().is_some_and(|l| l < 0.0) {
+                return Err("less than nothing left".into());
             }
             Ok(Report::Read(serde_json::json!({"left": left, "total": total, "unit": unit, "used_pct": used_pct, "resets": resets})))
         }
@@ -1110,17 +1200,49 @@ fn merge_learn(mut old: serde_json::Value, entry: serde_json::Value, now: u64) -
     while list.len() > 1 && (list.len() > 200 || serde_json::to_vec_pretty(&list).map_or(0, |s| s.len()) > 1 << 20) {
         drop_one(&mut list, &|_| true);
     }
-    serde_json::json!({"at": now, "page": old["page"], "page_fields": old["page_fields"], "responses": list})
+    serde_json::json!({"at": now, "page": old["page"], "page_fields": old["page_fields"], "responses": list, "texts": old["texts"]})
 }
 
-/// What the first visit found, for Settings: the usage page's path, the usage-like field names on it, when.
-fn learned_summary(l: &serde_json::Value) -> serde_json::Value {
+/// The learn file with one more page's lines ({page, lines}): the newest per page, 20 pages at most (the oldest goes).
+fn merge_texts(old: serde_json::Value, entry: serde_json::Value, now: u64) -> serde_json::Value {
+    let mut list: Vec<serde_json::Value> = old["texts"].as_array().cloned().unwrap_or_default();
+    list.retain(|e| e["page"] != entry["page"]);
+    list.push(entry);
+    list.drain(..list.len().saturating_sub(20));
+    serde_json::json!({"at": now, "page": old["page"], "page_fields": old["page_fields"], "responses": old["responses"], "texts": list})
+}
+
+/// The learned page with the most usage-like lines of text.
+fn text_page(l: &serde_json::Value) -> Option<&str> {
+    l["texts"].as_array()?.iter().max_by_key(|e| e["lines"].as_array().map_or(0, Vec::len))?["page"].as_str()
+}
+
+/// The page a background reading opens (console_refresh), or None: no reading. A provider read by its text reads its start,
+/// the page its extractor was written for (its usage page: no learn visit needed first); one read by its JSON alone, the
+/// page where the usage-like fields came (not one with an id in its path: no page to open again).
+fn read_page(c: &Console, learned: &serde_json::Value) -> Option<String> {
+    if c.read_text.is_some() {
+        return Some(c.start.to_string());
+    }
+    learned["page"].as_str().filter(|p| c.read.is_some() && !p.contains(":id")).map(str::to_string)
+}
+
+/// Whether and where a background reading goes: read_page's page, only while the window's store is there (a sign-in made and
+/// not forgotten). Never for one never signed in, nor after Forget, which a reading would undo, making the store again.
+fn refresh_page(c: &Console, learned: &serde_json::Value, store: bool) -> Option<String> {
+    read_page(c, learned).filter(|_| store)
+}
+
+/// What the visits found, for Settings: the page a reading opens (read_page; without a reader the learned one), the
+/// usage-like field names and lines of text found, when.
+fn learned_summary(c: &Console, l: &serde_json::Value) -> serde_json::Value {
     let mut keys = vec![];
     for e in l["responses"].as_array().into_iter().flatten().filter(|e| e["usage"] == true) {
         usage_keys(&e["shape"], &mut keys);
     }
-    let page = l["page"].as_str().and_then(|p| tauri::Url::parse(p).ok()).map(|u| u.path().to_string());
-    serde_json::json!({"page": page, "fields": keys.len(), "at": l["at"]})
+    let lines: usize = l["texts"].as_array().into_iter().flatten().map(|e| e["lines"].as_array().map_or(0, Vec::len)).sum();
+    let page = read_page(c, l).or_else(|| l["page"].as_str().or(text_page(l)).map(str::to_string)).and_then(|p| tauri::Url::parse(&p).ok()).map(|u| u.path().to_string());
+    serde_json::json!({"page": page, "fields": keys.len(), "lines": lines, "at": l["at"]})
 }
 
 fn learn_file(root: &std::path::Path, provider: &str) -> std::path::PathBuf {
@@ -1152,43 +1274,60 @@ async fn report(app: AppHandle, webview: tauri::Webview, provider: String, kind:
 #[inline(never)]
 fn take_report(app: &AppHandle, webview: &tauri::Webview, provider: &str, r: Report) -> Result<(), String> {
     let root = share_dir();
-    let tell = |kind: &'static str| {
-        if let Some((p, tx)) = app.state::<Consoles>().waiting.lock().unwrap().as_ref() {
-            if p == provider {
-                let _ = tx.send(kind);
-            }
-        }
-    };
+    let tell = |kind: &'static str| tell(app, provider, kind);
     match r {
         Report::Learn(entry) => {
-            let file = learn_file(&root, provider);
-            let consoles = app.state::<Consoles>();
-            let _one = consoles.learning.lock().unwrap();
             let mut keys = vec![];
             if entry["usage"] == true {
                 usage_keys(&entry["shape"], &mut keys);
             }
-            write_atomic(&file, &merge_learn(read_json(&file).unwrap_or_default(), entry, now_secs()))?;
-            // what this visit found, in the window's own title: tazuna draws nothing on the provider's page
-            if !keys.is_empty() {
-                let mut found = consoles.found.lock().unwrap();
-                let seen = found.entry(webview.label().to_string()).or_default();
-                seen.extend(keys.into_iter().filter(|k| !seen.contains(k)).collect::<Vec<_>>());
-                let _ = webview.window().set_title(&learn_title(provider, seen.len()));
-            }
-            Ok(())
+            learned(app, webview, provider, keys, vec![], |old| merge_learn(old, entry, now_secs()))
+        }
+        Report::Text(entry) => {
+            let lines = entry["lines"].as_array().into_iter().flatten().filter_map(|l| l.as_str().map(str::to_string)).collect();
+            learned(app, webview, provider, vec![], lines, |old| merge_texts(old, entry, now_secs()))
         }
         Report::Read(numbers) => write_reading(&root, provider, "ok", numbers).map(|_| tell("read")),
         Report::SignedOut => write_reading(&root, provider, "signed_out", serde_json::Value::Null).map(|_| tell("signed_out")),
     }
 }
 
+/// The background reading waiting on `provider`, told what came ("read", "signed_out").
+fn tell(app: &AppHandle, provider: &str, kind: &'static str) {
+    if let Some((p, tx)) = app.state::<Consoles>().waiting.lock().unwrap().as_ref() {
+        if p == provider {
+            let _ = tx.send(kind);
+        }
+    }
+}
+
+/// A learn report written (`merge` into the learn file, under the lock: reports arrive on several threads at once), and
+/// what this visit found (its usage-like field names and lines) in the window's own title: tazuna draws nothing on the
+/// provider's page.
+fn learned(app: &AppHandle, webview: &tauri::Webview, provider: &str, keys: Vec<String>, lines: Vec<String>,
+    merge: impl FnOnce(serde_json::Value) -> serde_json::Value) -> Result<(), String> {
+    let (file, consoles) = (learn_file(&share_dir(), provider), app.state::<Consoles>());
+    let _one = consoles.learning.lock().unwrap();
+    write_atomic(&file, &merge(read_json(&file).unwrap_or_default()))?;
+    if !keys.is_empty() || !lines.is_empty() {
+        let mut found = consoles.found.lock().unwrap();
+        let (fields, seen) = found.entry(webview.label().to_string()).or_default();
+        fields.extend(keys.into_iter().filter(|k| !fields.contains(k)).collect::<Vec<_>>());
+        seen.extend(lines.into_iter().filter(|l| !seen.contains(l)).collect::<Vec<_>>());
+        let _ = webview.window().set_title(&learn_title(provider, fields.len(), seen.len()));
+    }
+    Ok(())
+}
+
 /// A learning window's title (the native title bar, never a bar over the page, which hid Mistral's own sign-in): what it
-/// does, then the usage-like fields this visit found (not earlier visits'); closing the window is done.
-fn learn_title(provider: &str, found: usize) -> String {
-    match found {
-        0 => format!("{provider}: learning this page's usage data"),
-        n => format!("{provider}: found usage data ({n} field{}), close when done", if n == 1 { "" } else { "s" }),
+/// does, then the usage-like fields and lines of text this visit found (not earlier visits'); closing the window is done.
+fn learn_title(provider: &str, fields: usize, lines: usize) -> String {
+    let n = |n: usize, what: &str| format!("{n} {what}{}", if n == 1 { "" } else { "s" });
+    match (fields, lines) {
+        (0, 0) => format!("{provider}: learning this page's usage data"),
+        (f, 0) => format!("{provider}: found usage data ({}), close when done", n(f, "field")),
+        (0, l) => format!("{provider}: found usage data ({}), close when done", n(l, "line")),
+        (f, l) => format!("{provider}: found usage data ({} and {}), close when done", n(f, "field"), n(l, "line")),
     }
 }
 
@@ -1227,10 +1366,10 @@ fn console_window(app: &AppHandle, c: &'static Console, mode: &str, url: &str, v
     let label = if visible { label_of(c.name) } else { format!("{}-read", label_of(c.name)) };
     #[cfg(target_os = "macos")]
     own_stores()?;
-    let cfg = serde_json::json!({"provider": c.name, "mode": mode, "sites": c.sites});
-    let script = format!("{CONSOLE_JS}(window, {cfg}, {});", c.read.unwrap_or("null"));
+    let cfg = serde_json::json!({"provider": c.name, "mode": mode, "sites": c.sites, "start": c.start});
+    let script = format!("{CONSOLE_JS}(window, {cfg}, {}, {});", c.read.unwrap_or("null"), c.read_text.unwrap_or("null"));
     let url = tauri::Url::parse(url).map_err(|e| e.to_string())?;
-    let title = if mode == "learn" { learn_title(c.name, 0) } else { format!("{} usage — tazuna", c.name) };
+    let title = if mode == "learn" { learn_title(c.name, 0, 0) } else { format!("{} usage — tazuna", c.name) };
     // a new visit counts its own findings
     app.state::<Consoles>().found.lock().unwrap().remove(&label);
     let b = tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::External(url))
@@ -1327,6 +1466,10 @@ impl Nav {
 /// WebKit's own page-load call.
 #[inline(never)]
 fn console_page(w: tauri::WebviewWindow, c: &Console, visible: bool, nav: &Mutex<Nav>, url: &tauri::Url, finished: bool) {
+    // a hidden reading sent to a sign-in (its sign-in host, where console.js does not run, or a common one): signed out
+    if hidden_sign_in(c, url, visible, finished) && write_reading(&share_dir(), c.name, "signed_out", serde_json::Value::Null).is_ok() {
+        tell(w.app_handle(), c.name, "signed_out");
+    }
     let (go, open) = nav.lock().unwrap().load(c, url, finished, visible, Instant::now());
     if go == Go::Stay {
         return;
@@ -1341,6 +1484,11 @@ fn console_page(w: tauri::WebviewWindow, c: &Console, visible: bool, nav: &Mutex
             _ => w.destroy(),
         };
     });
+}
+
+/// A hidden reading's finished page on a sign-in (the provider's sign-in hosts or SIGN_IN's, not its own sites): signed out.
+fn hidden_sign_in(c: &Console, url: &tauri::Url, visible: bool, finished: bool) -> bool {
+    !visible && finished && url.scheme() == "https" && !on_site(c.sites, url.as_str()) && nav_ok(c, url.as_str())
 }
 
 /// A window a console or sign-in page opens: a sign-in on nav_ok's list gets a window of its own, under the same rules (so a
@@ -1381,8 +1529,8 @@ async fn pause(ms: u64) {
     let _ = tauri::async_runtime::spawn_blocking(move || std::thread::sleep(std::time::Duration::from_millis(ms))).await;
 }
 
-/// "Forget sign-in": the window closed, its store deleted (its cookies, its sign-in) and its reading with it. The learn file
-/// stays: shapes only.
+/// "Forget sign-in": the window closed, its store deleted (its cookies, its sign-in), its reading with it and the lines of
+/// text it learned (forget_texts). The learn file's shapes stay: field names and types only.
 #[tauri::command]
 async fn console_forget(app: AppHandle, consoles: State<'_, Consoles>, provider: String) -> Result<(), String> {
     let c = console_of(&provider).ok_or_else(|| format!("no console reader for {provider}"))?;
@@ -1422,18 +1570,43 @@ async fn console_forget(app: AppHandle, consoles: State<'_, Consoles>, provider:
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.to_string()),
         _ => {}
     }
+    {
+        let _one = consoles.learning.lock().unwrap();
+        forget_texts(&share_dir(), c.name)?;
+    }
     last
 }
 
+/// The learn file without its lines of text (the page's own words, digits masked), its shapes kept; none: nothing to do.
+fn forget_texts(root: &std::path::Path, provider: &str) -> Result<(), String> {
+    let file = learn_file(root, provider);
+    match read_json(&file) {
+        Some(mut l) if l.get("texts").is_some() => {
+            l.as_object_mut().map(|o| o.remove("texts"));
+            write_atomic(&file, &l)
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Whether a provider's console window has its store (its sign-in): macOS 14's data store by its id, elsewhere its folder.
+async fn has_store(app: &AppHandle, c: &Console) -> bool {
+    #[cfg(target_os = "macos")]
+    return own_stores().is_ok() && app.fetch_data_store_identifiers().await.is_ok_and(|ids| ids.contains(&store_id(c.name)));
+    #[cfg(not(target_os = "macos"))]
+    return console_store(app, c).is_ok_and(|d| d.exists());
+}
+
 /// A reading in a hidden window (D4: the window asks at most every 15 minutes while a provider is tracked by its console):
-/// the learned usage page, until a report or 30 s; no report in that time is "error" (a sign-in page says "signed_out" itself).
-/// Only where the provider has an extractor and a usage page was learned, never beside an open console window or another
-/// reading. Says what it did: "read", "signed_out", "error", or "skipped".
+/// refresh_page's page, until a report or 30 s; no report in that time is "error" (a sign-in page says "signed_out": its own
+/// script on the provider's sites, console_page on a sign-in host). Only where the provider has an extractor, a page to read
+/// and its sign-in (the store), never beside an open console window or another reading. Says what it did: "read",
+/// "signed_out", "error", or "skipped".
 #[tauri::command]
 async fn console_refresh(app: AppHandle, consoles: State<'_, Consoles>, provider: String) -> Result<String, String> {
     let c = console_of(&provider).ok_or_else(|| format!("no console reader for {provider}"))?;
-    let page = read_json(&learn_file(&share_dir(), c.name)).and_then(|l| l["page"].as_str().map(str::to_string)).filter(|p| !p.contains(":id"));
-    let Some(page) = page.filter(|_| c.read.is_some()) else { return Ok("skipped".into()) };
+    let learned = read_json(&learn_file(&share_dir(), c.name)).unwrap_or_default();
+    let Some(page) = refresh_page(c, &learned, has_store(&app, c).await) else { return Ok("skipped".into()) };
     if app.get_webview_window(&label_of(c.name)).is_some() || consoles.hidden.swap(true, Ordering::SeqCst) {
         return Ok("skipped".into());
     }
@@ -1456,21 +1629,18 @@ async fn console_refresh(app: AppHandle, consoles: State<'_, Consoles>, provider
     Ok(got.unwrap_or("error").into())
 }
 
-/// What the first visit found, for Settings ("found usage data on /usage (3 fields)"), and whether the window's store (its
-/// sign-in) is there, for Forget: {page, fields, at, store}, or null with neither.
+/// What the visits found, for Settings ("Found /usage", "Reads /subscription": learned_summary), and whether the window's
+/// store (its sign-in) is there, for Forget: {page, fields, lines, at, store}, or null with neither.
 #[tauri::command]
 async fn console_learned(app: AppHandle, provider: String) -> Result<Option<serde_json::Value>, String> {
     let Some(c) = console_of(&provider) else { return Ok(None) };
-    #[cfg(target_os = "macos")]
-    let store = own_stores().is_ok() && app.fetch_data_store_identifiers().await.is_ok_and(|ids| ids.contains(&store_id(c.name)));
-    #[cfg(not(target_os = "macos"))]
-    let store = console_store(&app, c).is_ok_and(|d| d.exists());
-    let learned = read_json(&learn_file(&share_dir(), c.name)).map(|l| learned_summary(&l));
-    Ok(match learned {
-        Some(mut l) => { l["store"] = serde_json::json!(store); Some(l) }
-        None if store => Some(serde_json::json!({"page": null, "fields": 0, "at": null, "store": true})),
-        None => None,
-    })
+    let store = has_store(&app, c).await;
+    let learned = read_json(&learn_file(&share_dir(), c.name)).or_else(|| store.then(serde_json::Value::default));
+    Ok(learned.map(|l| {
+        let mut l = learned_summary(c, &l);
+        l["store"] = serde_json::json!(store);
+        l
+    }))
 }
 
 /// A window gone: the main one takes the cores and the console windows with it (until the console reader, any window's end
@@ -1784,8 +1954,9 @@ mod tests {
         assert!(huge.to_string().len() > 64 * 1024 && check_report(label, url, q, "learn", &huge).unwrap_err().contains("64 KB"));
         // a reading: finite numbers or null in its five fields, one unit of four, at least one number
         let read = json!({"numbers": {"left": 1500.25, "total": 2000, "unit": "credits", "used_pct": 25, "resets": 1764500000}});
-        // no reading while the provider has no extractor (Phase 2 writes them)
-        assert!(check_report(label, url, q, "read", &read).unwrap_err().contains("no reader"));
+        // a reading from a provider with an extractor (Qwen's reads its page's text); none from one without (Caffeine)
+        assert_eq!(check_report(label, url, q, "read", &read), Ok(Report::Read(read["numbers"].clone())));
+        assert!(check_report("console-Caffeine", "https://caffeine.ai/inference/usage", "Caffeine", "read", &read).unwrap_err().contains("no reader"));
         let check_report = |_: &str, _: &str, _: &str, _: &str, p: &serde_json::Value| super::check_numbers(p);
         assert_eq!(check_report(label, url, q, "read", &read), Ok(Report::Read(read["numbers"].clone())));
         assert_eq!(check_report(label, url, q, "read", &json!({"numbers": {"used_pct": 30, "unit": "percent"}})),
@@ -1816,7 +1987,8 @@ mod tests {
         // a page with fewer usage fields later (a chat page naming a plan) keeps /usage
         let l = super::merge_learn(l, json!({"path": "/api/chat", "method": "GET", "status": 200, "usage": true, "shape": {"planName": "string"}, "page": "https://home.qwencloud.com/chat/:id"}), 12);
         assert_eq!((l["responses"].as_array().unwrap().len(), &l["page"], &l["at"]), (3, &json!("https://home.qwencloud.com/usage"), &json!(12)));
-        assert_eq!(super::learned_summary(&l), json!({"page": "/usage", "fields": 4, "at": 12}));
+        let caffeine = &super::CONSOLES[2];
+        assert_eq!(super::learned_summary(caffeine, &l), json!({"page": "/usage", "fields": 4, "lines": 0, "at": 12}), "no reader: the learned page");
         // one address, two answers (Qwen's /data/api.json): both kept; the same answer again stays one
         let gw = |shape: serde_json::Value| json!({"path": "/data/api.json?product&action", "method": "POST", "status": 200, "usage": true, "shape": shape});
         let g = super::merge_learn(json!(null), gw(json!({"data": {"Remain": "number"}})), 1);
@@ -1832,10 +2004,12 @@ mod tests {
         let r = g["responses"].as_array().unwrap();
         assert_eq!((r.len(), r.iter().filter(|e| e["usage"] == true).count()), (200, 2));
         // the window's title: what it does, then what this visit found
-        assert_eq!(super::learn_title("Mistral Vibe", 0), "Mistral Vibe: learning this page's usage data");
-        assert_eq!(super::learn_title("Mistral Vibe", 3), "Mistral Vibe: found usage data (3 fields), close when done");
-        assert_eq!(super::learn_title("Caffeine", 1), "Caffeine: found usage data (1 field), close when done");
-        assert_eq!(super::learned_summary(&super::merge_learn(json!(null), json!({"path": "/x", "method": "GET", "usage": false, "shape": {}}), 5)), json!({"page": null, "fields": 0, "at": 5}));
+        assert_eq!(super::learn_title("Mistral Vibe", 0, 0), "Mistral Vibe: learning this page's usage data");
+        assert_eq!(super::learn_title("Mistral Vibe", 3, 0), "Mistral Vibe: found usage data (3 fields), close when done");
+        assert_eq!(super::learn_title("Caffeine", 1, 0), "Caffeine: found usage data (1 field), close when done");
+        assert_eq!(super::learn_title("Mistral Vibe", 0, 4), "Mistral Vibe: found usage data (4 lines), close when done");
+        assert_eq!(super::learn_title("Mistral Vibe", 2, 1), "Mistral Vibe: found usage data (2 fields and 1 line), close when done");
+        assert_eq!(super::learned_summary(caffeine, &super::merge_learn(json!(null), json!({"path": "/x", "method": "GET", "usage": false, "shape": {}}), 5)), json!({"page": null, "fields": 0, "lines": 0, "at": 5}));
         let many = (0..250).fold(json!(null), |l, i| super::merge_learn(l, json!({"path": format!("/p{i}"), "method": "GET", "shape": {}}), i));
         assert_eq!((many["responses"].as_array().unwrap().len(), &many["responses"][0]["path"]), (200, &json!("/p50")));
         let root = std::env::temp_dir().join(format!("tazuna-console-{}", std::process::id()));
@@ -1844,6 +2018,116 @@ mod tests {
         assert_eq!((&r["status"], &r["numbers"], &r["source"]), (&json!("signed_out"), &json!(null), &json!("console")));
         assert!(super::learn_file(&root, "Mistral Vibe").ends_with("console-learn/Mistral-Vibe.json"));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A page's text (a page that renders its usage on the server, Mistral's Subscription): short lines without a digit, an @
+    /// or a value, from the learning window on its start page alone; kept in the learn file per page beside the shapes, and
+    /// gone with Forget.
+    #[test]
+    fn a_text_report_is_checked_and_kept() {
+        use super::{check_report, Report};
+        use serde_json::json;
+        let (m, label, url) = ("Mistral Vibe", "console-Mistral-Vibe", "https://admin.mistral.ai/subscription");
+        let page = "https://admin.mistral.ai/subscription";
+        let text = |lines: serde_json::Value| json!({"page": page, "lines": lines});
+        // what console.js textLines makes of review/console.cjs's made-up page
+        let good = text(json!(["€##.## of €###.## used", "##% used", "Resets on Dec #", "Renews December #, ####", "Used ###### tokens", "€##.## of €###.## used"]));
+        let Ok(Report::Text(e)) = check_report(label, url, m, "text", &good) else { panic!("{:?}", check_report(label, url, m, "text", &good)) };
+        assert_eq!(e, json!({"page": page, "lines": ["€##.## of €###.## used", "##% used", "Resets on Dec #", "Renews December #, ####", "Used ###### tokens"]}), "deduped");
+        // a digit of any script, an @, a value, a control character, too long, over 8 words, no "#" or no usage word (a
+        // sentence, a name), not a string, none or over 40
+        for bad in [json!(["€12.40 of €150 used"]), json!(["Resets on Dec ١"]), json!(["²# used"]), json!(["someone@example.com # credits"]), json!(["a＠b # credits"]),
+            json!(["Key sk-AbCdEfGhIjKl # requests"]), json!(["Org AbCdEfGhIjKlMn # used"]), json!(["# used\nnext"]), json!([format!("# used {}", "x".repeat(160))]),
+            json!(["Jane Doe wrote # messages about the plan for the team"]), json!(["Jane Doe, # Main Street"]), json!(["Plan used"]), json!(["Thread #"]),
+            json!([""]), json!([12]), json!([]), json!(vec!["# used"; 41]), json!("# used")] {
+            assert!(check_report(label, url, m, "text", &text(bad.clone())).is_err(), "{bad}");
+        }
+        assert!(check_report(label, url, m, "text", &text(json!([format!("{} # used", "é".repeat(153))]))).is_ok(), "160 characters, not bytes");
+        assert!(check_report(label, url, m, "text", &text(json!(["Included usage: one two three four # used"]))).is_ok(), "8 words");
+        // its start page alone: the page it names and the window's own (never a chat page, another of its pages, a query
+        // it does not keep, a fragment), and the learning window alone (a background reading learns nothing)
+        for p in ["https://evil.example/subscription", "https://admin.mistral.ai/subscription?email=a", "https://admin.mistral.ai/subscription#x", "https://admin.mistral.ai/usage",
+            "https://chat.mistral.ai/subscription", "https://chat.mistral.ai/chat/:id", "/subscription"] {
+            assert!(check_report(label, url, m, "text", &json!({"page": p, "lines": ["# used"]})).is_err(), "{p}");
+        }
+        for u in ["https://admin.mistral.ai/usage", "https://chat.mistral.ai/chat/abc", "https://console.mistral.ai/subscription"] {
+            assert!(check_report(label, u, m, "text", &good).is_err(), "{u}");
+        }
+        assert!(check_report(label, "https://admin.mistral.ai/subscription?tab=x", m, "text", &good).is_ok(), "the window's query is not the page's");
+        assert!(check_report("console-Mistral-Vibe-read", url, m, "text", &good).unwrap_err().contains("learning window"));
+        assert!(check_report(label, url, m, "text", &json!({"page": page, "lines": ["# used"], "html": "x"})).is_err());
+        assert!(check_report("console-Caffeine", url, m, "text", &good).is_err() && check_report(label, "https://evil.example/", m, "text", &good).is_err());
+        // Qwen's start keeps its region
+        let qs = super::CONSOLES[0].start;
+        assert!(check_report("console-Qwen-Cloud-Token-Plan", qs, "Qwen Cloud Token Plan", "text", &json!({"page": qs, "lines": ["Remaining ##.#%"]})).is_ok());
+        // a reading by text (Mistral Vibe's Subscription page); less than nothing left only in dollars
+        let read = json!({"numbers": {"left": null, "total": null, "unit": "percent", "used_pct": 8.3, "resets": 1764543600}});
+        assert_eq!(check_report(label, url, m, "read", &read), Ok(Report::Read(read["numbers"].clone())));
+        for (unit, ok) in [("usd", true), ("credits", false), ("tokens", false), ("percent", false)] {
+            assert_eq!(super::check_numbers(&json!({"numbers": {"left": -0.17, "unit": unit}})).is_ok(), ok, "{unit}");
+        }
+        // the learn file: lines per page beside the shapes, the newest per page, 20 pages at most; the shapes' merge keeps them
+        let usage = json!({"path": "/api/usage", "method": "GET", "status": 200, "usage": true, "shape": {"plan": "string"}, "page": "https://chat.mistral.ai/chat"});
+        let l = super::merge_learn(json!(null), usage.clone(), 1);
+        let l = super::merge_texts(l, text(json!(["# used"])), 2);
+        let l = super::merge_texts(l, json!({"page": "https://admin.mistral.ai/usage", "lines": ["€# of €# used"]}), 3);
+        let l = super::merge_texts(l, text(json!(["€##.## of €### used", "Resets on Dec #"])), 4);
+        let l = super::merge_learn(l, json!({"path": "/api/me", "method": "GET", "status": 200, "usage": false, "shape": {"name": "string"}}), 5);
+        assert_eq!((l["texts"].as_array().unwrap().len(), &l["texts"][1], l["responses"].as_array().unwrap().len(), &l["at"]),
+            (2, &json!({"page": page, "lines": ["€##.## of €### used", "Resets on Dec #"]}), 2, &json!(5)));
+        // the page a background reading opens: a text reader's start always (not a learned page its extractor can't read:
+        // a chat page's plan field, another page's lines), no learn visit needed; a JSON reader's learned page (never one
+        // with an id); no reader, no reading
+        let mistral = &super::CONSOLES[1];
+        let (by_text, by_json, by_both) = (super::Console { read: None, ..*mistral }, super::Console { read: Some("(u, j) => null"), read_text: None, ..*mistral },
+            super::Console { read: Some("(u, j) => null"), ..*mistral });
+        let at = |c: &super::Console, l: &serde_json::Value| super::read_page(c, l);
+        let start = Some(mistral.start.to_string());
+        let other = super::merge_texts(json!(null), json!({"page": "https://admin.mistral.ai/usage", "lines": ["# used", "# left"]}), 1);
+        for learned in [json!(null), json!({}), usage.clone(), l.clone(), other] {
+            assert_eq!((at(&by_text, &learned), at(&by_both, &learned)), (start.clone(), start.clone()), "{learned}");
+        }
+        assert_eq!((at(&by_json, &l), at(&by_json, &json!(null)), at(&by_json, &json!({"page": "https://admin.mistral.ai/u/:id"}))), (Some("https://chat.mistral.ai/chat".into()), None, None));
+        let bare = super::Console { read: None, read_text: None, ..*mistral };
+        assert_eq!((at(&bare, &l), at(&bare, &json!(null))), (None, None));
+        for c in &super::CONSOLES {
+            assert!(super::read_page(&super::Console { read_text: Some("x"), ..*c }, &json!(null)).is_some_and(|p| p == c.start && super::page_ok(c, &p)), "{}", c.name);
+        }
+        // a hidden reading only with the store (the sign-in): none never signed in, none after Forget
+        assert_eq!((super::refresh_page(mistral, &l, true), super::refresh_page(mistral, &l, false), super::refresh_page(mistral, &json!(null), false)), (start.clone(), None, None));
+        // Settings: the page a reading opens, else (no reader) the learned one; the lines counted
+        assert_eq!(super::learned_summary(mistral, &l), json!({"page": "/subscription", "fields": 1, "lines": 3, "at": 5}));
+        assert_eq!(super::learned_summary(&by_json, &l)["page"], "/chat");
+        assert_eq!(super::learned_summary(&bare, &super::merge_texts(json!(null), text(json!(["# used"])), 7)), json!({"page": "/subscription", "fields": 0, "lines": 1, "at": 7}));
+        assert_eq!(super::learned_summary(mistral, &json!(null)), json!({"page": "/subscription", "fields": 0, "lines": 0, "at": null}), "signed in, nothing learned");
+        let many = (0..25).fold(json!(null), |l, i| super::merge_texts(l, json!({"page": format!("https://admin.mistral.ai/p{i}"), "lines": ["# used"]}), i));
+        assert_eq!((many["texts"].as_array().unwrap().len(), &many["texts"][0]["page"]), (20, &json!("https://admin.mistral.ai/p5")));
+        // Forget: the lines go, the shapes stay; no learn file, nothing written
+        let root = std::env::temp_dir().join(format!("tazuna-forget-{}", std::process::id()));
+        super::write_atomic(&super::learn_file(&root, m), &l).unwrap();
+        super::forget_texts(&root, m).unwrap();
+        let after = super::read_json(&super::learn_file(&root, m)).unwrap();
+        assert_eq!((after.get("texts"), after["responses"].as_array().unwrap().len(), &after["page"]), (None, 2, &l["page"]));
+        super::forget_texts(&root, "Caffeine").unwrap();
+        assert!(!super::learn_file(&root, "Caffeine").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A hidden reading sent to a sign-in, where console.js does not run (its provider's sign-in hosts, or a common one): signed
+    /// out once its page finishes, not "error" at 30 s; a visible window signing in, a page still loading, its own sites: not.
+    #[test]
+    fn a_hidden_reading_on_a_sign_in_page_is_signed_out() {
+        let u = |s: &str| tauri::Url::parse(s).unwrap();
+        let (mistral, qwen) = (&super::CONSOLES[1], &super::CONSOLES[0]);
+        for (c, url) in [(mistral, "https://v2.auth.mistral.ai/login?flow=abc"), (mistral, "https://auth.mistral.ai/"), (qwen, "https://account.qwencloud.com/login"),
+            (qwen, "https://passport.alibabacloud.com/x"), (mistral, "https://accounts.google.com/o/oauth2")] {
+            assert!(super::hidden_sign_in(c, &u(url), false, true), "{url}");
+            assert!(!super::hidden_sign_in(c, &u(url), true, true) && !super::hidden_sign_in(c, &u(url), false, false), "{url}");
+        }
+        for (c, url) in [(mistral, "https://admin.mistral.ai/subscription"), (mistral, "https://chat.mistral.ai/login"), (mistral, "https://account.qwencloud.com/login"),
+            (mistral, "https://evil.example/"), (mistral, "about:blank"), (mistral, "http://auth.mistral.ai/")] {
+            assert!(!super::hidden_sign_in(c, &u(url), false, true), "{url}");
+        }
     }
 
     /// The console windows reach one command, from their providers' sites alone, and the main window's capability is its own.

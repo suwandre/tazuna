@@ -246,8 +246,9 @@ export function usageState(m: UsageMethod, u: UsageSource, learned: Learned | nu
       if (learned === null) return { text: "Not set up", action: "signin" };
       // its sign-in forgotten (the store gone, the learn file kept): signing in is what opening means now
       const again = learned.store === false ? "signin" : "open";
-      if (!learned.page || !learned.fields) return { text: "No usage data found yet", action: again };
-      if (m.ready) return { text: `Reads ${learned.page}`, action: again };
+      // a text extractor reads its start page with no learn visit (main.rs read_page): reading is said whatever was learned
+      if (m.ready) return { text: learned.page ? `Reads ${learned.page}` : "Reads automatically", action: again };
+      if (!learned.page || !(learned.fields || learned.lines)) return { text: "No usage data found yet", action: again };
       // a reading that says signed out, or failed; none yet is the page found, waiting for its reader
       if (m.why && !/^no reading/i.test(m.why)) return { text: why, action: /signed out/i.test(m.why) ? "signin" : again };
       return { text: `Found ${learned.page}`, action: again };
@@ -337,10 +338,11 @@ export function demo() {
     said(M("console", false, "Signed out"), { page: "/usage", fields: 3, at: 1 }), said(M("console", false, "not signed in yet: Sign in…"), { page: null, fields: 0, at: 1 }),
     said(M("cli", false, "Not installed", { commands: ["npm i", "qwencloud auth login"] })), said(M("cli", false, "Not signed in", { commands: ["qwencloud auth login"] })),
     said(M("cli", false, "CLI doesn't show this plan", { commands: [], instead: "console" })), said(M("cli", true)),
-    said(M("api_scope", false, "needs account:read")), said(M("local", true)), said(M("none", false, null)), said(M("console", false, "No reading yet"), { page: "/usage", fields: 3, at: 1, store: false })];
+    said(M("api_scope", false, "needs account:read")), said(M("local", true)), said(M("none", false, null)), said(M("console", false, "No reading yet"), { page: "/usage", fields: 3, at: 1, store: false }),
+    said(M("console", false, "No reading yet"), { page: "/subscription", fields: 0, lines: 4, at: 1, store: true }), said(M("console", true), { page: null, fields: 0, at: null, store: true })];
   if (states.join("|") !== "|Not set up [signin]|No usage data found yet [open]|Found /usage [open]|Reads /usage [open]|Signed out [signin]|No usage data found yet [open]"
     + "|Not installed [check] {npm i, qwencloud auth login}|Not signed in [check] {qwencloud auth login}"
-    + "|CLI doesn't show this plan [use]|Signed in|Needs account:read [check]|Not set up|No usage API|Found /usage [signin]") throw new Error(`usage states: ${states.join("|")}`);
+    + "|CLI doesn't show this plan [use]|Signed in|Needs account:read [check]|Not set up|No usage API|Found /usage [signin]|Found /subscription [open]|Reads automatically [open]") throw new Error(`usage states: ${states.join("|")}`);
   // the requests in flight: Console then CLI quickly, the first reply keeps the second's choice; a refusal found by its own
   // reply after a later one; an older core's reply (no number) answers nothing; 20 s on, let go
   const P = (provider: string, kind: Pend["kind"], req: number, at = 0, track?: Pend["track"]): Pend => ({ provider, kind, req, at, track });

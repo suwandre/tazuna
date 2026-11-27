@@ -541,7 +541,8 @@ arrows; a row's line is 56 × 14 px with no mark), usage bar, status bar. Reuse 
   Cloud's Token Plan usage, Mistral's Subscription, Caffeine Inference's usage; signed out, the site's own sign-in first)
   with its sign-in in a store of its own. The page is the provider's and tazuna draws nothing on it (a bar over it hid
   Mistral's sign-in, the user): a visit says what it does in the window's own title, "Mistral Vibe usage: learning — open
-  your usage page", then "Mistral Vibe usage: found usage data (3 fields), close when done" (`learn_title`); closing it is
+  your usage page", then "Mistral Vibe usage: found usage data (3 fields and 5 lines), close when done" (`learn_title`:
+  JSON fields and short lines of its start page's text, digits masked); closing it is
   done. Reading in the background is a hidden window, one at a time, none at all while
   no provider is tracked by its console. The window and its sign-in popups stay on the provider's sites, its own sign-in
   hosts and a short list of common sign-ins (Google, Apple, Microsoft, GitHub's sign-in pages; main.rs `nav_ok`), over

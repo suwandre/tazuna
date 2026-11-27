@@ -876,7 +876,8 @@ export default function App() {
   }, []);
   useEffect(() => { if (haveView) core.usageSources().catch(() => {}); }, [haveView]);
   // the console reader (D4): each provider tracked by its console read in a hidden window at most every 15 minutes while the
-  // app runs, and when the usage page opens; one at a time (the shell skips one with no learned page or no extractor); a
+  // app runs, and when the usage page opens; one at a time (the shell skips one with no extractor, no page to read or no
+  // sign-in: its store never made, or forgotten; main.rs refresh_page); a
   // reading that came, or a sign-in page, is a new accounts reading. None while no provider is tracked that way.
   const consoleAt = useRef<Record<string, number>>({}), consoleBusy = useRef(false);
   const readConsoles = async () => {

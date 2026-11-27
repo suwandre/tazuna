@@ -190,9 +190,9 @@ export type UsageMethod = { id: "api" | "api_scope" | "admin_key" | "cli" | "con
 export type Allowance = { amount: number; unit: "tokens" | "usd" | "requests"; period: "day" | "week" | "month"; reset: number | null };
 /** A provider's ways to read its usage, and the user's choice: tracked or not, and how. */
 export type UsageSource = { provider: string; has_key: boolean; methods: UsageMethod[]; track: { on: boolean; method: string }; allowance: Allowance | null };
-/** What the console reader's first visit found (main.rs console_learned): the usage page's path, its usage-like fields; and
- * whether its window's store (the sign-in) is there. */
-export type Learned = { page: string | null; fields: number; at: number | null; store?: boolean };
+/** What the console reader's first visit found (main.rs console_learned): the usage page's path, its usage-like fields and
+ * lines of text (digits masked); and whether its window's store (the sign-in) is there. */
+export type Learned = { page: string | null; fields: number; lines?: number; at: number | null; store?: boolean };
 export type Models = { choices: ModelChoice[]; rebuild: string | null;
   /** each provider's terms in one line, once (`Provider.note` and `warn`), shown on its group in the picker */
   cautions?: Record<string, { note: string; warn: boolean }>;
