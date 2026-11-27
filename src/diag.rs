@@ -139,13 +139,15 @@ mod tests {
             process.exit(2);\n").unwrap();
         sh(&repo, "git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -qm base");
         let dir = prepare(&repo).unwrap();
-        for _ in 0..600 {
-            if dir.join("baseline.txt").exists() {
-                break;
-            }
+        // 300 s: on Windows the check is Git Bash, npm's shell shim (node twice), cmd and node; a good runner takes a few
+        // seconds, a slow one passed 30 s (0.1.235's release run, git there ~14x slower than on a good run)
+        let t0 = std::time::Instant::now();
+        while !dir.join("baseline.txt").exists() && t0.elapsed() < std::time::Duration::from_secs(300) {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        let baseline = std::fs::read_to_string(dir.join("baseline.txt")).expect("the baseline type check finishes within 30 s");
+        let baseline = std::fs::read_to_string(dir.join("baseline.txt")).unwrap_or_else(|e| {
+            panic!("no type check baseline after {:?} ({e}); its temporary file exists: {}", t0.elapsed(), dir.join("baseline.tmp").exists())
+        });
         assert_eq!(check(&dir, &repo).unwrap(), None, "nothing changed yet");
         std::fs::write(repo.join("readme.md"), "x").unwrap();
         assert_eq!(check(&dir, &repo).unwrap(), None, "a change that cannot affect types");

@@ -923,8 +923,8 @@ mod tests {
         }
         assert!(saved.contains("=== RUN   TestN1\n") && saved.contains("TestBroken"), "the full output is kept");
         let mut off = Server { root: std::env::temp_dir(), cwd: std::env::temp_dir(), max: 30000, cap: 0, saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) };
-        assert_eq!(off.bash("seq 1 3000 | wc -l", Duration::from_secs(10)).trim(), "3000");
-        assert!(off.bash("seq 1 3000", Duration::from_secs(10)).chars().count() > 13000, "cap 0 leaves output alone");
+        assert_eq!(off.bash("seq 1 3000 | wc -l", Duration::from_secs(60)).trim(), "3000");
+        assert!(off.bash("seq 1 3000", Duration::from_secs(60)).chars().count() > 13000, "cap 0 leaves output alone");
     }
 
     #[test]
@@ -932,9 +932,12 @@ mod tests {
         let mut s = Server { root: std::env::temp_dir(), cwd: std::env::temp_dir(), max: 30000, cap: DEFAULT_BASH_CAP, saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) };
         let t0 = Instant::now();
         // the background sleep would outlive a plain kill of bash
-        // 2 s: a login shell under a full parallel test run took over 500 ms to print "started" (flaky until 0.1.20)
-        let out = s.bash("sleep 30 & echo started; wait", Duration::from_secs(2));
-        assert!(t0.elapsed() < Duration::from_secs(8), "returned at the timeout, not after the child");
+        // the timeout covers the shell's start too: a login shell under a full parallel test run took over 500 ms to print
+        // "started" (flaky until 0.1.20), a login Git Bash on a slow Windows runner over 2 s (0.1.235's release run, git
+        // there ~14x slower than on a good run)
+        let timeout = Duration::from_secs(if cfg!(windows) { 15 } else { 2 });
+        let out = s.bash("sleep 120 & echo started; wait", timeout);
+        assert!(t0.elapsed() < timeout * 4, "returned at the timeout, not after the child: {:?}", t0.elapsed());
         assert!(out.starts_with("started"), "{out}");
         assert!(out.contains("timed out"), "{out}");
     }
@@ -980,7 +983,12 @@ mod tests {
         let call = |s: &mut Server, t: Value| s.call(&json!({"name": "bash", "arguments": {"command": "sleep 2; echo done", "timeout": t}})).unwrap()["content"][0]["text"].as_str().unwrap().to_string();
         let out = call(&mut s, json!(1));
         assert!(out.contains("timed out after 1s") && out.contains("larger timeout"), "{out}");
-        assert!(call(&mut s, json!("5")).starts_with("done"), "a quoted number counts");
+        // the default (120 s) would let it finish
+        let out = call(&mut s, json!("1"));
+        assert!(out.contains("timed out after 1s"), "a quoted number counts: {out}");
         assert!(call(&mut s, json!(0)).contains("timed out after 1s"), "at least 1 s");
+        // 60 s: 5 s was too little for this `sleep 2` with a login Git Bash on a slow Windows runner (0.1.235's release run)
+        let out = call(&mut s, json!(60));
+        assert!(out.starts_with("done"), "a long enough timeout lets it finish: {out}");
     }
 }
