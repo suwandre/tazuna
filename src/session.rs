@@ -454,6 +454,11 @@ pub struct Session {
     /// that streams for 4 minutes leaves a 5-minute cache 1 minute). None on the own loop's providers.
     pub last_call_ms: Option<f64>,
     pub cache_ttl_ms: Option<f64>,
+    /// Since when (ms into the session) Claude's cache is known to be cold whatever its life said: an effort change, or a
+    /// change of Claude model, starts a process that writes it again. Until the next call's end; a call in flight renews it.
+    cold_since: Option<f64>,
+    /// A router chat answer's stream is being read (`chat_stream`): its own process and cache, not the conversation's.
+    in_chat: bool,
     /// When the next call's input was ready: the prompt sent or a tool's result in. Claude's "requesting" note comes when
     /// the answer is already streaming (15 ms before the first token after a 2 s pause, 2026-11-03), too late to time it.
     ready_at: Option<f64>,
@@ -605,6 +610,8 @@ impl Session {
             call_thinking: vec![],
             last_call_ms: None,
             cache_ttl_ms: None,
+            cold_since: None,
+            in_chat: false,
             ready_at: None,
             usage_at_result: Usage::default(),
             cut_at: None,
@@ -659,8 +666,6 @@ impl Session {
         self.turn_usage.last().filter(|u| u.total_in() > 0).map(|u| u.cache_read as f64 / u.total_in() as f64)
     }
 
-    /// Milliseconds the cache stays warm after `now_ms`, from the latest call's start (the one in flight renewed it), None
-    /// when unknown.
     /// What Claude re-reads without its cache after a model or effort switch, or once the cache has expired: the whole
     /// context, written again at the cache-write price (1.25x input for a 5-minute cache, 2x for an hour). None when
     /// it is too small to mention, or on the own loop. In the user's sessions (2026-11-10) the first call after
@@ -676,9 +681,51 @@ impl Session {
         Some((self.context, input.map(|p| self.context as f64 / 1e6 * p * write)))
     }
 
+    /// Milliseconds the cache stays warm after `now_ms`, from the latest call's start (the one in flight renewed it), None
+    /// when unknown.
     pub fn cache_left(&self, now_ms: f64) -> Option<f64> {
-        let ttl = self.cache_ttl_ms?;
-        Some((self.call_start.or(self.last_call_ms)? + ttl - now_ms).max(0.0))
+        Some((self.warm_until()? - now_ms).max(0.0))
+    }
+
+    /// When the cache goes cold (ms into the session): the latest call's start plus the life claude wrote it with, or since
+    /// when it is cold already (`cold_since`) while no call is in flight.
+    fn warm_until(&self) -> Option<f64> {
+        let until = self.call_start.or(self.last_call_ms)? + self.cache_ttl_ms?;
+        Some(match (self.cold_since, self.call_start) {
+            (Some(c), None) => c.min(until),
+            _ => until,
+        })
+    }
+
+    /// The wall clock again at `at_ms` (a call's start, a retry). The session's clock stops while the Mac sleeps (Instant),
+    /// so the times kept from before it (the last call's start, the cache gone cold) move by the difference: they stay where
+    /// they were on the wall clock. A retry after an hour's sleep read the cache as warm for that hour more.
+    fn set_epoch(&mut self, at_ms: f64) {
+        let (was, now) = (self.epoch_ms, wall_ms() - at_ms);
+        if was != 0.0 {
+            (self.last_call_ms, self.cold_since) = (self.last_call_ms.map(|t| t + was - now), self.cold_since.map(|t| t + was - now));
+        }
+        self.epoch_ms = now;
+    }
+
+    /// The agent's call in flight ends without its message_delta (a stop, a process gone, its result first). It was sent, so
+    /// it wrote the cache all the same, from its start (warm again after a change that made it cold); whether there was one.
+    fn cut_call(&mut self) -> bool {
+        let cut = self.call_start.take();
+        if cut.is_some() {
+            (self.last_call_ms, self.cold_since) = (cut, None);
+        }
+        cut.is_some()
+    }
+
+    /// A conversation read back from its recordings (main.rs restart_session) at `now_ms`: their times are not the wall
+    /// clock's (gaps squashed, each call's start taken as "now"), so the cache counts from `last_wall` (Unix ms: when its
+    /// last call began, main.rs last_call_wall; None: not known).
+    pub fn replayed(&mut self, now_ms: f64, last_wall: Option<f64>) {
+        self.epoch_ms = wall_ms() - now_ms;
+        self.last_call_ms = self.last_call_ms.and(last_wall).map(|w| w - self.epoch_ms);
+        // cold at the recordings' end (a switch with no call after it): cold now too
+        self.cold_since = self.cold_since.map(|_| now_ms);
     }
 
     /// The call in flight: when it started, when its first token came, its output so far (estimated). None between calls.
@@ -814,10 +861,18 @@ impl Session {
         }).collect();
         // the messages waiting their turn, after what runs now
         let blocks: Vec<Value> = blocks.into_iter().chain(self.queued.iter().map(|t| json!({"kind": "prompt", "text": t, "queued": true}))).collect();
+        // Claude's cache (null on the own loop and before claude's first call): its life, until when it stays warm (Unix
+        // ms), what the next message re-reads once it is cold (`rebuild`; null where that gives none), whether the plan pays
+        // (not an API key, Bedrock or a gateway), and whether claude takes /compact here (its init lists no command at all
+        // under --disable-slash-commands: plain chats, the Lean profile)
+        let rebuild = self.rebuild();
+        let cache = self.warm_until().map(|until| json!({"ttl_ms": self.cache_ttl_ms, "warm_until": (self.epoch_ms + until).round() as u64,
+            "rebuild": rebuild.map(|r| r.0), "rebuild_usd": rebuild.and_then(|r| r.1), "plan": !self.claude_billed,
+            "compact": self.commands.iter().any(|c| c == "compact")}));
         json!({"type": "view", "blocks": blocks, "model": self.model, "effort": self.effort, "cwd": self.cwd, "profile": self.profile,
             "mode": self.mode, "activity": format!("{:?}", self.activity), "cost": self.cost(), "usage": usage(&self.usage), "turns": self.turns,
             "context": self.context, "context_window": self.context_window, "limits": self.limits, "limits_at": self.limits_at, "limits_reset": self.limits_reset, "balance": self.balance,
-            "calls": self.calls_view(), "live": self.live_view()})
+            "calls": self.calls_view(), "live": self.live_view(), "cache": cache})
     }
 
     /// The call in flight, for the window's live numbers (desktop/DESIGN.md, Motion): the agent's, else a router chat
@@ -914,7 +969,9 @@ impl Session {
     fn chat_stream(&mut self, ev: &Value) {
         let mut f = std::mem::take(&mut self.chat_call);
         self.swap_flight(&mut f);
+        self.in_chat = true;
         self.stream(ev);
+        self.in_chat = false;
         self.swap_flight(&mut f);
         self.chat_call = f;
     }
@@ -925,7 +982,7 @@ impl Session {
         let u = &ev["message"]["usage"];
         let n = |k: &str| u[k].as_u64().unwrap_or(0);
         self.call_in = u["input_tokens"].is_u64().then(|| Usage { input: n("input_tokens"), cache_write: n("cache_creation_input_tokens"), cache_read: n("cache_read_input_tokens"), output: 0 });
-        self.epoch_ms = wall_ms() - self.now_ms;
+        self.set_epoch(self.now_ms);
         (self.retry_from, self.call_think_text, self.call_thought) = (None, 0.0, false);
     }
 
@@ -1214,6 +1271,11 @@ impl Session {
             return;
         }
         let s = |v: &Value| v.as_str().unwrap_or_default().to_string();
+        // claude started again with another prompt or tools (boss mode, MCP, a profile, /explorer…: live.rs marks them):
+        // its cache is written anew
+        if e["cold"] == true {
+            self.cold_since = Some(at_ms);
+        }
         match (e["type"].as_str(), e["subtype"].as_str()) {
             (Some("system"), Some("init")) => {
                 self.model = s(&e["model"]);
@@ -1244,6 +1306,11 @@ impl Session {
                 self.activity = Activity::Waiting;
             }
             (Some("system"), Some("compact_boundary")) => {
+                // the context is the summary now: its result has no usage and no call ends after it, so the old size (and the
+                // strip's 94% with its Compact) stayed until the next message
+                if let Some(n) = e["compact_metadata"]["post_tokens"].as_u64() {
+                    self.context = n;
+                }
                 self.push(Block::Notice { text: "── context compacted: earlier turns are now a summary ──".into(), error: false, ended: false });
             }
             // a refused call that is tried again ("HTTP 429: … · trying again in 8s"): the block of the call's earlier
@@ -1252,7 +1319,7 @@ impl Session {
                 let msg = s(&e["message"]);
                 let (raw, secs) = msg.rsplit_once(" · trying again in ").map_or((msg.as_str(), 0.0), |(w, t)| (w, t.trim_end_matches('s').parse().unwrap_or(0.0)));
                 let (why, raw, next_ms) = (retry_words(raw), shown(raw, 4000), Some(at_ms + secs * 1000.0));
-                self.epoch_ms = wall_ms() - at_ms;
+                self.set_epoch(at_ms);
                 // the call's next try: its time to first token counts from there
                 match (e["tazuna_chat"] == true, self.call_start.is_some()) {
                     (true, _) => self.chat_call.retry_from = next_ms,
@@ -1559,13 +1626,15 @@ impl Session {
             // a replayed recording's process ended there (`/resume` replays several, without their notices); a run it was
             // in ends with it, as after a hard stop
             (Some("harness_process_end"), _) => {
-                let cut = self.call_start.take().is_some();
+                let cut = self.cut_call();
                 let secs = self.clock_off(at_ms, 0.0);
                 self.close_run(secs, false, cut);
                 self.close_process();
             }
             (Some("harness_effort"), _) => {
                 self.effort = s(&e["effort"]);
+                // claude starts again at the new level and writes its cache anew (the own loop has no `cache`)
+                self.cold_since = Some(at_ms);
                 if let Some(m) = e["model"].as_str() {
                     self.model = m.to_string(); // a level that is its own id (OmniRoute's)
                 }
@@ -1586,7 +1655,13 @@ impl Session {
                 }
                 (self.provider, self.price_m) = (None, None); // the next process says its own
                 self.context_window = None; // the next model reports its own (the own loop's: none)
-                self.cache_ttl_ms = None;
+                // claude going on with another Claude model (`goes_on`) writes its cache anew: cold from here, its life kept
+                // (the part vanished, just when the next message re-reads the most); to or from the own loop, none known
+                if e["goes_on"] == true {
+                    self.cold_since = Some(at_ms);
+                } else {
+                    (self.cache_ttl_ms, self.cold_since) = (None, None);
+                }
                 self.push(Block::Notice { text: s(&e["text"]), error: false, ended: false });
             }
             (Some("rate_limit_event"), _) => {
@@ -1602,7 +1677,7 @@ impl Session {
             (Some("harness_notice"), _) => {
                 let stopped = std::mem::take(&mut self.stopping);
                 // a killed process ends its call without message_delta or result: "waiting for first token" kept counting
-                let cut = std::mem::take(&mut self.call_start).is_some();
+                let cut = self.cut_call();
                 self.first_token = None;
                 // and no result either: its run ends here, or the next reply would count from the killed one's start
                 let secs = self.clock_off(at_ms, 0.0);
@@ -1698,13 +1773,15 @@ impl Session {
                 if e["tazuna_chat"] == true {
                     self.chat_call = Flight::default();
                 } else {
-                    (self.call_start, self.first_token) = (None, None);
+                    self.cut_call();
+                    self.first_token = None;
                 }
                 // a slash command answered without a model turn (/cost, /context …): its text is the only output
                 let text = s(&e["result"]);
                 if e["num_turns"] == 0 && self.last_prompt.starts_with('/') {
                     if self.last_prompt.trim() == "/clear" {
                         self.todos.clear();
+                        self.context = 0;
                         self.push(Block::Notice { text: "── conversation cleared: claude starts fresh from here ──".into(), error: false, ended: false });
                     } else if !text.trim().is_empty() {
                         self.push(Block::Text { text, live: false });
@@ -1881,16 +1958,19 @@ impl Session {
                 self.usage.cache_write += t.cache_write;
                 self.usage.cache_read += t.cache_read;
                 self.usage.output += t.output;
-                self.context = t.total_in();
-                // the cache's life: claude splits what it wrote by 5-minute and 1-hour entries (a call that wrote
-                // nothing keeps the last one known)
-                let cc = if u["cache_creation"].is_object() { &u["cache_creation"] } else { &u["iterations"][0]["cache_creation"] };
-                if cc["ephemeral_1h_input_tokens"].as_u64().unwrap_or(0) > 0 {
-                    self.cache_ttl_ms = Some(3_600_000.0);
-                } else if cc["ephemeral_5m_input_tokens"].as_u64().unwrap_or(0) > 0 {
-                    self.cache_ttl_ms = Some(300_000.0);
+                // a router chat answer's call (`in_chat`) is its own process's: the conversation's context and cache stay
+                if !self.in_chat {
+                    self.context = t.total_in();
+                    // the cache's life: claude splits what it wrote by 5-minute and 1-hour entries (a call that wrote
+                    // nothing keeps the last one known)
+                    let cc = if u["cache_creation"].is_object() { &u["cache_creation"] } else { &u["iterations"][0]["cache_creation"] };
+                    if cc["ephemeral_1h_input_tokens"].as_u64().unwrap_or(0) > 0 {
+                        self.cache_ttl_ms = Some(3_600_000.0);
+                    } else if cc["ephemeral_5m_input_tokens"].as_u64().unwrap_or(0) > 0 {
+                        self.cache_ttl_ms = Some(300_000.0);
+                    }
+                    (self.last_call_ms, self.cold_since) = (self.call_start.or(Some(self.now_ms)), None);
                 }
-                self.last_call_ms = self.call_start.or(Some(self.now_ms));
                 // the exact thinking count, shared among the call's thinking blocks by their estimates
                 let thinking = std::mem::take(&mut self.call_thinking);
                 if let Some(exact) = u["output_tokens_details"]["thinking_tokens"].as_u64() {
@@ -2605,8 +2685,104 @@ mod tests {
         assert_eq!(k.last_call_hit().map(|h| (h * 1000.0).round()), Some(984.0));
         k.apply(&ev(json!({"type": "message_start"})), 5_000_000.0);
         assert_eq!(k.cache_left(5_000_500.0), Some(3_599_500.0), "a call in flight renews it");
+        // the window's `cache`: warm until the call's start plus its life on the wall clock, and what a cold one re-reads;
+        // none before claude's first call (and on the own loop, whose usage has no 5-minute or 1-hour split)
+        assert!(Session::new("", "medium").view()["cache"].is_null());
+        let before = wall_ms();
+        let mut w = Session::new("", "medium");
+        w.model = "claude-opus-5-5".into();
+        w.apply(&ev(json!({"type": "message_start"})), 1_000.0);
+        w.apply(&ev(json!({"type": "message_delta", "usage": {"input_tokens": 2, "cache_read_input_tokens": 514_000, "cache_creation_input_tokens": 1_998,
+            "cache_creation": {"ephemeral_5m_input_tokens": 1_998, "ephemeral_1h_input_tokens": 0}}})), 3_000.0);
+        let c = w.view()["cache"].clone();
+        let until = c["warm_until"].as_f64().unwrap();
+        assert!(c["ttl_ms"] == 300_000.0 && until >= before + 300_000.0 && until <= wall_ms() + 300_000.0, "{c}");
+        assert!(c["rebuild"] == 516_000 && (c["rebuild_usd"].as_f64().unwrap() - 2.58).abs() < 0.001, "1.25x Opus's input for a 5-minute cache: {c}");
+        // read back from its recordings: the cache counts from when its last call began, not from the replay's "now"
+        w.replayed(9_000.0, Some(before - 400_000.0));
+        assert!((w.view()["cache"]["warm_until"].as_f64().unwrap() - (before - 100_000.0)).abs() < 2.0, "cold since 100 s");
+        w.replayed(9_000.0, None);
+        assert!(w.view()["cache"].is_null(), "not known");
+        let c = Session::new("", "medium").view();
+        assert!(c["cache"].is_null(), "no call yet");
         let text = s.blocks.iter().find_map(|b| if let Block::Text { text, .. } = b { Some(text.clone()) } else { None });
         assert_eq!(text.as_deref(), Some("Hello"), "the text after the notice is not lost");
+    }
+
+    /// Claude's cache as the window gets it, through what moves it: an effort change and a Claude model change mark it cold
+    /// (its life kept) until the next call, a change to the own loop has none; a stopped call renewed it from its start; a
+    /// router chat answer's call is not the conversation's; /compact's boundary and /clear set the context; a retry after the
+    /// Mac slept keeps it where it was on the wall clock; who pays and whether claude takes /compact.
+    #[test]
+    fn the_cache_follows_switches_stops_chats_and_compaction() {
+        use serde_json::json;
+        let ev = |e: Value| json!({"type": "stream_event", "event": e});
+        let delta = |ctx: u64| ev(json!({"type": "message_delta", "usage": {"input_tokens": 2, "cache_read_input_tokens": ctx - 102, "cache_creation_input_tokens": 100,
+            "cache_creation": {"ephemeral_5m_input_tokens": 100, "ephemeral_1h_input_tokens": 0}}}));
+        let call = |s: &mut Session, at: f64, ctx: u64| { s.apply(&ev(json!({"type": "message_start"})), at); s.apply(&delta(ctx), at + 1_000.0); };
+        let until = |s: &Session| s.view()["cache"]["warm_until"].as_f64();
+        let mut s = Session::new("", "medium");
+        s.model = "claude-opus-5-5".into();
+        s.apply(&json!({"type": "system", "subtype": "init", "model": "claude-opus-5-5", "session_id": "a", "slash_commands": ["compact", "context"]}), 0.0);
+        call(&mut s, 1_000.0, 600_000);
+        let warm = until(&s).unwrap();
+        assert!(warm > wall_ms() + 290_000.0, "warm after a call");
+        assert!(s.view()["cache"]["plan"] == true && s.view()["cache"]["compact"] == true, "{}", s.view()["cache"]);
+        // an effort change: cold at once, its life kept; the next call's end makes it warm again
+        s.apply(&json!({"type": "harness_effort", "effort": "high", "text": "effort: high"}), 5_000.0);
+        // (cold since the change itself, where the window's clock is: before now)
+        let at = |s: &Session, ms: f64| s.epoch_ms + ms;
+        assert!((until(&s).unwrap() - at(&s, 5_000.0)).abs() < 1.0 && s.view()["cache"]["ttl_ms"] == 300_000.0, "cold after /effort");
+        assert_eq!(s.cache_left(6_000.0), Some(0.0));
+        s.apply(&ev(json!({"type": "message_start"})), 7_000.0);
+        assert!(until(&s).unwrap() > wall_ms() + 290_000.0, "a call in flight renews it");
+        s.apply(&delta(600_000), 8_000.0);
+        // a Claude model change goes on, its cache written anew: cold; to the own loop: none
+        s.apply(&json!({"type": "harness_switch", "model": "claude-sonnet-5-5", "effort": "high", "text": "model: Sonnet 5.5", "goes_on": true}), 9_000.0);
+        assert!((until(&s).unwrap() - at(&s, 9_000.0)).abs() < 1.0, "cold after a Claude model change, not gone");
+        let mut o = Session::new("", "medium");
+        call(&mut o, 1_000.0, 600_000);
+        o.apply(&json!({"type": "harness_switch", "model": "deepseek-v4.1-flash", "effort": "high", "text": "model: DeepSeek"}), 9_000.0);
+        assert!(o.view()["cache"].is_null(), "the own loop has none");
+        // a stopped call (its result first, no message_delta) renewed it from its start
+        call(&mut s, 10_000.0, 600_000);
+        s.apply(&ev(json!({"type": "message_start"})), 400_000.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "num_turns": 1, "total_cost_usd": 0.1}), 401_000.0);
+        assert_eq!(s.cache_left(401_000.0), Some(299_000.0), "from the stopped call's start, not the call before it");
+        // a router chat answer's call leaves the conversation's context and cache alone (on the wall clock: a call's start
+        // sets the clock again)
+        let (ctx, was) = (s.context, until(&s).unwrap());
+        let chat = |e: Value| json!({"type": "stream_event", "event": e, "tazuna_chat": true});
+        s.apply(&chat(json!({"type": "message_start"})), 402_000.0);
+        s.apply(&chat(json!({"type": "message_delta", "usage": {"input_tokens": 900, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+            "cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 900}}})), 403_000.0);
+        assert!(s.context == ctx && (until(&s).unwrap() - was).abs() < 2.0 && s.cache_ttl_ms == Some(300_000.0), "a chat answer's call");
+        // /compact: the context is the summary's; /clear: none
+        s.apply(&json!({"type": "system", "subtype": "compact_boundary", "compact_metadata": {"trigger": "manual", "pre_tokens": 600_000, "post_tokens": 36_948}}), 404_000.0);
+        assert_eq!(s.context, 36_948);
+        s.apply(&json!({"type": "harness_user", "text": "/clear"}), 405_000.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "num_turns": 0, "result": "", "total_cost_usd": 0.0}), 405_100.0);
+        assert_eq!(s.context, 0, "/clear");
+        // a retry after an hour's sleep (the session's clock stood still, the wall's went on): where it was on the wall
+        call(&mut s, 406_000.0, 600_000);
+        s.epoch_ms -= 3_600_000.0; // as if the wall clock had been an hour behind this clock before the sleep
+        let before = until(&s).unwrap();
+        s.apply(&json!({"type": "system", "subtype": "call_retry", "message": "HTTP 529: overloaded · trying again in 2s"}), 410_000.0);
+        assert!((until(&s).unwrap() - before).abs() < 2.0, "{before} moved to {:?}", until(&s));
+        // a stopped call after an effort change wrote the cache all the same: warm again
+        s.apply(&json!({"type": "harness_effort", "effort": "max", "text": "effort: max"}), 420_000.0);
+        assert_eq!(s.cache_left(420_500.0), Some(0.0), "cold after the change");
+        s.apply(&ev(json!({"type": "message_start"})), 421_000.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "num_turns": 1, "total_cost_usd": 0.1}), 422_000.0);
+        assert_eq!(s.cache_left(422_000.0), Some(299_000.0), "the stopped call made it warm");
+        // a restart with another prompt or tools (boss mode, MCP, a profile: `cold` on its event)
+        s.apply(&json!({"type": "harness_info", "text": "MCP on: docs (the conversation goes on)", "cold": true}), 423_000.0);
+        assert_eq!(s.cache_left(423_500.0), Some(0.0), "cold after a restart with other tools");
+        // billed elsewhere, and claude without commands (--disable-slash-commands)
+        let mut b = Session::new("", "medium");
+        b.apply(&json!({"type": "system", "subtype": "init", "model": "claude-opus-5-5", "session_id": "b", "apiKeySource": "ANTHROPIC_API_KEY", "slash_commands": []}), 0.0);
+        call(&mut b, 1_000.0, 60_000);
+        assert!(b.view()["cache"]["plan"] == false && b.view()["cache"]["compact"] == false, "{}", b.view()["cache"]);
     }
 
     #[test]

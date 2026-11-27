@@ -8,6 +8,8 @@ pub struct Replay {
     pub prompt: String,
     pub effort: String,
     events: Vec<(f64, Value)>,
+    /// Each event's wall clock where its line says it (`w`, Unix ms: a call's start, live.rs record), beside `events`.
+    pub walls: Vec<Option<f64>>,
     next: usize,
     pub clock: f64,
     pub speed: f64,
@@ -20,7 +22,7 @@ const MAX_GAP_MS: f64 = 1200.0;
 impl Replay {
     pub fn load(path: &Path, raw_timing: bool) -> Result<Self> {
         let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        let (mut events, mut last, mut shift) = (Vec::new(), 0.0, 0.0);
+        let (mut events, mut walls, mut last) = (Vec::new(), Vec::new(), 0.0);
         let (mut prompt, mut effort) = (String::new(), String::from("?"));
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
             let r: Value = serde_json::from_str(line)?;
@@ -31,13 +33,34 @@ impl Replay {
                 continue;
             }
             let t = r["t"].as_f64().unwrap_or(last);
-            if !raw_timing && t - last > MAX_GAP_MS {
+            last = t;
+            events.push((t, r["e"].clone()));
+            walls.push(r["w"].as_f64());
+        }
+        let mut r = Replay { prompt, effort, events, walls, next: 0, clock: 0.0, speed: 1.0, paused: false };
+        if !raw_timing {
+            r.squash();
+        }
+        Ok(r)
+    }
+
+    /// Idle gaps over MAX_GAP_MS shortened to it, in place: a recording loaded with its raw timing (to read its times),
+    /// then replayed watchable, from one read of the file.
+    pub fn squash(&mut self) {
+        let (mut last, mut shift) = (0.0, 0.0);
+        for e in &mut self.events {
+            let t = e.0;
+            if t - last > MAX_GAP_MS {
                 shift += t - last - MAX_GAP_MS;
             }
             last = t;
-            events.push((t - shift, r["e"].clone()));
+            e.0 = t - shift;
         }
-        Ok(Replay { prompt, effort, events, next: 0, clock: 0.0, speed: 1.0, paused: false })
+    }
+
+    /// Every event, wherever the replay stands.
+    pub fn events(&self) -> &[(f64, Value)] {
+        &self.events
     }
 
     pub fn finished(&self) -> bool {

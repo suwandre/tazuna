@@ -804,7 +804,11 @@ impl LateAnswer {
 /// `-c` and `--resume`: a continued session shows what came before (claude has it; the screen should too), then the notice
 /// that the exit's recap counts this sitting from.
 fn continue_from(s: &mut Session, live: &mut live::Live, earlier: Option<std::path::PathBuf>) {
-    if let Some(mut r) = earlier.and_then(|p| Replay::load(&p, false).ok()) {
+    if let Some((p, mut r)) = earlier.and_then(|p| Replay::load(&p, true).ok().map(|r| (p, r))) {
+        // ponytail: the whole recording's last call, not the session's own (`-c` replays all of it); pass the session's
+        // ids here if a recording with several conversations reads warm after `-c`
+        let last = last_call_in(&r, &p, None);
+        r.squash();
         for (t, e) in r.take(usize::MAX) {
             s.apply(e, *t);
             live.heard_before(e); // a chat's answers from the agent that its next message carries
@@ -812,7 +816,37 @@ fn continue_from(s: &mut Session, live: &mut live::Live, earlier: Option<std::pa
         // a notice also closes the old process's cost: the resumed process reports from $0
         s.apply(&json!({"type": "harness_notice", "text": "── continued from here ──", "error": false}), 0.0);
         s.queued.clear(); // held in a process that is gone: never sent
+        s.replayed(live.elapsed_ms(), last);
     }
+}
+
+/// The auto-compact setting from the window: a whole percent from 1 to 100 written to `file`, null removes it (Claude's
+/// default); anything else is refused and the file stays as it was. Whether it was saved.
+fn save_autocompact(file: &std::path::Path, value: &serde_json::Value) -> bool {
+    match value.as_u64().filter(|p| (1..=100).contains(p)) {
+        Some(p) => file.parent().map(std::fs::create_dir_all).transpose().and_then(|_| std::fs::write(file, p.to_string())).is_ok(),
+        None if value.is_null() => std::fs::remove_file(file).is_ok() || !file.exists(),
+        None => false,
+    }
+}
+
+/// When a conversation's last model call began in recording `r` (Unix ms; loaded with its raw timing, from `path`): its
+/// last main call's message_start among the parts that are its own (`conversation`, by `ids`; None: the whole recording),
+/// by the wall clock its line carries (`w`, live.rs record), else, in a recording from before it, the file name's Unix
+/// seconds (Live::new) plus the event's `t`, which lags by every sleep since that process began. A recording is a tazuna
+/// process's, not a conversation's: what came after (plan readings, chat answers, a later conversation after /new, the
+/// resume's own notice) was written 30-250 minutes later in real ones, and the file's time read a cold cache as warm. A
+/// subagent's calls and a router chat answer's are not the conversation's cache.
+fn last_call_in(r: &Replay, path: &std::path::Path, ids: Option<&[String]>) -> Option<f64> {
+    let main_start = |e: &serde_json::Value| e["type"] == "stream_event" && e["event"]["type"] == "message_start" && !e["parent_tool_use_id"].is_string() && e["tazuna_chat"] != true;
+    let events = r.events();
+    let parts = match ids {
+        Some(ids) => conversation(events, ids),
+        None => vec![events.iter().collect()],
+    };
+    let last = parts.iter().flatten().rev().find(|(_, e)| main_start(e))?;
+    let i = events.iter().position(|x| std::ptr::eq(x, *last))?;
+    r.walls[i].or_else(|| Some(path.file_name()?.to_str()?.split('-').next()?.parse::<f64>().ok()? * 1000.0 + last.0))
 }
 
 /// What the terminal says as tazuna ends: how to come back to the conversation, for the first of `ids` (the session's,
@@ -1596,8 +1630,8 @@ fn app_server(a: &Args) -> Result<()> {
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 54] = ["send", "interrupt", "new", "profile", "models", "refresh_model_list", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo", "retry",
-            "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork", "usage", "spend_cap",
+        const OPS: [&str; 55] = ["send", "interrupt", "new", "profile", "models", "refresh_model_list", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo", "retry",
+            "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork", "usage", "spend_cap", "autocompact",
             "worktree_new", "worktrees", "worktree_remove", "pr", "create", "create_enable", "create_discard", "mcp", "mcp_on", "mcp_add", "mcp_remove", "mcp_check", "hook", "setup", "gallery", "gallery_get", "accounts", "complete", "agent", "task_stop", "usage_sources", "usage_track", "usage_allowance"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
@@ -2211,7 +2245,8 @@ fn app_server(a: &Args) -> Result<()> {
                             let log = std::fs::read_to_string(labels::dir()?.join("runs.jsonl")).unwrap_or_default();
                             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
                             let _ = writeln!(o, "{}", json!({"type": "settings", "providers": providers, "data_any": live.data_any, "route": route_on,
-                                "version": env!("CARGO_PKG_VERSION"), "spend_cap": live::spend_cap(), "spent_24h": live::paid_since(&log, now.saturating_sub(86_400))}));
+                                "version": env!("CARGO_PKG_VERSION"), "spend_cap": live::spend_cap(), "spent_24h": live::paid_since(&log, now.saturating_sub(86_400)),
+                                "autocompact": live::autocompact()}));
                             let _ = o.flush();
                         }
                         // a provider's key from the settings page: saved and its host trusted, as /login does
@@ -2332,6 +2367,13 @@ fn app_server(a: &Args) -> Result<()> {
                                 Some(Ok(())) => s.apply(&note(if value == "off" { "API spend: no cap".to_string() } else { format!("API spend: capped at ${value} per 24 hours") }, false), at),
                                 _ => info(&mut s, "the cap was not saved".into()),
                             }
+                        }
+                        // Claude's auto-compact threshold (a percent from 1 to 100, or null for Claude's default):
+                        // ~/.config/tazuna/claude-autocompact, read as claude starts (live::autocompact). No line of its
+                        // own: the window asks for the settings after it, and a value that did not take is said in its row
+                        // (a notice here showed in the conversation behind the dialog)
+                        Some("autocompact") => {
+                            let _ = live::autocompact_file().is_some_and(|f| save_autocompact(&f, &cmd["value"]));
                         }
                         Some("route") => {
                             route_on = cmd["on"] == true;
@@ -3628,8 +3670,12 @@ fn restart_session(live: &mut live::Live, s: &mut Session, earlier: Option<&Earl
     }
     *s = s.fresh();
     if let Some(e) = earlier {
+        // each recording read once (they reach 68 MB): its raw times say when its last call began, then it replays squashed
+        let mut last: Option<f64> = None;
         for p in &e.recordings {
-            if let Ok(mut r) = Replay::load(p, false) {
+            if let Ok(mut r) = Replay::load(p, true) {
+                last = [last, last_call_in(&r, p, Some(&e.ids))].into_iter().flatten().reduce(f64::max);
+                r.squash();
                 for part in conversation(r.take(usize::MAX), &e.ids) {
                     for (t, ev) in &part {
                         s.apply(ev, *t);
@@ -3641,6 +3687,11 @@ fn restart_session(live: &mut live::Live, s: &mut Session, earlier: Option<&Earl
             }
         }
         s.queued.clear(); // held in a process that is gone: never sent
+        // the replay's calls began "now" on its clock: the cache counts from when its last call began instead (an old
+        // conversation read as warm for 5 minutes), the run log's last run where its recordings do not say; none where a
+        // message from here starts a new conversation
+        let last = last.or((e.last_at > 0).then(|| e.last_at as f64 * 1000.0));
+        s.replayed(t, last.filter(|_| shown_only.is_none()));
         // the turns undone in a window that sent nothing after (undone_kept), as many as the recordings lack (an undo they
         // have, applied again, marked a later turn with the same tree)
         let names = labels::dir().map(|d| conversation_names(&d)).unwrap_or_default();
@@ -5661,10 +5712,7 @@ fn agent_send(live: &mut live::Live, s: &mut Session, text: &str, cwd: &std::pat
     if turn.is_none() {
         *turn = turns::snapshot(cwd).map(|b| (b, false));
     }
-    let text = match undo_note.take() {
-        Some(n) => format!("{n}\n\n{text}"),
-        None => text.to_string(),
-    };
+    let text = with_undo_note(undo_note, text);
     match live.send_typed(&text) {
         Ok((t, e)) => { if show { s.apply(&e, t); } true }
         Err(e) => {
@@ -5673,6 +5721,15 @@ fn agent_send(live: &mut live::Live, s: &mut Session, text: &str, cwd: &std::pat
             s.apply(&if show { note(format!("{e:#}"), true) } else { not_started(format!("{e:#}")) }, live.elapsed_ms());
             false
         }
+    }
+}
+
+/// A message with the undo's note before it, once. A command (`/compact`, a skill) must reach claude as one: the note waits
+/// for the next real message (before it, "/compact" ran as a full-context turn and nothing compacted).
+fn with_undo_note(undo_note: &mut Option<String>, text: &str) -> String {
+    match undo_note.take_if(|_| !text.starts_with('/')) {
+        Some(n) => format!("{n}\n\n{text}"),
+        None => text.to_string(),
     }
 }
 
@@ -6404,6 +6461,83 @@ mod tests {
         this_sitting(&mut s);
         let recap = ui::recap(&s, &[]).unwrap();
         assert!(recap.contains("· 1 turn ·") && recap.contains("1 file changed +3 −0") && recap.ends_with("· 3 s"), "{recap}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A reopened conversation's cache counts from its own last call, not from the file's time: by the wall clock its line
+    /// carries (`w`), else (an older recording) the file's stamp plus the event's `t`. One recording holds two conversations,
+    /// a plan reading written long after, and the resume's own notice; the process slept 4 hours before conv-b's call (its
+    /// `t` lags the wall by that); a subagent's and a chat answer's calls are not the conversation's.
+    #[test]
+    fn a_reopened_conversation_counts_its_cache_from_its_last_call() {
+        let dir = std::env::temp_dir().join(format!("tazuna-lastcall-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as f64;
+        let stamp = (now / 1000.0) as u64 - 4 * 3600 - 400;
+        let rec = dir.join(format!("{stamp}-proj-1.jsonl"));
+        let start = json!({"type": "stream_event", "event": {"type": "message_start"}});
+        let delta = json!({"type": "stream_event", "event": {"type": "message_delta", "usage": {"input_tokens": 2, "cache_read_input_tokens": 60_000, "cache_creation_input_tokens": 100,
+            "cache_creation": {"ephemeral_5m_input_tokens": 100, "ephemeral_1h_input_tokens": 0}}}});
+        let done = json!({"type": "result", "subtype": "success", "duration_ms": 2_000, "total_cost_usd": 0.1});
+        let init = |id: &str| json!({"type": "system", "subtype": "init", "session_id": id, "model": "claude-opus-5-5"});
+        // conv-b's call began 100 s ago by the wall clock; its `t` (200 s in) lags it by the 4 hours slept
+        let b_wall = now - 100_000.0;
+        let events: Vec<(u64, serde_json::Value)> = vec![(500, init("conv-a")), (900, json!({"type": "harness_user", "text": "first"})), (1_000, start.clone()), (3_000, delta.clone()),
+            (4_000, done.clone()),
+            // a subagent's call and a chat answer's later on: not this conversation's cache
+            (5_000, json!({"type": "stream_event", "parent_tool_use_id": "t1", "event": {"type": "message_start"}})),
+            (6_000, json!({"type": "stream_event", "tazuna_chat": true, "event": {"type": "message_start"}})),
+            (10_000, json!({"type": "harness_notice", "text": "── new conversation ──", "error": false})),
+            (190_000, init("conv-b")), (199_000, json!({"type": "harness_user", "text": "second"})), (200_000, start), (202_000, delta), (203_000, done),
+            // written long after the last call: a plan reading
+            (390_000, json!({"type": "rate_limit_event", "rate_limit_info": {"unifiedWindows": {}}}))];
+        // conv-a's line as before `w` (stamp plus t); conv-b's with it
+        let lines: Vec<String> = std::iter::once(json!({"t": 0, "prompt": "", "effort": "medium"}).to_string())
+            .chain(events.iter().map(|(t, e)| if *t == 200_000 { json!({"t": t, "w": b_wall, "e": e}) } else { json!({"t": t, "e": e}) }.to_string())).collect();
+        std::fs::write(&rec, lines.join("\n")).unwrap();
+        let ids = |id: &str| vec![id.to_string()];
+        let r = crate::replay::Replay::load(&rec, true).unwrap();
+        assert_eq!(super::last_call_in(&r, &rec, Some(&ids("conv-a"))), Some(stamp as f64 * 1000.0 + 1_000.0), "an older line: stamp plus t");
+        assert_eq!(super::last_call_in(&r, &rec, Some(&ids("conv-b"))), Some(b_wall), "its wall clock, not the lagging t");
+        assert_eq!(super::last_call_in(&r, &rec, None), Some(b_wall), "-c: the whole recording");
+        // reopened: conv-a's 5-minute cache went cold hours ago, conv-b's stays warm 200 s more (stamp plus t said cold; the
+        // file's time said warm 5 min)
+        let mut live = live::Live::new("", "").unwrap();
+        for (id, warm_until) in [("conv-a", stamp as f64 * 1000.0 + 301_000.0), ("conv-b", b_wall + 300_000.0)] {
+            let earlier = super::Earlier { id: id.into(), ids: ids(id), model: "claude-opus-5-5".into(), provider: String::new(), key_env: String::new(),
+                first: String::new(), last_at: 0, messages: 1, recordings: vec![rec.clone()], named: false };
+            let mut s = Session::new("", "medium");
+            super::restart_session(&mut live, &mut s, Some(&earlier)).unwrap();
+            let got = s.view()["cache"]["warm_until"].as_f64();
+            assert!(got.is_some_and(|g| (g - warm_until).abs() < 2.0), "{id}: {got:?}, wanted {warm_until}");
+        }
+        std::fs::remove_file(&live.rec_path).ok();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// After an undo its note goes before the next real message, never before a command: "/compact" with the note before it
+    /// was no command any more, and ran as a full-context turn.
+    #[test]
+    fn the_undo_note_waits_for_a_message_not_a_command() {
+        let mut note = Some("[tazuna: the user undid the last turn]".to_string());
+        assert_eq!(super::with_undo_note(&mut note, "/compact"), "/compact");
+        assert!(note.is_some(), "kept for the next message");
+        assert_eq!(super::with_undo_note(&mut note, "now rename it"), "[tazuna: the user undid the last turn]\n\nnow rename it");
+        assert_eq!((note, super::with_undo_note(&mut None, "again")), (None, "again".to_string()));
+    }
+
+    /// The auto-compact op: a whole percent is written, null removes it (Claude's default), anything else leaves the file.
+    #[test]
+    fn the_auto_compact_op_saves_a_percent_or_claudes_default() {
+        let dir = std::env::temp_dir().join(format!("tazuna-autocompact-{}", std::process::id()));
+        let f = dir.join("config/claude-autocompact");
+        let read = || std::fs::read_to_string(&f).ok();
+        assert!(super::save_autocompact(&f, &json!(80)) && read().as_deref() == Some("80"), "a percent, its folder made");
+        for bad in [json!(0), json!(101), json!("70"), json!(80.5), json!(true)] {
+            assert!(!super::save_autocompact(&f, &bad) && read().as_deref() == Some("80"), "{bad} refused");
+        }
+        assert!(super::save_autocompact(&f, &json!(null)) && read().is_none(), "Claude's default");
+        assert!(super::save_autocompact(&f, &json!(null)), "already Claude's default");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

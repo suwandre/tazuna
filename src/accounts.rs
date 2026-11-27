@@ -205,7 +205,13 @@ fn rows_of(tracked: &[(&'static crate::models::Login, String, &'static str)], co
     let off = |t: i64| local_offset(t).unwrap_or(0);
     tracked.iter().zip(got).map(|((l, key, method), r)| match *method {
         "local" => local_row(l, allowance_of(conf, l.name).as_ref(), &runs, now as i64, off),
-        "console" => console_row(l, console_reading(base, l, now as i64), now as i64),
+        // no reading and no first visit: the user has a step to take, not tazuna (the status bar said "no reading yet" for a
+        // console never signed in to, the user 2026-11-27)
+        "console" => match console_reading(base, l, now as i64) {
+            None if !base.is_some_and(|b| b.join("console-learn").join(slug(l.name)).is_file()) =>
+                row(l, Some(Reading { left: "sign in to its console in Settings".into(), short: "sign in from Settings".into(), ..Default::default() })),
+            c => console_row(l, c, now as i64),
+        },
         "api" | "api_scope" | "cli" => r.unwrap_or_else(|| kept_row(&kept(dir.as_deref(), l, key), now).unwrap_or_else(|| row(l, None))),
         _ => row(l, None),
     }).collect()
@@ -1790,9 +1796,15 @@ mod tests {
         let tracked = tracked_in(&both, None, &keys);
         let names: Vec<(&str, &str)> = tracked.iter().map(|t| (t.0.name, t.2)).collect();
         assert_eq!(names, [("Mistral", "local"), ("Mistral Vibe", "console"), ("Caffeine", "local")], "Mortera has no key here: not read");
+        // a console never visited asks for the sign-in; once visited (its learn file), it waits for its reading
         let rows = rows_of(&tracked, &both, Some(&dir), crate::session::unix_now(), |_, _| None);
         assert_eq!(rows.iter().map(|r| r["left"].as_str().unwrap_or("-")).collect::<Vec<_>>(),
-            ["no allowance set: Settings › Providers", "no reading from its console yet", "≈ 100% left of $5.00 (use through tazuna on this machine)"]);
+            ["no allowance set: Settings › Providers", "sign in to its console in Settings", "≈ 100% left of $5.00 (use through tazuna on this machine)"]);
+        assert_eq!(rows[1]["short"], "sign in from Settings");
+        std::fs::create_dir_all(dir.join("console-learn")).unwrap();
+        std::fs::write(dir.join("console-learn/Mistral-Vibe.json"), "{}").unwrap();
+        let rows = rows_of(&tracked, &both, Some(&dir), crate::session::unix_now(), |_, _| None);
+        assert_eq!(rows[1]["left"], "no reading from its console yet");
         let api = rows_of(&[(login("Mortera"), "k".into(), "api"), (login("Mistral"), "k".into(), "admin_key")], &both, Some(&dir), crate::session::unix_now(),
             |_, _| Some(money("IDR", 50_000.0)));
         assert_eq!((api[0]["left"].as_str(), api[1]["left"].as_str(), api[1]["page"].as_str()), (Some("Rp 50,000 left"), None, Some(login("Mistral").page)), "admin_key: not read, its page");

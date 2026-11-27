@@ -215,6 +215,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_command_is_never_a_chat_question() {
+        let here = Path::new(env!("CARGO_MANIFEST_DIR"));
+        assert_eq!(code_signals("/compact", here), ["command"]);
+        assert_eq!(code_signals("  /cost", here), ["command"]);
+        assert!(code_signals("what is the capital of France?", here).is_empty(), "a general question stays open to the chat");
+    }
+
+    #[test]
     fn a_model_set_on_the_command_line_still_says_the_repos_size() {
         let reason = manual(Path::new(env!("CARGO_MANIFEST_DIR")), "gpt-4.1", "").reason;
         assert!(reason.starts_with("set on the command line; ") && reason.contains(" tracked files; "), "{reason}");
@@ -302,6 +310,11 @@ pub fn code_signals(text: &str, cwd: &Path) -> Vec<String> {
         "frontend", "backend", "component", "feature", "issue", "ticket", "review", "release", "bump", "pipeline", "ci", "page",
         "login", "startup", "crashing", "failing"];
     let mut out = vec![];
+    // a command (`/compact`, a skill): claude's or tazuna's, never a chat model's. As a short follow-up it went to the
+    // router's chat once a question had been answered as one
+    if text.trim_start().starts_with('/') {
+        out.push("command".into());
+    }
     if text.contains("```") || text.matches('`').count() >= 2 {
         out.push("code quote".into());
     }

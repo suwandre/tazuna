@@ -16,6 +16,20 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.234 (2026-11-27): Claude's cache warmth, compaction, auto-compact
+
+For the desktop's context and cache numbers (no measurable metric moves: nothing in the prompt, tools or routing of a
+run changes; a message starting with "/" now always goes to the agent).
+- The session view carries Claude's cache: its TTL, when it goes cold (from the conversation's own last call, also after
+  a reopen or a Mac's sleep; recordings now stamp each call's wall time), what the next message re-reads once cold, and
+  whether claude offers /compact. An effort or model change, an MCP, boss or profile restart marks it cold; a router chat
+  answer or a stopped call no longer moves it.
+- `compact_boundary` sets the context to its post-compaction size; `/clear` to 0.
+- New op `autocompact` (Settings › Claude auto-compact): sets CLAUDE_AUTOCOMPACT_PCT_OVERRIDE when tazuna starts claude
+  (an inherited value stays when unset; never in headless or boss runs).
+- A slash command after an undo goes out as typed; the undo note waits for the next message.
+- The console reader's status row asks for the sign-in when its console was never visited.
+
 ## 0.1.233 (2026-11-27): usage sources, steadier
 
 Fixes after the user tried usage sources (no measurable metric moves).

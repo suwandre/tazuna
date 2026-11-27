@@ -445,6 +445,33 @@ pub fn spend_cap() -> Option<f64> {
     }
 }
 
+/// Claude's auto-compact threshold, a percent of its auto-compact window (Settings: Claude auto-compact):
+/// ~/.config/tazuna/claude-autocompact, None (Claude's default) when missing or not a whole number from 1 to 100. Claude
+/// Code reads it as CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, which only lowers its threshold (code.claude.com/docs/en/env-vars).
+pub fn autocompact() -> Option<u8> {
+    autocompact_in(&std::fs::read_to_string(autocompact_file()?).ok()?)
+}
+
+/// Where the auto-compact setting is kept (the app-server's `autocompact` op writes it).
+pub fn autocompact_file() -> Option<PathBuf> {
+    crate::platform::home().map(|h| h.join(".config/tazuna/claude-autocompact"))
+}
+
+/// The setting's text as a percent: a whole number from 1 to 100, anything else Claude's default.
+fn autocompact_in(text: &str) -> Option<u8> {
+    text.trim().parse().ok().filter(|p| (1..=100).contains(p))
+}
+
+/// CLAUDE_AUTOCOMPACT_PCT_OVERRIDE for a claude process: the setting where there is one, read as each claude starts (a
+/// change reaches a running conversation with its next claude start: a model or mode change, a resume, not at once).
+/// Without one, what claude inherits stays (the user's own variable wins, as the cache TTL's beside it); a headless task or
+/// a boss run never takes it (benchmarks keep Claude's default, as the spend cap leaves headless runs alone).
+fn autocompact_env(cmd: &mut Command, pct: Option<u8>, task: bool) {
+    if let Some(p) = pct.filter(|_| !task) {
+        cmd.env("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", p.to_string());
+    }
+}
+
 /// Paid spend in the run log since `since` (seconds): the own loop's runs, whose log entry says claude_version null, but
 /// those on a plan's key (`plan`: their cost is a reference price, the plan pays; the user, 2026-11-25).
 pub fn paid_since(log: &str, since: u64) -> f64 {
@@ -1253,7 +1280,8 @@ impl Live {
                 format!("model: {short}{level}: the conversation continues on {short}")
             }
         };
-        Ok(self.record(json!({"type": "harness_switch", "model": model, "effort": effort, "text": text})))
+        // `goes_on`: claude carries on with another Claude model, its cache written anew (session.rs marks it cold)
+        Ok(self.record(json!({"type": "harness_switch", "model": model, "effort": effort, "text": text, "goes_on": goes_on})))
     }
 
     /// `/effort` (and `/model` on the model in use): the rest of the session at another effort, the conversation going on.
@@ -1305,7 +1333,8 @@ impl Live {
                 self.model.trim_start_matches("claude-"), self.boss_effort.as_ref().map_or(String::new(), |e| format!(" at {e}"))),
             None => format!("boss mode off: {} works itself again (the conversation goes on)", self.model.trim_start_matches("claude-")),
         };
-        Ok(self.record(json!({"type": "harness_info", "text": text})))
+        // `cold`: claude starts with another prompt and tools, its cache written anew (session.rs)
+        Ok(self.record(json!({"type": "harness_info", "text": text, "cold": true})))
     }
 
     /// `/explorer`, `/verify`, `/review`: a setting the caller changed, for the rest of the session as its flag at start.
@@ -1315,7 +1344,7 @@ impl Live {
             bail!("wait until the run has finished (or stop it with esc)");
         }
         self.respawn(self.model.clone(), self.effort.clone());
-        Ok(self.record(json!({"type": "harness_info", "text": format!("{text} (the conversation goes on)")})))
+        Ok(self.record(json!({"type": "harness_info", "text": format!("{text} (the conversation goes on)"), "cold": true})))
     }
 
     /// `/profile NAME` and `/chat`: the rest of the session in another profile (as `--profile` at start). Between the coding
@@ -1353,7 +1382,7 @@ impl Live {
             Profile::Lean => "tazuna's lean prompt and tools, no settings",
         };
         let own = if self.provider.is_some() && p != Profile::Chat { " (on the own loop the coding profiles are one agent)" } else { "" };
-        Ok(self.record(json!({"type": "harness_profile", "profile": p.name(), "text": format!("{} profile: {what}{own}{note}", p.name())})))
+        Ok(self.record(json!({"type": "harness_profile", "profile": p.name(), "text": format!("{} profile: {what}{own}{note}", p.name()), "cold": true})))
     }
 
     /// `/mcp on|off`: the user's MCP servers (tazuna's list, ~/.config/tazuna/mcp.json) for every model, and on claude
@@ -1380,7 +1409,8 @@ impl Live {
             (true, true, false) => "MCP on: your claude.ai connectors; /mcp add NAME URL adds servers for every model (the conversation goes on; remembered for the next sessions)".to_string(),
             (true, false, own) => format!("MCP on: {}{} (the conversation goes on; remembered for the next sessions)", names.join(", "), if own { "" } else { ", and your claude.ai connectors" }),
         };
-        Ok(self.record(json!({"type": "harness_info", "text": text})))
+        // claude starts again with another tool list: its cache written anew (the own loop connects in place)
+        Ok(self.record(json!({"type": "harness_info", "text": text, "cold": self.provider.is_none()})))
     }
 
     /// `/new` (no id) and `/resume ID`: the next message starts a fresh conversation, or continues an earlier claude one,
@@ -2453,7 +2483,16 @@ impl Live {
     fn record(&mut self, e: Value) -> (f64, Value) {
         self.heard(&e);
         let t = self.elapsed_ms();
-        let _ = writeln!(self.rec, "{}", json!({"t": t as u64, "e": e}));
+        // a call's start carries the wall clock too (`w`, Unix ms): `t` is an Instant's, which stands still while the Mac
+        // sleeps, so the file's stamp plus `t` lagged by every sleep since the process began (3 to 35 hours in real
+        // recordings), and a reopened conversation read its warm cache as cold (main.rs last_call_in)
+        let line = if e["type"] == "stream_event" && e["event"]["type"] == "message_start" {
+            let w = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+            json!({"t": t as u64, "w": w, "e": e})
+        } else {
+            json!({"t": t as u64, "e": e})
+        };
+        let _ = writeln!(self.rec, "{line}");
         (t, e)
     }
 
@@ -2614,6 +2653,7 @@ impl Live {
         if self.artifacts {
             cmd.env("CLAUDE_CODE_ARTIFACT", "1");
         }
+        autocompact_env(&mut cmd, autocompact(), self.mode == "headless" || self.boss.is_some());
         // the user's own setting wins; otherwise the mode decides
         if std::env::var_os("CLAUDE_CODE_PROMPT_CACHE_TTL").is_none() {
             let ttl = self.ttl();
@@ -3985,6 +4025,41 @@ mod tests {
         assert_eq!((&live.meta()["plan"], &live.meta()["provider"], live.free()), (&json!(true), &json!("Mistral Vibe"), true));
         live.provider = Some(("https://api.mistral.ai/v1".into(), "MISTRAL_API_KEY".into()));
         assert_eq!((&live.meta()["plan"], &live.meta()["provider"], live.free()), (&json!(false), &json!("Mistral"), false));
+        std::fs::remove_file(&live.rec_path).ok();
+    }
+
+    /// Claude's auto-compact setting: the file's whole percent from 1 to 100 or Claude's default, set for claude where there
+    /// is one, an inherited variable left alone where there is none, never for a headless task or a boss run.
+    #[test]
+    fn the_auto_compact_setting_reaches_claude_as_its_variable() {
+        let read: Vec<Option<u8>> = ["80", " 70\n", "1", "100", "0", "101", "-5", "80.5", "abc", ""].iter().map(|t| super::autocompact_in(t)).collect();
+        assert_eq!(read, [Some(80), Some(70), Some(1), Some(100), None, None, None, None, None, None]);
+        let env = |pct: Option<u8>, task: bool| {
+            let mut c = Command::new("claude");
+            super::autocompact_env(&mut c, pct, task);
+            c.get_envs().find(|(k, _)| *k == "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE").map(|(_, v)| v.map(|v| v.to_string_lossy().into_owned()))
+        };
+        assert_eq!(env(Some(80), false), Some(Some("80".into())), "the setting");
+        assert_eq!(env(None, false), None, "Claude's default: what claude inherits stays");
+        assert_eq!(env(Some(80), true), None, "a headless task or a boss run keeps Claude's default");
+    }
+
+    /// A call's start is recorded with the wall clock (`w`): its `t` is an Instant's, which stands still while the Mac
+    /// sleeps. Restarts with another prompt or tools are marked cold for the cache.
+    #[test]
+    fn a_calls_start_carries_the_wall_clock_and_restarts_are_cold() {
+        let mut live = Live::new("", "").unwrap();
+        // a file of its own: tests in the same second share Live::new's
+        let _ = std::fs::remove_file(&live.rec_path);
+        live.rec_path = std::env::temp_dir().join(format!("tazuna-wall-{}.jsonl", std::process::id()));
+        live.rec = File::create(&live.rec_path).unwrap();
+        let before = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+        live.record(json!({"type": "stream_event", "event": {"type": "message_start"}}));
+        live.record(json!({"type": "stream_event", "event": {"type": "content_block_delta"}}));
+        let lines: Vec<Value> = std::fs::read_to_string(&live.rec_path).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert!(lines[0]["w"].as_u64().is_some_and(|w| w >= before) && lines[1].get("w").is_none(), "{lines:?}");
+        assert_eq!(live.restart_with("explorer on".into()).unwrap().1["cold"], true);
+        assert_eq!(live.set_connectors(false).unwrap().1["cold"], true, "claude restarts with other tools");
         std::fs::remove_file(&live.rec_path).ok();
     }
 
