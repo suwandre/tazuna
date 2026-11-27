@@ -807,6 +807,9 @@ cold, the box says what the next message re-reads; Settings › Providers › Cl
 80 or 90%). Stats tiles step a too-wide figure down to fit; "at API prices, not billed" without a middle dot. Snackbars
 can be dragged anywhere and come back there; they wait while the pointer is on them, and their text can be selected.
 
+0.1.138: the work panel's last card, Your messages, grows into the room left below the others (an empty band sat under
+a list cut at nine rows); it scrolls inside, and keeps up to nine rows when the cards fill the panel.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

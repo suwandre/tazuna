@@ -39,12 +39,14 @@ export const WorkCtx = createContext<Work>({ files: [], checks: [] });
 /** One section of the panel: a heading with an icon and a figure on the right, its body under it; sections lie on the desk
  * apart by a rule, not as bordered cards (design review 10: the conversation is the one sheet; cards beside it were boxes
  * on the same fill). */
-export function Section({ icon, title, right, children }: { icon?: ReactNode; title: string; right?: ReactNode; children?: ReactNode }) {
+/** `fill`: it grows into the panel's room left below the cards (Your messages: the panel ended in an empty band under a
+ * list cut at nine rows, the user 2026-11-27). */
+export function Section({ icon, title, right, children, fill }: { icon?: ReactNode; title: string; right?: ReactNode; children?: ReactNode; fill?: boolean }) {
   return (
-    <section className="border-b border-line pb-3.5 last:border-b-0">
+    <section className={`border-b border-line pb-3.5 last:border-b-0 ${fill ? "flex grow flex-col" : ""}`}>
       <div className="flex items-center gap-2 py-1 font-medium text-ink">{icon}<span className="flex-1">{title}</span>
         {right != null && <span className="min-w-0 truncate text-[12px] font-normal tabular-nums text-faint">{right}</span>}</div>
-      {children && <div className="pt-1">{children}</div>}
+      {children && <div className={`pt-1 ${fill ? "flex grow flex-col" : ""}`}>{children}</div>}
     </section>
   );
 }
@@ -137,9 +139,10 @@ export function Timeline({ messages }: { messages: Message[] }) {
   const mine = messages.flatMap((m, i) => m.role === "user" && !m.queued ? [{ i, text: m.text.replace(/^\[tazuna: [^\]]*\]\n\n/, "").split("\n")[0] }] : []);
   if (mine.length < 2) return null;
   return (
-    <Section title="Your messages" right={mine.length}>
-      {/* rows keep their height and the list scrolls: a long list squeezed them and cut the letters' tails (design review 6) */}
-      <div className="-mx-1 flex max-h-56 flex-col overflow-y-auto *:shrink-0">
+    <Section title="Your messages" right={mine.length} fill>
+      {/* rows keep their height and the list scrolls: a long list squeezed them and cut the letters' tails (design review 6);
+          as tall as the room left in the panel, at least its rows up to nine (24 px each) where the cards take it all */}
+      <div className="-mx-1 flex flex-[1_1_0px] flex-col overflow-y-auto *:shrink-0" style={{ minHeight: Math.min(mine.length, 9) * 24 }}>
         {mine.map((m) => (
           <button key={m.i} title={m.text} onClick={() => window.dispatchEvent(new CustomEvent("tazuna-jump", { detail: m.i }))}
             className="truncate rounded px-1 py-[3px] text-left text-[12px] leading-[18px] text-ink-2 hover:bg-hover">{m.text || "(attachment)"}</button>
