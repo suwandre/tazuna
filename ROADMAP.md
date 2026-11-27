@@ -302,6 +302,12 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-27: the compaction A/B (Mistral Vibe's DeepSeek V4.1 Flash 1017, 3 tasks-hard x 3 runs, forced at 80k vs none;
+  CHANGELOG 0.1.235): a compacted run keeps the thread (judge 6.50 vs 6.25 on the pairs that compacted, hidden tests 4/4
+  each; each compaction followed by `git diff` and re-reading the code, never a restart), but it pays for the re-reading:
+  +27% calls and +46% cost per run, and the longest task (peaks 140-160k plain) went past the 90-minute limit in 4 of 5
+  compacted attempts against 2 of 5 plain ones (both of those under heavy load). Compaction stays a net at 90% of the
+  window, never a lever to set lower (2026-10-09 stands); the summary prompt and the continue line need no change for it.
 - 2026-11-27: own-loop compaction built as a safety net, not a saving (the user approved it): a session that reached its
   model's window failed, since only claude compacts by itself. Three triggers: `/compact` typed (never sent to the model),
   auto before a call once the last input reaches the Auto-compact setting's share of the window (90% by default; none

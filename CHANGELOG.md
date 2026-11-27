@@ -20,7 +20,29 @@ counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
 A safety net for sessions near their model's window (the own loop had none: such a session failed). Runs that stay below
 the threshold are unchanged (same requests, no extra calls); the quality of a run that compacts is measured by an A/B
-on Mistral Vibe's DeepSeek V4.1 Flash 1017 (forced compaction at 80k vs none), recorded here when it is done.
+on Mistral Vibe's DeepSeek V4.1 Flash 1017 at high (forced compaction at 80k vs none), tasks-hard caddy-tls-automate-names,
+prometheus-replay-mmap and prometheus-wbl-checkpoint, 3 runs each, both arms the same day, Opus 5.5 xhigh judging each
+run's pair (7 calls: the 80k arm has no result for replay-mmap r1 and r2). Costs at the plan's reference (API) prices:
+
+| | none | forced at 80k |
+|---|---|---|
+| runs finished in the 90-min limit | 9 of 9 (2 replay-mmap attempts timed out under 12 parallel agents, ran again) | 7 of 9 (replay-mmap: 4 of 5 attempts timed out, 2 of them with 4 agents) |
+| compactions per run | 0 | caddy 0, 0, 0 (peaks 67-73k); prometheus 1, 1, 2, 2; the timed-out 2-4 |
+| peak context, median / max | 108k / 162k | 81k / 83k |
+| judge, all 7 pairs | 6.00 | 5.57 |
+| judge, the 4 pairs whose 80k run compacted | 6.25 | 6.50 |
+| judge, caddy (neither arm compacted: an A/A) | 5.67 | 4.33 |
+| hidden tests | 6/9 | 4/7 (4/9 with the timeouts) |
+| the 4 compacted pairs: cost / calls / minutes per run | $0.223 / 86.8 / 39.8 | $0.326 / 110.3 / 67.8 (+46% / +27% / +70%) |
+
+No compacted run lost the thread: after each compaction it read `git status`/`git diff`, re-read the code it was
+changing and went on (tests written, run, finished; the wbl runs judged 7, 7, 9). The price is that re-reading, 5-10
+calls a compaction, and on the longest runs some investigation done twice: replay-mmap, which peaks at 140-160k without
+compaction, reached 197-229 calls and 3-4 compactions where the plain runs beside it finished in 128-132 calls. Judge
+differences are inside noise (the caddy A/A pairs differ by 1.33 at 3 runs a task; the line is 0.75 at 12 runs per arm);
+cost, calls and time per compacted run are beyond it (the times also differ in load). Plan use for the round: $7.90 at
+API prices (incl. $1.36 of 80k runs that ran without the threshold: run.py dropped the variable, fixed, run again).
+
 - `/compact` in an own-loop session, auto-compaction at the Auto-compact setting's share of the usable window (default
   90%; headless runs 90%), and one compact-and-retry on a too-long error (no more 15-minute retries or fallback routes for
   those). One summary call on the same model and key (cache read, output fitted to the window, rejected when it calls a
