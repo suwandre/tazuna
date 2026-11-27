@@ -20,6 +20,9 @@ assert.deepStrictEqual(api.usageKeys(SHAPE), ["quota", "remaining", "total", "pl
 assert.strictEqual(api.cleanPath(new URL("https://home.qwencloud.com/api/users/1234567/usage/550e8400-e29b-41d4-a716-446655440000/e29b41d4a7164466554400?region=sg&token=abc&region=x"), true),
   "/api/users/:id/usage/:id/:id?region&token");
 assert.strictEqual(api.cleanPath(new URL("https://chat.mistral.ai/code/v1/usage?x=1"), false), "/code/v1/usage");
+// a learned page keeps its region from the list (Qwen Cloud's usage is per region), and nothing else of its query
+assert.strictEqual(api.pageOf(new URL("https://home.qwencloud.com/analytics/token-plan?tab=x&region=ap-southeast-1&region=us-east-1&token=abc")), "https://home.qwencloud.com/analytics/token-plan?region=ap-southeast-1");
+assert.strictEqual(api.pageOf(new URL("https://home.qwencloud.com/usage/1234567?region=someone")), "https://home.qwencloud.com/usage/:id");
 assert(api.onSite(["home.qwencloud.com"], "home.qwencloud.com") && !api.onSite(["home.qwencloud.com"], "x.home.qwencloud.com") && !api.onSite(["home.qwencloud.com"], "qwencloud.com"));
 // values the review found kept (security review of the console reader): ids, keys, names; real field names stay
 const uuidL = "e29b41d4-a716-4466-8554-446655440000";
@@ -49,7 +52,9 @@ function fake(host, mode, read, at = "/usage/1234567?tab=x") {
     return res;
   };
   const u = new URL(`https://${host}${at}`);
-  const W = { location: { protocol: "https:", hostname: host, href: u.href, pathname: u.pathname, origin: u.origin }, fetch: origFetch, XMLHttpRequest: XHR,
+  // a page it must never draw on (a bar over it hid Mistral's own sign-in): any element it makes fails the check
+  const document = { readyState: "complete", addEventListener() {}, createElement() { throw new Error("console.js drew on the page"); } };
+  const W = { location: { protocol: "https:", hostname: host, href: u.href, pathname: u.pathname, origin: u.origin }, fetch: origFetch, XMLHttpRequest: XHR, document,
     __TAURI_INTERNALS__: { invoke: (cmd, args) => { calls.push([cmd, JSON.parse(JSON.stringify(args))]); return Promise.resolve(null); } } };
   install(W, { provider: "Qwen Cloud Token Plan", mode, sites: ["home.qwencloud.com"] }, read);
   return { W, calls, responses, origFetch };

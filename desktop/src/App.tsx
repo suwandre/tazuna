@@ -860,7 +860,7 @@ export default function App() {
   const [sources, setSources] = useState<UsageSource[] | null>(null);
   useEffect(() => {
     if (!inTauri) return;
-    const off = core.onUsageSources((s) => setSources(s));
+    const off = core.onUsageSources((s) => { if (s) setSources(s); });
     return () => { off.then((f) => f()); };
   }, []);
   useEffect(() => { if (haveView) core.usageSources().catch(() => {}); }, [haveView]);

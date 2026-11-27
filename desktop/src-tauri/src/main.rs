@@ -811,8 +811,8 @@ fn set_profile(core: State<Core>, tid: String, name: String) -> Result<(), Strin
 // and writes under ~/.local/share/tazuna, where the core reads it: console-learn/<provider>.json (shapes only, from the first
 // visit) and console/<provider>.json (the numbers). tazuna keeps no password: the sign-in lives in the window's own store.
 
-/// A provider whose usage page tazuna may read: its name as the core says it, the page its window opens on (its LOGINS
-/// page), the exact hosts of its console (capabilities/console.json lists the same; sign-in pages elsewhere get no script
+/// A provider whose usage page tazuna may read: its name as the core says it, the page its window opens on (its usage page
+/// for a signed-in account; signed out, the site sends it to its sign-in and back), the exact hosts of its console (capabilities/console.json lists the same; sign-in pages elsewhere get no script
 /// and no command), the hosts of its own sign-in (its window may go there too, nav_ok), and its
 /// extractor: a JS function (path, json) => {left, total, unit, used_pct, resets} | null, written from its learn file
 /// (Phase 2; until then none, and nothing is read in the background).
@@ -826,13 +826,16 @@ struct Console {
 
 // sign-in hosts as each sign-in page sends them (2026-11-26): Qwen's goes through its account site to Alibaba Cloud's
 // (passport: its identity check); Mistral's is Ory on auth and v2.auth; Caffeine's is Internet Identity on id.ai (its
-// II_URL; not the older identity.ic0.app)
+// II_URL; not the older identity.ic0.app). The usage pages (2026-11-27): Qwen Cloud's Token Plan usage
+// (docs.qwencloud.com/token-plan/token-plan-usage-quota), Mistral's Subscription page with the included monthly usage
+// (docs.mistral.ai/admin/billing-usage/subscriptions; signed out it goes to v2.auth.mistral.ai's sign-in), Caffeine
+// Inference's usage (a route of caffeine.ai's own app, beside its API keys)
 const CONSOLES: [Console; 3] = [
-    Console { name: "Qwen Cloud Token Plan", start: "https://home.qwencloud.com/api-keys?region=ap-southeast-1", sites: &["home.qwencloud.com"],
+    Console { name: "Qwen Cloud Token Plan", start: "https://home.qwencloud.com/analytics/token-plan?region=ap-southeast-1", sites: &["home.qwencloud.com"],
         sign_in: &["account.qwencloud.com", "account.alibabacloud.com", "passport.alibabacloud.com"], read: None },
-    Console { name: "Mistral Vibe", start: "https://chat.mistral.ai/code/extensions", sites: &["chat.mistral.ai", "console.mistral.ai", "admin.mistral.ai"],
+    Console { name: "Mistral Vibe", start: "https://admin.mistral.ai/subscription", sites: &["chat.mistral.ai", "console.mistral.ai", "admin.mistral.ai"],
         sign_in: &["auth.mistral.ai", "v2.auth.mistral.ai"], read: None },
-    Console { name: "Caffeine", start: "https://caffeine.ai/inference/api-keys", sites: &["caffeine.ai", "www.caffeine.ai"], sign_in: &["id.ai"], read: None },
+    Console { name: "Caffeine", start: "https://caffeine.ai/inference/usage", sites: &["caffeine.ai", "www.caffeine.ai"], sign_in: &["id.ai"], read: None },
 ];
 
 /// The sign-ins the providers' pages offer, open to every console window: Google (Qwen, Mistral), Apple and Microsoft's
@@ -862,6 +865,8 @@ struct Consoles {
     waiting: Mutex<Option<(String, std::sync::mpsc::Sender<&'static str>)>>,
     /// held around a learn file's read, merge and write: reports arrive on several threads at once
     learning: Mutex<()>,
+    /// the usage-like field names each learning window found on this visit (by its label), for its title
+    found: Mutex<std::collections::HashMap<String, Vec<String>>>,
 }
 
 fn console_of(provider: &str) -> Option<&'static Console> {
@@ -938,6 +943,14 @@ fn path_ok(p: &str) -> bool {
     p.len() <= 512 && path.starts_with('/') && path.split('/').all(part) && (query.is_empty() || query.split('&').all(key_ok))
 }
 
+/// Query keys a learned page keeps, with the values each may have (console.js SAFE_QUERY, the same): the region a console
+/// shows its usage for (Qwen Cloud's ap-southeast-1), so a reading opens the right one. Any other key or value: not a page.
+const SAFE_QUERY: [(&str, &[&str]); 1] = [("region", &["ap-southeast-1", "us-east-1", "cn-beijing", "cn-hongkong", "eu-central-1"])];
+
+fn query_ok(u: &tauri::Url) -> bool {
+    u.query_pairs().all(|(k, v)| SAFE_QUERY.iter().any(|(key, values)| *key == k && values.contains(&v.as_ref())))
+}
+
 /// A shape and nothing more: type names as leaves ("string", "number", "boolean", "null"), objects of field names, arrays
 /// of one item at most. A number, a boolean, null or any other string is a value and fails.
 fn shape_ok(v: &serde_json::Value, depth: usize) -> bool {
@@ -973,8 +986,6 @@ enum Report {
     /// the numbers for the reading: {left, total, unit, used_pct, resets}, each there (null where not known)
     Read(serde_json::Value),
     SignedOut,
-    /// the learn bar's Done: the window closes
-    Done,
 }
 
 /// A console page's report, checked: it is the provider's page talking, and any script on it can call the command. From its
@@ -1007,8 +1018,8 @@ fn check_report(label: &str, url: &str, provider: &str, kind: &str, payload: &se
                 None | Some(serde_json::Value::Null) => None,
                 Some(p) => {
                     let p = p.as_str().filter(|p| on_site(c.sites, p)).ok_or("not a page on its console")?;
-                    let path = tauri::Url::parse(p).map(|u| u.path().to_string()).unwrap_or_default();
-                    if p.contains(['?', '#']) || !path_ok(&path) || keys.is_empty() {
+                    let u = tauri::Url::parse(p).map_err(|_| "not a usage page")?;
+                    if u.fragment().is_some() || !query_ok(&u) || !path_ok(u.path()) || keys.is_empty() {
                         return Err("not a usage page".into());
                     }
                     Some(p)
@@ -1022,7 +1033,7 @@ fn check_report(label: &str, url: &str, provider: &str, kind: &str, payload: &se
         }
         "read" if c.read.is_none() => Err(format!("no reader for {provider} yet")),
         "read" => check_numbers(payload),
-        "signed_out" | "done" if payload.is_null() => Ok(if kind == "done" { Report::Done } else { Report::SignedOut }),
+        "signed_out" if payload.is_null() => Ok(Report::SignedOut),
         _ => Err(format!("not a report: {kind}")),
     }
 }
@@ -1113,8 +1124,7 @@ fn write_reading(root: &std::path::Path, provider: &str, status: &str, numbers: 
 }
 
 /// The console reader's one command, plugin:console|report (capabilities/console.json grants it to the console windows on
-/// their providers' sites, and nothing else to them): the report checked, then written, the waiting reading told, or the
-/// window closed (Done).
+/// their providers' sites, and nothing else to them): the report checked, then written, the waiting reading told.
 #[tauri::command]
 async fn report(app: AppHandle, webview: tauri::Webview, provider: String, kind: String, payload: serde_json::Value) -> Result<(), String> {
     let url = webview.url().map_err(|e| e.to_string())?;
@@ -1140,11 +1150,31 @@ fn take_report(app: &AppHandle, webview: &tauri::Webview, provider: &str, r: Rep
             let file = learn_file(&root, provider);
             let consoles = app.state::<Consoles>();
             let _one = consoles.learning.lock().unwrap();
-            write_atomic(&file, &merge_learn(read_json(&file).unwrap_or_default(), entry, now_secs()))
+            let mut keys = vec![];
+            if entry["usage"] == true {
+                usage_keys(&entry["shape"], &mut keys);
+            }
+            write_atomic(&file, &merge_learn(read_json(&file).unwrap_or_default(), entry, now_secs()))?;
+            // what this visit found, in the window's own title: tazuna draws nothing on the provider's page
+            if !keys.is_empty() {
+                let mut found = consoles.found.lock().unwrap();
+                let seen = found.entry(webview.label().to_string()).or_default();
+                seen.extend(keys.into_iter().filter(|k| !seen.contains(k)).collect::<Vec<_>>());
+                let _ = webview.window().set_title(&learn_title(provider, seen.len()));
+            }
+            Ok(())
         }
         Report::Read(numbers) => write_reading(&root, provider, "ok", numbers).map(|_| tell("read")),
         Report::SignedOut => write_reading(&root, provider, "signed_out", serde_json::Value::Null).map(|_| tell("signed_out")),
-        Report::Done => webview.window().destroy().map_err(|e| e.to_string()),
+    }
+}
+
+/// A learning window's title (the native title bar, never a bar over the page, which hid Mistral's own sign-in): what it
+/// does, then the usage-like fields this visit found (not earlier visits'); closing the window is done.
+fn learn_title(provider: &str, found: usize) -> String {
+    match found {
+        0 => format!("{provider}: learning this page's usage data"),
+        n => format!("{provider}: found usage data ({n} field{}), close when done", if n == 1 { "" } else { "s" }),
     }
 }
 
@@ -1186,8 +1216,11 @@ fn console_window(app: &AppHandle, c: &'static Console, mode: &str, url: &str, v
     let cfg = serde_json::json!({"provider": c.name, "mode": mode, "sites": c.sites});
     let script = format!("{CONSOLE_JS}(window, {cfg}, {});", c.read.unwrap_or("null"));
     let url = tauri::Url::parse(url).map_err(|e| e.to_string())?;
+    let title = if mode == "learn" { learn_title(c.name, 0) } else { format!("{} usage — tazuna", c.name) };
+    // a new visit counts its own findings
+    app.state::<Consoles>().found.lock().unwrap().remove(&label);
     let b = tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::External(url))
-        .title(format!("{} usage — tazuna", c.name))
+        .title(title)
         .inner_size(1100.0, 780.0)
         .visible(visible)
         .initialization_script(script);
@@ -1319,8 +1352,8 @@ fn popup(app: &AppHandle, c: &'static Console, visible: bool, nav: &Mutex<Nav>, 
     }
 }
 
-/// "Sign in…" (Settings › Providers): the provider's console in a window of its own, learning (the first visit: its bar,
-/// shapes only) or reading. One already open comes to the front.
+/// "Sign in…" (Settings › Providers): the provider's console in a window of its own, learning (shapes only; what it found
+/// in the window's title) or reading. One already open comes to the front.
 #[tauri::command]
 async fn console_open(app: AppHandle, provider: String, learn: bool) -> Result<(), String> {
     let c = console_of(&provider).ok_or_else(|| format!("no console reader for {provider}"))?;
@@ -1701,6 +1734,14 @@ mod tests {
             assert!(!super::path_ok(p), "{p}");
         }
         assert!(super::path_ok("/v1/customers/:id/keys/:id/:id/api.json") && super::path_ok("/api-keys/token-plan"));
+        // a learned page keeps its region (Qwen Cloud's usage is per region), from the list alone; any other query is no page
+        let page = |p: &str| check_report(label, url, q, "learn", &json!({"path": "/api/usage", "method": "GET", "status": 200, "shape": shape, "page": p}));
+        let Ok(Report::Learn(e)) = page("https://home.qwencloud.com/analytics/token-plan?region=ap-southeast-1") else { panic!("the region was refused") };
+        assert_eq!(e["page"], "https://home.qwencloud.com/analytics/token-plan?region=ap-southeast-1");
+        for p in ["https://home.qwencloud.com/usage?region=someone", "https://home.qwencloud.com/usage?token=abc", "https://home.qwencloud.com/usage?region=ap-southeast-1&id=1",
+            "https://home.qwencloud.com/usage#region=ap-southeast-1"] {
+            assert!(page(p).is_err(), "{p}");
+        }
         // a value anywhere in the shape, or a key that may be one
         for bad in [json!({"a": 12}), json!({"a": "sk-secret"}), json!({"a": true}), json!({"a": null}), json!({"a": ["string", "number"]}),
             json!({"someone@example.com": "string"}), json!({"1234567": "string"}), json!({"user_123456": "string"}), json!({"a b": "string"}), json!("string")] {
@@ -1743,7 +1784,8 @@ mod tests {
         }
         let check_report = super::check_report;
         assert_eq!(check_report(label, url, q, "signed_out", &json!(null)), Ok(Report::SignedOut));
-        assert_eq!(check_report(label, url, q, "done", &json!(null)), Ok(Report::Done));
+        // no Done: closing the window is done (the bar that sent it is gone)
+        assert!(check_report(label, url, q, "done", &json!(null)).is_err());
         assert!(check_report(label, url, q, "signed_out", &json!({"x": 1})).is_err() && check_report(label, url, q, "write", &json!(null)).is_err());
     }
 
@@ -1761,6 +1803,10 @@ mod tests {
         let l = super::merge_learn(l, json!({"path": "/api/chat", "method": "GET", "status": 200, "usage": true, "shape": {"planName": "string"}, "page": "https://home.qwencloud.com/chat/:id"}), 12);
         assert_eq!((l["responses"].as_array().unwrap().len(), &l["page"], &l["at"]), (3, &json!("https://home.qwencloud.com/usage"), &json!(12)));
         assert_eq!(super::learned_summary(&l), json!({"page": "/usage", "fields": 4, "at": 12}));
+        // the window's title: what it does, then what this visit found
+        assert_eq!(super::learn_title("Mistral Vibe", 0), "Mistral Vibe: learning this page's usage data");
+        assert_eq!(super::learn_title("Mistral Vibe", 3), "Mistral Vibe: found usage data (3 fields), close when done");
+        assert_eq!(super::learn_title("Caffeine", 1), "Caffeine: found usage data (1 field), close when done");
         assert_eq!(super::learned_summary(&super::merge_learn(json!(null), json!({"path": "/x", "method": "GET", "usage": false, "shape": {}}), 5)), json!({"page": null, "fields": 0, "at": 5}));
         let many = (0..250).fold(json!(null), |l, i| super::merge_learn(l, json!({"path": format!("/p{i}"), "method": "GET", "shape": {}}), i));
         assert_eq!((many["responses"].as_array().unwrap().len(), &many["responses"][0]["path"]), (200, &json!("/p50")));

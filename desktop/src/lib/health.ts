@@ -1,7 +1,7 @@
 // Every account's standing for the status bar (desktop 0.1.79, prototype mockups/v5.html variant A): fine, running low or
 // stopped, with what to say about it. A state per account, not one score: 93% of a week and $12.40 left do not add up to
 // a number anyone can act on, and a total hides the account that is about to stop you (design review 6).
-import type { Accounts, Allowance, Learned, ModelChoice, UsageSource } from "./tazuna";
+import type { Accounts, Learned, ModelChoice, UsageMethod, UsageSource } from "./tazuna";
 import { usd } from "./types";
 
 export type Level = "ok" | "low" | "out" | "unknown";
@@ -203,12 +203,59 @@ export const dueConsoles = (sources: UsageSource[], last: Record<string, number>
 
 /** The commands a usage method's steps name in backticks ("run `qwencloud auth login`"), for Settings' Copy. */
 export const commandsIn = (steps: string) => [...steps.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
-/** An allowance said short: "2,000,000 tokens a month", "$150 a month", "1 request a day". */
-export const allowanceWords = (a: Allowance) =>
-  `${a.unit === "usd" ? `$${a.amount.toLocaleString("en-US")}` : `${a.amount.toLocaleString("en-US")} ${a.amount === 1 ? a.unit.replace(/s$/, "") : a.unit}`} a ${a.period}`;
-/** What the console reader's first visit found, in words (Settings › Providers). */
-export const learnedWords = (l: Learned | null | undefined) =>
-  l == null ? "sign in once to find its usage page" : l.page && l.fields ? `found usage data on ${l.page} (${l.fields} field${l.fields === 1 ? "" : "s"})` : "nothing usage-like yet";
+/** Settings' usage requests in flight (review 14, fix): each provider's newest of each kind (`pend`: its button waits; a
+ * track request's choice is what the line shows) and every request's provider until its own reply (`sent`: a refusal is
+ * said on its row even when a later reply came first). A reply to `req` answers it and every one before it (the core saves
+ * in the order asked, then reads); one with no number (an older core) answers nothing. A request 20 s old, or every one
+ * when the core exits, is let go: the line shows the last state known, never a wait that does not end. */
+export type Pend = { provider: string; kind: "track" | "check" | "save"; req: number; at: number; track?: { on: boolean; method: string } };
+export type Asked = { pend: Pend[]; sent: Record<number, { provider: string; at: number }> };
+export const asked0: Asked = { pend: [], sent: {} };
+export const askUsage = (a: Asked, p: Pend): Asked =>
+  ({ pend: [...a.pend.filter((x) => !(x.provider === p.provider && x.kind === p.kind)), p], sent: { ...a.sent, [p.req]: { provider: p.provider, at: p.at } } });
+export function usageAnswer(a: Asked, req: number | undefined): { a: Asked; provider?: string } {
+  if (req == null) return { a };
+  const { [req]: mine, ...sent } = a.sent;
+  return { a: { pend: a.pend.filter((x) => x.req > req), sent }, provider: mine?.provider };
+}
+const young = (now: number) => ([, x]: [unknown, { at: number }]) => now - x.at < 20_000;
+export const usageExpire = (a: Asked, now: number): Asked =>
+  ({ pend: a.pend.filter((x) => young(now)([0, x])), sent: Object.fromEntries(Object.entries(a.sent).filter(young(now))) });
+
+/** A usage line's state (Settings › Providers; review 14, fix): one short status, the one action it offers ("use": the
+ * method's `instead`), and the commands to run (the CLI's, each with Copy). The console's from what its visits left (`learned`, main.rs
+ * console_learned: null when never opened, no page when nothing usage-like was found), never the core's "no reading":
+ * a visit without usage data said "not signed in yet" (the user). Empty text while `learned` is still asked. */
+export type UsageState = { text: string; action?: "check" | "signin" | "open" | "use"; commands?: string[] };
+/** A line from the core with its first letter a capital, as a line on its own reads ("logged in" is "Logged in"). */
+export const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+export function usageState(m: UsageMethod, u: UsageSource, learned: Learned | null | undefined): UsageState {
+  const why = cap(m.why ?? "Not ready");
+  switch (m.id) {
+    case "api": return { text: m.ready ? "Reads automatically" : why };
+    case "api_scope": return m.ready ? { text: "Reads automatically" } : { text: why, action: u.has_key ? "check" : undefined };
+    case "cli": {
+      if (m.ready) return { text: "Signed in" };
+      // signed in, and its usage shows no plan: it may not see one (CLI 1.7.0 and an Individual plan), so the console
+      // in its place where the provider has one (core 0.1.233)
+      if (m.instead && u.methods.some((x) => x.id === m.instead)) return { text: why, action: "use" };
+      return { text: why, action: "check", commands: m.commands ?? commandsIn(m.steps) };
+    }
+    case "console": {
+      if (learned === undefined) return { text: "" };
+      if (learned === null) return { text: "Not set up", action: "signin" };
+      // its sign-in forgotten (the store gone, the learn file kept): signing in is what opening means now
+      const again = learned.store === false ? "signin" : "open";
+      if (!learned.page || !learned.fields) return { text: "No usage data found yet", action: again };
+      if (m.ready) return { text: `Reads ${learned.page}`, action: again };
+      // a reading that says signed out, or failed; none yet is the page found, waiting for its reader
+      if (m.why && !/^no reading/i.test(m.why)) return { text: why, action: /signed out/i.test(m.why) ? "signin" : again };
+      return { text: `Found ${learned.page}`, action: again };
+    }
+    case "local": return { text: u.allowance ? "Counts use through tazuna" : "Not set up" };
+    default: return { text: m.why ? why : "No usage API" };
+  }
+}
 
 export const worst = (xs: Item[]): Level => (xs.some((i) => i.level === "out") ? "out" : xs.some((i) => i.level === "low") ? "low" : "ok");
 
@@ -278,11 +325,35 @@ export function demo() {
     || names(trackedOnly({ ...acc, untracked: ["Mortera"] }, null)) !== "SubRouter,OpenRouter" || names(trackedOnly({ ...acc, untracked: ["OpenRouter"] }, [src("OpenRouter", true)])) !== "SubRouter,OpenRouter,Mortera"
     || dueConsoles(sources, {}, t0).join() !== "Qwen Cloud Token Plan" || dueConsoles(sources, { "Qwen Cloud Token Plan": t0 - 14 * 60_000 }, t0).length
     || dueConsoles(sources, { "Qwen Cloud Token Plan": t0 - 15 * 60_000 }, t0).length !== 1) throw new Error("tracked providers");
-  const words = [commandsIn("Run `npm install -g @qwencloud/qwencloud-cli`, then `qwencloud auth login`.").join("|"), allowanceWords({ amount: 2_000_000, unit: "tokens", period: "month", reset: 1 }),
-    allowanceWords({ amount: 150, unit: "usd", period: "month", reset: 1 }), allowanceWords({ amount: 1, unit: "requests", period: "day", reset: 0 }),
-    learnedWords(null), learnedWords({ page: "/usage", fields: 3, at: 1 }), learnedWords({ page: "/usage", fields: 1, at: 1 }), learnedWords({ page: null, fields: 0, at: 1 })].join("|");
-  if (words !== "npm install -g @qwencloud/qwencloud-cli|qwencloud auth login|2,000,000 tokens a month|$150 a month|1 request a day|sign in once to find its usage page"
-    + "|found usage data on /usage (3 fields)|found usage data on /usage (1 field)|nothing usage-like yet") throw new Error(`usage words: ${words}`);
+  const words = commandsIn("Run `npm install -g @qwencloud/qwencloud-cli`, then `qwencloud auth login`.").join("|");
+  if (words !== "npm install -g @qwencloud/qwencloud-cli|qwencloud auth login") throw new Error(`usage words: ${words}`);
+  // a usage line's state: the console's by what its visits left (never "not signed in" after one), the CLI's three ways
+  // not to read and its account without the plan
+  const M = (id: UsageMethod["id"], ready: boolean, why: string | null = null, more: Partial<UsageMethod> = {}): UsageMethod => ({ id, ready, why, steps: "", link: "", ...more });
+  const qwen = { ...src("Qwen Cloud Token Plan", true, "console"), methods: [M("cli", false), M("console", false)] };
+  const said = (m: UsageMethod, l?: Learned | null) => { const s = usageState(m, qwen, l); return `${s.text}${s.action ? ` [${s.action}]` : ""}${s.commands?.length ? ` {${s.commands.join(", ")}}` : ""}`; };
+  const states = [said(M("console", false, "No reading yet"), undefined), said(M("console", false, "No reading yet"), null), said(M("console", false, "No reading yet"), { page: null, fields: 0, at: 1, store: true }),
+    said(M("console", false, "No reading yet"), { page: "/usage", fields: 3, at: 1, store: true }), said(M("console", true), { page: "/usage", fields: 3, at: 1 }),
+    said(M("console", false, "Signed out"), { page: "/usage", fields: 3, at: 1 }), said(M("console", false, "not signed in yet: Sign in…"), { page: null, fields: 0, at: 1 }),
+    said(M("cli", false, "Not installed", { commands: ["npm i", "qwencloud auth login"] })), said(M("cli", false, "Not signed in", { commands: ["qwencloud auth login"] })),
+    said(M("cli", false, "CLI doesn't show this plan", { commands: [], instead: "console" })), said(M("cli", true)),
+    said(M("api_scope", false, "needs account:read")), said(M("local", true)), said(M("none", false, null)), said(M("console", false, "No reading yet"), { page: "/usage", fields: 3, at: 1, store: false })];
+  if (states.join("|") !== "|Not set up [signin]|No usage data found yet [open]|Found /usage [open]|Reads /usage [open]|Signed out [signin]|No usage data found yet [open]"
+    + "|Not installed [check] {npm i, qwencloud auth login}|Not signed in [check] {qwencloud auth login}"
+    + "|CLI doesn't show this plan [use]|Signed in|Needs account:read [check]|Not set up|No usage API|Found /usage [signin]") throw new Error(`usage states: ${states.join("|")}`);
+  // the requests in flight: Console then CLI quickly, the first reply keeps the second's choice; a refusal found by its own
+  // reply after a later one; an older core's reply (no number) answers nothing; 20 s on, let go
+  const P = (provider: string, kind: Pend["kind"], req: number, at = 0, track?: Pend["track"]): Pend => ({ provider, kind, req, at, track });
+  let a = askUsage(askUsage(asked0, P("Qwen", "track", 1, 0, { on: true, method: "console" })), P("Qwen", "track", 2, 50, { on: true, method: "cli" }));
+  const r1 = usageAnswer(a, 1);
+  if (r1.a.pend.length !== 1 || r1.a.pend[0].track?.method !== "cli" || r1.provider !== "Qwen") throw new Error(`a reply to the first click: ${JSON.stringify(r1)}`);
+  if (usageAnswer(r1.a, 2).a.pend.length) throw new Error("the second click's reply");
+  a = askUsage(askUsage(asked0, P("Caffeine", "track", 3)), P("SubRouter", "check", 4));
+  const r4 = usageAnswer(a, 4), r3 = usageAnswer(r4.a, 3);
+  if (r4.a.pend.length || r4.provider !== "SubRouter" || r3.provider !== "Caffeine" || Object.keys(r3.a.sent).length) throw new Error(`replies out of order: ${JSON.stringify([r4, r3])}`);
+  if (usageAnswer(a, undefined).a !== a) throw new Error("an older core's reply");
+  a = askUsage(asked0, P("DeepSeek", "track", 5, 1000));
+  if (usageExpire(a, 20_999).pend.length !== 1 || usageExpire(a, 21_000).pend.length || Object.keys(usageExpire(a, 21_000).sent).length) throw new Error("20 s on");
   console.log("health ok");
 }
 

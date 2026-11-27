@@ -26,6 +26,10 @@ export function newer(seen: Map<string, number>, key: string, seq: number | unde
   seen.set(key, seq);
   return true;
 }
+/** A number for each usage request (Settings): its reply says it back as `req`, so the window knows which click a reply
+ * answers. */
+let usageReqs = 0;
+export const usageReq = () => ++usageReqs;
 const forgetSeqs = (tid: string) => { for (const k of [...seqs.keys()]) if (k.startsWith(`${tid}\n`)) seqs.delete(k); };
 /** A usage reply's listener: replies older than one applied are dropped. */
 const onSeq = <T extends { seq?: number },>(type: string, cb: (m: T, tid: string) => void) => on<T>(type, (m, tid) => { if (newer(seqs, `${tid}\n${type}`, m.seq)) cb(m, tid); });
@@ -162,7 +166,9 @@ export type Accounts = {
 /** How a provider's usage can be read (core usage_sources, review 14): its documented API, the API once the key has a
  * permission, an admin key, its CLI, its console in a sign-in window of tazuna's (experimental), tazuna's own count against
  * an allowance, or not at all; `steps` what it takes in words, `ready` whether it works now, `why` what is missing. */
-export type UsageMethod = { id: "api" | "api_scope" | "admin_key" | "cli" | "console" | "local" | "none"; steps: string; link: string; ready: boolean; why: string | null };
+export type UsageMethod = { id: "api" | "api_scope" | "admin_key" | "cli" | "console" | "local" | "none"; steps: string; link: string; ready: boolean; why: string | null;
+  /** the CLI's: what to run now, and the method to use in its place where it does not show the plan (core 0.1.233) */
+  commands?: string[]; instead?: UsageMethod["id"] };
 /** What a provider allows per period, for tazuna's own count: `reset` the day it starts again (a month's day 1-31, past the
  * month's end its last day; a week's 0 Sunday to 6 Saturday; a day's 0 or null, at midnight). */
 export type Allowance = { amount: number; unit: "tokens" | "usd" | "requests"; period: "day" | "week" | "month"; reset: number | null };
@@ -316,10 +322,15 @@ export const core = {
   accounts: () => to("op", { msg: { op: "accounts" } }),
   /** every provider's ways to read its usage and the user's choice (answered as `usage_sources`); tracking one, or its
    * allowance, answers with them again and a new accounts reading */
-  usageSources: () => to("op", { msg: { op: "usage_sources" } }),
-  usageTrack: (provider: string, on: boolean, method: string) => to("op", { msg: { op: "usage_track", provider, on, method } }),
-  usageAllowance: (provider: string, allowance: Allowance | null) => to("op", { msg: { op: "usage_allowance", provider, allowance } }),
-  onUsageSources: (cb: (s: UsageSource[], error?: string) => void) => onSeq<{ providers: UsageSource[]; error?: string; seq?: number }>("usage_sources", (m) => cb(m.providers, m.error)),
+  /** `req`: the window's own number for the request (usageReq), said back on its reply; `provider`: its Check again (that
+   * provider read now, and Qwen's CLI asked only for Qwen) */
+  usageSources: (req?: number, provider?: string) => to("op", { msg: { op: "usage_sources", req, provider } }),
+  usageTrack: (provider: string, on: boolean, method: string, req?: number) => to("op", { msg: { op: "usage_track", provider, on, method, req } }),
+  usageAllowance: (provider: string, allowance: Allowance | null, req?: number) => to("op", { msg: { op: "usage_allowance", provider, allowance, req } }),
+  /** every reply, with its request's number: `s` null where it is older than one applied (its request is answered all the
+   * same: the newer reply was read after it was saved) */
+  onUsageSources: (cb: (s: UsageSource[] | null, error?: string, req?: number) => void) =>
+    on<{ providers: UsageSource[]; error?: string; seq?: number; req?: number }>("usage_sources", (m, tid) => cb(newer(seqs, `${tid}\nusage_sources`, m.seq) ? m.providers : null, m.error, m.req)),
   /** the credits again after a change of tracking or allowance (no full reading): merged into the reading held */
   onAccountsCredits: (cb: (a: Pick<Accounts, "credits" | "untracked">) => void) =>
     onSeq<Pick<Accounts, "credits" | "untracked"> & { seq?: number }>("accounts_credits", (m) => cb({ credits: m.credits, untracked: m.untracked })),

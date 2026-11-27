@@ -70,7 +70,9 @@ localStorage.setItem("tazuna.projects", JSON.stringify([PROJ]));
   window.__ACCOUNTS__ = { plan: [{ label: "Current session", used: 36, resets: resets(134 * 60_000) }, { label: "Current week (all models)", used: 79, resets: resets(26 * 3600_000) }],
     plan_notes: ["Approximate · sessions on this machine only", "Last 24h · 865 requests · 7 sessions", "  98%  Review sessions active over many hours · whole sessions with requests in 8 or more separate hours", "  94%  Start fresh when you switch tasks · run /clear", "  13%  Compact before you step away · run /compact", "  Top skills: /ticket 6%",
       "Last 7d · 5894 requests · 60 sessions", "  98%  Check which models your subagents use · share covers whole sessions, not only subagents", "  91%  Review sessions active over many hours · whole sessions with requests in 8 or more separate hours", "  88%  Start fresh when you switch tasks · run /clear", "  11%  Compact before you step away · run /compact", "  Top skills: /code-review 3%, /ticket 1%, /find-docs 1%", "  Top subagents: general-purpose 2%, explorer 1%", "  Top MCP servers: playwright 1%, docs 1%"],
-    credits: [{ provider: "SubRouter", left: "$12.40 left", page: "https://subrouter.ai" }, { provider: "Mortera", left: null, page: "https://mortera.cloud" }],
+    credits: [{ provider: "SubRouter", left: "$12.40 left", page: "https://subrouter.ai" }, { provider: "Mortera", left: null, page: "https://mortera.cloud" },
+      // Qwen's CLI signed in, its usage without the plan (core 0.1.233): a quiet row, nothing claimed
+      { provider: "Qwen Cloud Token Plan", left: null, short: null, state: "unknown", cli_plan: false, page: "https://home.qwencloud.com" }],
     omniroute: [{ provider: "agy", name: "someone@example.com", plan: "Ultra", status: "valid", windows: [{ group: "Gemini Models", window: "weekly", used: 12, resets: "2026-11-25T11:03:10.000Z", unlimited: false }] }] };
   const day = (i) => Math.floor(Date.now() / 1000) - i * 86400;
   window.__ROWS__ = Array.from({ length: 60 }, (_, i) => [day(i % 20) , i % 4 ? "claude-opus-5-5" : "deepseek-v4.1-flash", 0.02 + (i % 7) * 0.01, i % 4 !== 0]);
@@ -81,13 +83,18 @@ localStorage.setItem("tazuna.projects", JSON.stringify([PROJ]));
 })();
 
 (() => { const T = window.__TAURI_INTERNALS__, inv = T.invoke.bind(T), now = Math.floor(Date.now() / 1000);
-  const rows = [];
+  // made when first asked: the sweep's knobs are set after this script
+  let rows = null;
+  const build = () => { rows = [];
   for (let d = 0; d < 30; d++) for (let k = 0; k < (d * 7) % 5 + 1; k++) {
     const plan = (d + k) % 6 !== 0, model = plan ? (k % 3 ? "claude-opus-5-5" : "claude-sonnet-5-5") : "deepseek-v4.1-flash";
+    // __BIG__ (the sweep): a heavy month, $12,345.67 paid and billions of tokens from the cache, for figures that must not be cut
+    if (window.__BIG__) { rows.push([now - d * 86400 - k * 600, model, "0.1.176", plan, plan ? 12 + ((d * k) % 7) * 2 : 800 + (k % 3) * 20, 2000, 500, 18_000_000, 1200, null, null, null, "auto", true, [], [], plan ? null : "SubRouter"]); continue; }
     rows.push([now - d * 86400 - k * 600, model, d < 10 ? "0.1.176" : "0.1.170", plan, plan ? 0.3 + ((d * k) % 7) * 0.12 : 0.02 + (k % 3) * 0.01, 2000, 500, 40000, 1200, null, null, null, "auto", true, (d + k) % 9 === 0 ? ["stopped"] : [], (d + k) % 7 === 0 ? ["why"] : []]);
   }
+  return rows; };
   T.invoke = async (cmd, args) => {
-    if (cmd === "op" && args.msg.op === "usage") { setTimeout(() => T.emit("tazuna-view", { tid: args.tid, msg: { type: "usage", rows } }), 20); return null; }
+    if (cmd === "op" && args.msg.op === "usage") { const r = rows ?? build(); setTimeout(() => T.emit("tazuna-view", { tid: args.tid, msg: { type: "usage", rows: r } }), 20); return null; }
     return inv(cmd, args);
   };
 })();
@@ -135,45 +142,59 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
     .map(([name, host, sign_in, note]) => ({ name, host, example: "", note, warn: /own risk/.test(note), key: "", trusted: false, page: `https://${host}`, place: `${name}'s settings`, sign_in, confirmed: false })))
   .concat([{ name: "Ollama", host: "localhost:11434", example: "", note: "", warn: false, key: "running on this machine", trusted: true, page: "", place: "", local: true }]);
 
-// Usage sources (core usage_sources, review 14) as the core builds them: the API where one tells usage, Cheaper Inference's
-// with account:read, Qwen Cloud's CLI and console, Mistral Vibe's admin key and console, Caffeine's console; every provider
-// can be counted here (an admin key never tracked: information only); Caffeine without a key, read by its console all the
-// same; each reply numbered (`seq`), a change answered with the sources and the credits again (accounts_credits); and the
-// console reader's commands (main.rs), its first visit found on Qwen Cloud
+// Usage sources (core usage_sources, review 14 and its fix) as the core builds them: the API where one tells usage, Cheaper
+// Inference's with account:read, Qwen Cloud's CLI and console, Mistral Vibe's admin key (never shown) and console, Caffeine's
+// console; every provider can be counted here; Caffeine without a key, read by its console all the same; each reply
+// numbered (`seq`) and saying its request's `req` back, a change answered with the sources and the credits again
+// (accounts_credits); the console reader's commands (main.rs). Knobs for the sweep: __CLI__ (Qwen's CLI: missing,
+// signed_out, no_plan, ready), __CONSOLE_READY__ (Qwen's console has a reading), __DELAY__ (ms before a usage reply; a
+// function of the op for one slower than another), __OPEN_DELAY__ and __FORGET_DELAY__ (the console's commands), __VISIT__
+// (what a console visit finds: {page, fields}; nothing by default)
 (() => { const T = window.__TAURI_INTERNALS__, inv = T.invoke.bind(T);
-  const M = (id, ready, why = null, steps = "", link = "") => ({ id, ready, why, steps, link });
-  const local = M("local", true, null, "tazuna counts its own use against the allowance you enter.");
-  const api = M("api", true, null, "Read from the provider's usage API with your key.");
+  const M = (id, ready, why = null, steps = "", link = "", more = {}) => ({ id, ready, why, steps, link, ...more });
+  const local = M("local", true, null, "tazuna counts its own use against an allowance you enter (amount, unit, period). Use through other apps is not counted.");
+  const api = M("api", true, null, "tazuna reads it from the provider's API with your key, at most once a minute. Nothing to do once the key is saved.");
+  const cliSteps = "Install Qwen's CLI (npm install -g @qwencloud/qwencloud-cli) and sign in with the Token Plan's account (qwencloud auth login); tazuna reads qwencloud usage summary.";
+  const CLI = { missing: ["Not installed", ["npm install -g @qwencloud/qwencloud-cli", "qwencloud auth login"]], signed_out: ["Not signed in", ["qwencloud auth login"]],
+    no_plan: ["CLI doesn't show this plan", [], "console"], ready: [null, []] };
+  const cli = () => { const [why, commands, instead] = CLI[window.__CLI__ || "missing"]; return M("cli", !why, why, cliSteps, "https://github.com/QwenCloud/qwencloud-cli", { commands, ...(instead ? { instead } : {}) }); };
+  const consoleM = (name, ready = false) => M("console", ready, ready ? null : "No reading yet", `Sign in to ${name}'s console once in tazuna's own window (Sign in…); tazuna reads its usage page there, at most every 15 minutes.`);
   const SOURCES = window.__SOURCES__ = [
     { provider: "SubRouter", has_key: true, methods: [api, local], track: { on: true, method: "api" }, allowance: null },
-    { provider: "Mistral Vibe", has_key: true, methods: [M("admin_key", false, "an Admin key tells this month's spend only, not the Vibe plan's use", "Make an Admin key in Mistral's console.", "https://admin.mistral.ai"),
-      M("console", false, null, "Sign in to Mistral's console in tazuna's window once."), local], track: { on: true, method: "local" }, allowance: { amount: 150, unit: "usd", period: "month", reset: 1 } },
-    { provider: "Cheaper Inference", has_key: true, methods: [M("api_scope", false, "needs account:read", "Turn on account:read for this key on its keys page.", "https://platform.cheaperinference.com/keys"), local], track: { on: true, method: "api_scope" }, allowance: null },
+    { provider: "Mistral Vibe", has_key: true, methods: [M("admin_key", false, "tazuna does not read Admin keys", "Mistral Vibe's API tells only this month's spend, and only to an Admin key.", "https://admin.mistral.ai"),
+      consoleM("Mistral Vibe"), local], track: { on: true, method: "local" }, allowance: { amount: 150, unit: "usd", period: "month", reset: 1 } },
+    { provider: "Cheaper Inference", has_key: true, methods: [M("api_scope", false, "Needs account:read", "tazuna reads it from Cheaper Inference's API once the key may read the account: turn on account:read for this key on its dashboard, then check again.", "https://platform.cheaperinference.com/keys"), local], track: { on: true, method: "api_scope" }, allowance: null },
     { provider: "DeepSeek", has_key: true, methods: [api, local], track: { on: true, method: "api" }, allowance: null },
-    { provider: "Groq", has_key: true, methods: [local, M("none", false, "Groq's API tells no usage", "", "https://console.groq.com/settings/billing")], track: { on: false, method: "local" }, allowance: null },
-    { provider: "Qwen Cloud Token Plan", has_key: true, methods: [M("cli", false, "qwencloud isn't installed", "Install Qwen's CLI with `npm install -g @qwencloud/qwencloud-cli`, then sign in with `qwencloud auth login`."),
-      M("console", false, null, "Sign in to Qwen Cloud's console in tazuna's window once."), local], track: { on: true, method: "console" }, allowance: null },
-    { provider: "Caffeine", has_key: false, methods: [M("console", false, null, "Sign in to Caffeine's console in tazuna's window once."), local, M("none", false, null, "", "https://caffeine.ai/inference")], track: { on: false, method: "console" }, allowance: null },
+    { provider: "Groq", has_key: true, methods: [local, M("none", false, "No usage API", "Groq offers no way to read its usage: see its page.", "https://console.groq.com/settings/billing")], track: { on: false, method: "local" }, allowance: null },
+    { provider: "Qwen Cloud Token Plan", has_key: true, methods: [null, null, local], track: { on: true, method: "console" }, allowance: null },
+    { provider: "Caffeine", has_key: false, methods: [consoleM("Caffeine"), local, M("none", false, "No usage API", "", "https://caffeine.ai/inference/usage")], track: { on: false, method: "console" }, allowance: null },
   ];
+  // the sources as the core reads them when the op comes: Qwen's CLI and console by the knobs
+  const snapshot = () => JSON.parse(JSON.stringify(SOURCES.map((x) => (x.provider === "Qwen Cloud Token Plan" ? { ...x, methods: [cli(), consoleM("Qwen Cloud", !!window.__CONSOLE_READY__), local] } : x))));
   let SEQ = 0;
-  const LEARNED = { "Qwen Cloud Token Plan": { page: "/usage", fields: 3, at: Math.floor(Date.now() / 1000) - 600, store: true } };
+  const LEARNED = window.__LEARNED__ = { "Qwen Cloud Token Plan": { page: "/usage", fields: 3, at: Math.floor(Date.now() / 1000) - 600, store: true } };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms || 0));
   T.invoke = async (cmd, args) => {
-    const m = (msg) => setTimeout(() => T.emit("tazuna-view", { tid: args.tid, msg }), 20);
-    const seq = ++SEQ, sources = () => m({ type: "usage_sources", seq, providers: JSON.parse(JSON.stringify(SOURCES)) });
+    const op = cmd === "op" ? args.msg.op : null, src = op && SOURCES.find((x) => x.provider === args.msg.provider);
+    const d = window.__DELAY__, ms = typeof d === "function" ? d(args.msg) : d ?? 20;
+    const m = (msg) => setTimeout(() => T.emit("tazuna-view", { tid: args.tid, msg }), ms);
+    const seq = ++SEQ, req = args?.msg?.req, sources = (error) => m({ type: "usage_sources", seq, ...(req != null ? { req } : {}), providers: snapshot(), ...(error ? { error } : {}) });
     const credits = () => { const off = SOURCES.filter((x) => !x.track.on).map((x) => x.provider);
       m({ type: "accounts_credits", seq, credits: window.__ACCOUNTS__.credits.filter((c) => !off.includes(c.provider)), untracked: off }); };
-    const op = cmd === "op" ? args.msg.op : null, src = op && SOURCES.find((x) => x.provider === args.msg.provider);
     if (/^usage_(sources|track|allowance)$/.test(op) || cmd.startsWith("console_")) window.__SENT__.push([cmd, args]);
     if (op === "usage_sources") { sources(); return null; }
     // a refusal comes back as the sources unchanged, with its error (Caffeine counted here: a settings file it cannot write)
-    if (op === "usage_track" && src && src.provider === "Caffeine" && args.msg.method === "local") { m({ type: "usage_sources", seq, providers: JSON.parse(JSON.stringify(SOURCES)), error: "Not saved: ~/.config/tazuna/usage.json is read-only" }); return null; }
+    if (op === "usage_track" && src && src.provider === "Caffeine" && args.msg.method === "local") { sources("Not saved: ~/.config/tazuna/usage.json is read-only"); return null; }
     if (op === "usage_track" && src) { src.track = { on: args.msg.on, method: args.msg.method }; sources(); credits(); return null; }
     if (op === "usage_allowance" && src) { src.allowance = args.msg.allowance; sources(); credits(); return null; }
     if (cmd === "console_learned") return LEARNED[args.provider] ?? null;
-    // the window can't open here: Done at once, with nothing found on a provider never visited
-    if (cmd === "console_open") { LEARNED[args.provider] ??= { page: null, fields: 0, at: Math.floor(Date.now() / 1000), store: true }; setTimeout(() => T.emit("console-closed", args.provider), 300); return null; }
+    // the window can't open here: closed a moment later, with what the visit found (nothing by default)
+    if (cmd === "console_open") { await wait(window.__OPEN_DELAY__);
+      const v = window.__VISIT__, was = LEARNED[args.provider];
+      LEARNED[args.provider] = { page: v?.page ?? was?.page ?? null, fields: v?.fields ?? was?.fields ?? 0, at: Math.floor(Date.now() / 1000), store: true };
+      setTimeout(() => T.emit("console-closed", args.provider), 300); return null; }
     // the window's store goes; the learn file (shapes only) stays, as main.rs keeps it
-    if (cmd === "console_forget") { if (LEARNED[args.provider]) LEARNED[args.provider].store = false; return null; }
+    if (cmd === "console_forget") { await wait(window.__FORGET_DELAY__); if (LEARNED[args.provider]) LEARNED[args.provider].store = false; return null; }
     if (cmd === "console_refresh") return "skipped";
     return inv(cmd, args);
   };
@@ -264,6 +285,7 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
         c({ model: "codestral-2508", label: "codestral-2508 · mistral", place: "api.mistral.ai", provider: "Mistral Vibe", price: "plan", url: "https://api.mistral.ai/v1", key_env: "MISTRAL_VIBE_API_KEY" }),
         c({ model: "mistral-large-3", label: "mistral-large-3 · mistral", place: "api.mistral.ai", provider: "Mistral Vibe", price: "plan", url: "https://api.mistral.ai/v1", key_env: "MISTRAL_VIBE_API_KEY", bench: "7.8 (12)" }),
         c({ model: "agy/gemini-4-hydrogen", label: "gemini-4-hydrogen · agy", place: "OmniRoute · agy", provider: "OmniRoute", price: "plan" }),
+        c({ model: "qwen3.8-max", label: "qwen3.8-max · qwen cloud", place: "token-plan.maas.qwencloudapi.com", provider: "Qwen Cloud Token Plan", price: "plan", url: "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1", key_env: "QWENCLOUD_TOKEN_PLAN_API_KEY" }),
         // rows that cannot be picked come compact (core 0.1.196): no key yet, or a host not trusted
         { model: "or/qwen-4-coder", label: "qwen-4-coder · openrouter", provider: "OpenRouter", price: "0.2 / 0.8", why_not: "no key: /login, or set the environment variable OPENROUTER_API_KEY before starting tazuna", no_key: true },
         { model: "gpt-oss-120b", provider: "Cerebras", price: "0.35 / 0.75", bench: "6.9 (8)", why_not: "no key: /login, or set the environment variable CEREBRAS_API_KEY before starting tazuna", no_key: true },

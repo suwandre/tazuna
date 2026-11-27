@@ -190,7 +190,7 @@ const log = [];
         const r = await slip(p); must(r.text.includes("Total at Claude's API prices") && /On your Claude plan\s+not billed/.test(r.text), `Claude's plan: ${r.text}`); });
       // the usage page: each plan by its provider
       await step(p, `${T}-usage-plans`, async () => { await p.keyboard.press("Control+Shift+U"); await p.waitForTimeout(900);
-        await p.getByText("A plan's runs are counted at API prices").scrollIntoViewIfNeeded();
+        await p.getByText("The last 30 days from the run log.").scrollIntoViewIfNeeded();
         const text = await p.getByRole("dialog", { name: "Usage" }).innerText();
         must(text.includes("Mistral Vibe plan") && /Plans\s/.test(text) && text.includes("Plans, at API prices") && !text.includes("Claude on your plan"), "the usage page's plans"); });
       await esc(p);
@@ -213,7 +213,7 @@ const log = [];
     }
     { const [c5, q] = await ctxOf({ extra: "window.__NO_TODAY__ = true; window.__REFLESS_ONLY__ = true;" });
       await step(q, "stats-usage-no-ref", async () => { await q.keyboard.press("Control+Shift+U"); await q.waitForTimeout(900);
-        await q.getByText("A plan's runs are counted at API prices").scrollIntoViewIfNeeded();
+        await q.getByText("The last 30 days from the run log.").scrollIntoViewIfNeeded();
         const text = await q.getByRole("dialog", { name: "Usage" }).innerText();
         must(text.includes("Z.ai Coding Plan") && /Z\.ai Coding Plan\s+not billed/.test(text) && !text.includes("No plan runs") && !/\$0(?!\.)/.test(text), `only plans with no price: ${text}`); });
       await c5.close(); }
@@ -808,58 +808,173 @@ const log = [];
     }
     if (process.env.ONLY === "v12" || process.env.ONLY === "v13") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok"); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
   }
-  // review 14, usage sources (ONLY=sources: these alone): Settings › Providers' usage line for each way of reading (the API,
-  // a key's permission, an admin key, the CLI's commands, the console's sign-in and what its first visit found, the allowance
-  // form, none), the Track switch on and off, and an untracked provider gone from the status bar and the usage page
+  // review 14, usage sources and their fix (ONLY=sources: these alone): Settings › Providers' usage line in every state of
+  // every way of reading (the API, a key's permission, the CLI not installed, signed out, without the plan, reading; the
+  // console never opened, opened with nothing found, the page found, reading, its sign-in forgotten; the allowance form;
+  // none), each request's wait (Check again, the switch, Save, Sign in…, Forget) and a second click meanwhile, the picker
+  // clicked Console then CLI within 100 ms with slow replies (it never shows Console again), the status bar on a provider
+  // whose reading says nothing, and an untracked provider gone from the usage page. Light and dark at 1440, the dialog at
+  // 1000; then the usage page's figures with large values at 1000 and 1440. Rows are shot alone, named by state.
   if (!process.env.ONLY || process.env.ONLY === "sources") {
     const ok = (c, what) => { if (!c) throw new Error(what); };
+    const check = async (name, fn) => { try { await fn(); log.push(`ok ${name}`); } catch (e) { log.push(`FAIL ${name}: ${String(e).split("\n")[0]}`); } };
     for (const theme of ["dark", "light"]) {
-      const T = `src-${theme[0]}`, [ctx, p] = await ctxOf({ theme });
-      const row = (name) => p.getByRole("switch", { name: `Track ${name}'s usage` }).locator("xpath=ancestor::div[contains(@class,'py-3')][1]");
-      const shot = async (name, file) => { await row(name).scrollIntoViewIfNeeded(); await p.waitForTimeout(250); await row(name).screenshot({ path: `${OUT}/${T}-${file}.png` }); };
+      const [ctx, p] = await ctxOf({ theme, w: 1440, h: 900 });
+      // the usage line (queries), and its provider's whole row (shots)
+      const row = (name) => p.getByRole("switch", { name: `Track ${name}'s usage` }).locator("xpath=ancestor::div[contains(@class,'flex-col')][1]");
+      const prow = (name) => p.getByRole("switch", { name: `Track ${name}'s usage` }).locator("xpath=ancestor::div[contains(@class,'py-3')][1]");
+      const shot = async (name, file) => { await prow(name).scrollIntoViewIfNeeded(); await p.waitForTimeout(150); await prow(name).screenshot({ path: `${OUT}/${theme}-${file}.png` }); };
       const said = async (name) => (await row(name).innerText()).replace(/\s+/g, " ");
+      // nothing joined by middle dots, never "not signed in" for a console that was opened, no Admin key line
+      const clean = async (name) => { const t = await said(name); ok(!t.includes("·") && !/Admin key/.test(t), `${name}: ${t}`); return t; };
+      const knob = (o) => p.evaluate((o) => Object.assign(window, o), o);
+      const sent = (op) => p.evaluate((op) => window.__SENT__.filter(([c, a]) => (c === "op" ? a.msg.op : c) === op).map(([, a]) => a.msg ?? a), op);
+      const refresh = () => p.evaluate(() => { const tid = window.__SENT__.find(([, a]) => a?.tid)?.[1].tid; return window.__TAURI_INTERNALS__.invoke("op", { tid, msg: { op: "usage_sources" } }); });
       const before = await p.getByText("$12.40", { exact: false }).count();
-      await step(p, `${T}-providers`, async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(600); await p.getByRole("button", { name: "Providers", exact: true }).click(); await p.waitForTimeout(400);
+      await step(p, `${theme}-settings-providers`, async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(600); await p.getByRole("button", { name: "Providers", exact: true }).click(); await p.waitForTimeout(500);
         ok(await p.getByRole("switch", { name: /^Track / }).count() === 6, `usage lines: ${await p.getByRole("switch", { name: /^Track / }).count()}`); });
-      await step(p, `${T}-providers-lower`, async () => { await row("Qwen Cloud Token Plan").scrollIntoViewIfNeeded(); });
-      await step(p, `${T}-api`, async () => { await shot("SubRouter", "row-api"); ok((await said("SubRouter")).includes("read automatically"), await said("SubRouter")); });
-      await step(p, `${T}-api-scope`, async () => { await shot("Cheaper Inference", "row-api-scope");
-        ok(await row("Cheaper Inference").getByRole("button", { name: "Turn on account:read for this key" }).count() === 1 && (await said("Cheaper Inference")).includes("needs account:read"), await said("Cheaper Inference")); });
-      await step(p, `${T}-console`, async () => { await shot("Qwen Cloud Token Plan", "row-console");
-        ok((await said("Qwen Cloud Token Plan")).includes("found usage data on /usage (3 fields)") && (await said("Qwen Cloud Token Plan")).includes("Automated reading may break its terms"), await said("Qwen Cloud Token Plan")); });
-      await step(p, `${T}-cli`, async () => { await row("Qwen Cloud Token Plan").getByRole("radio", { name: "CLI" }).click(); await shot("Qwen Cloud Token Plan", "row-cli");
-        ok(await row("Qwen Cloud Token Plan").locator("code").count() === 2 && await row("Qwen Cloud Token Plan").getByRole("button", { name: "Check again" }).count() === 1, await said("Qwen Cloud Token Plan")); });
-      await step(p, `${T}-local-form`, async () => { const r = row("Qwen Cloud Token Plan"); await r.getByRole("radio", { name: "Count here" }).click();
+      await check(`${theme} api`, async () => { await shot("SubRouter", "api-ready"); ok((await clean("SubRouter")).includes("Reads automatically"), await said("SubRouter"));
+        // the core's own words for a key, as a line of their own reads: a capital
+        ok((await prow("SubRouter").innerText()).includes("Managed key (tazuna subrouter --manage)"), await prow("SubRouter").innerText()); });
+      await check(`${theme} api-scope`, async () => { await shot("Cheaper Inference", "api-scope-needs-permission"); const t = await clean("Cheaper Inference");
+        ok(t.includes("Needs account:read") && await row("Cheaper Inference").getByRole("button").filter({ hasText: /Turn on/ }).count() === 0, t); });
+      // Check again waits for its own reply: "Checking…", and a second click sends nothing
+      await check(`${theme} api-scope pending`, async () => { await knob({ __DELAY__: 2500 }); const n = (await sent("usage_sources")).length;
+        await row("Cheaper Inference").getByRole("button", { name: "Check again" }).click(); await p.waitForTimeout(200);
+        await row("Cheaper Inference").getByRole("button", { name: "Checking…" }).click({ force: true }); await p.waitForTimeout(200); await shot("Cheaper Inference", "api-scope-checking");
+        ok((await sent("usage_sources")).length === n + 1 && (await sent("usage_sources")).pop().provider === "Cheaper Inference", `requests while pending: ${(await sent("usage_sources")).length - n}`);
+        await p.waitForTimeout(2600); ok(await row("Cheaper Inference").getByRole("button", { name: "Check again" }).count() === 1, "Check again back after its reply"); await knob({ __DELAY__: 20 }); });
+      await check(`${theme} console found`, async () => { await shot("Qwen Cloud Token Plan", "console-page-found"); const t = await clean("Qwen Cloud Token Plan");
+        ok(t.includes("Found /usage") && t.includes("Uses your sign-in; may break the provider's terms.") && !/not signed in/i.test(t) && /Forget sign-in/.test(t) && /Open again/.test(t), t); });
+      await check(`${theme} console reading`, async () => { await knob({ __CONSOLE_READY__: true }); await refresh(); await p.waitForTimeout(300); await shot("Qwen Cloud Token Plan", "console-reading");
+        ok((await clean("Qwen Cloud Token Plan")).includes("Reads /usage"), await said("Qwen Cloud Token Plan")); await knob({ __CONSOLE_READY__: false }); await refresh(); await p.waitForTimeout(300); });
+      await check(`${theme} cli missing`, async () => { await row("Qwen Cloud Token Plan").getByRole("radio", { name: "CLI" }).click(); await p.waitForTimeout(300); await shot("Qwen Cloud Token Plan", "cli-not-installed");
+        const t = await clean("Qwen Cloud Token Plan"); ok(t.includes("Not installed") && await row("Qwen Cloud Token Plan").locator("code").count() === 2 && await row("Qwen Cloud Token Plan").getByRole("button", { name: "Check again" }).count() === 1, t); });
+      // CLI 1.7.0 answers in 2-3 s: the button says so meanwhile
+      await check(`${theme} cli checking`, async () => { await knob({ __DELAY__: 2500, __CLI__: "signed_out" }); const n = (await sent("usage_sources")).length;
+        await row("Qwen Cloud Token Plan").getByRole("button", { name: "Check again" }).click(); await p.waitForTimeout(200);
+        await row("Qwen Cloud Token Plan").getByRole("button", { name: "Checking…" }).click({ force: true }); await p.waitForTimeout(150); await shot("Qwen Cloud Token Plan", "cli-checking");
+        ok((await sent("usage_sources")).length === n + 1, "a second click while checking sent a request"); await p.waitForTimeout(2600); await knob({ __DELAY__: 20 }); });
+      await check(`${theme} cli signed out`, async () => { await shot("Qwen Cloud Token Plan", "cli-not-signed-in"); const t = await clean("Qwen Cloud Token Plan");
+        ok(t.includes("Not signed in") && (await row("Qwen Cloud Token Plan").locator("code").allInnerTexts()).join() === "qwencloud auth login", t); });
+      // signed in, its usage without the plan (it may not see an Individual plan): nothing claimed, the console offered
+      await check(`${theme} cli no plan`, async () => { await knob({ __CLI__: "no_plan" }); await row("Qwen Cloud Token Plan").getByRole("button", { name: "Check again" }).click(); await p.waitForTimeout(300);
+        await shot("Qwen Cloud Token Plan", "cli-doesnt-show-plan"); const t = await clean("Qwen Cloud Token Plan");
+        ok(t.includes("CLI doesn't show this plan") && !/no Token Plan/i.test(t) && await row("Qwen Cloud Token Plan").locator("code").count() === 0 && await row("Qwen Cloud Token Plan").getByRole("button", { name: "Use Console" }).count() === 1, t); });
+      await check(`${theme} cli ready`, async () => { await knob({ __CLI__: "ready" }); await refresh(); await p.waitForTimeout(300); await shot("Qwen Cloud Token Plan", "cli-signed-in");
+        ok((await clean("Qwen Cloud Token Plan")).includes("Signed in") && await row("Qwen Cloud Token Plan").getByRole("button", { name: "Check again" }).count() === 0, await said("Qwen Cloud Token Plan")); await knob({ __CLI__: "no_plan" }); await refresh(); await p.waitForTimeout(300); });
+      // read another way, or not at all: its console sign-in can still go
+      await check(`${theme} sign-in kept`, async () => { await shot("Qwen Cloud Token Plan", "cli-console-sign-in-kept");
+        ok((await said("Qwen Cloud Token Plan")).includes("Console sign-in kept") && await row("Qwen Cloud Token Plan").getByRole("button", { name: "Forget", exact: true }).count() === 1, await said("Qwen Cloud Token Plan"));
+        await row("Qwen Cloud Token Plan").getByRole("switch").click(); await p.waitForTimeout(300); await shot("Qwen Cloud Token Plan", "untracked-console-sign-in-kept");
+        ok((await said("Qwen Cloud Token Plan")) === "Usage Console sign-in kept Forget", await said("Qwen Cloud Token Plan"));
+        await row("Qwen Cloud Token Plan").getByRole("switch").click(); await p.waitForTimeout(300); });
+      // a reply that never comes (the core gone): the wait ends with it, the line as last known
+      await check(`${theme} core exit`, async () => { await p.evaluate(() => { window.__DELAY__ = () => 1e9; }); await row("Qwen Cloud Token Plan").getByRole("radio", { name: "Count here" }).click(); await p.waitForTimeout(200);
+        ok(await row("Qwen Cloud Token Plan").getByLabel("Saving").count() === 1, "no wait shown");
+        await p.evaluate(() => window.__TAURI_INTERNALS__.emit("tazuna-exit", "t-gone")); await p.waitForTimeout(300);
+        ok(await row("Qwen Cloud Token Plan").getByLabel("Saving").count() === 0 && await row("Qwen Cloud Token Plan").getByRole("radio", { name: "CLI" }).getAttribute("aria-checked") === "true", `after the exit: ${await said("Qwen Cloud Token Plan")}`);
+        await knob({ __DELAY__: 20 }); });
+      // Use Console: the method switches
+      await check(`${theme} use console`, async () => { await row("Qwen Cloud Token Plan").getByRole("button", { name: "Use Console" }).click(); await p.waitForTimeout(300);
+        ok(await row("Qwen Cloud Token Plan").getByRole("radio", { name: "Console" }).getAttribute("aria-checked") === "true" && (await sent("usage_track")).pop().method === "console", "Use Console"); });
+      // Console then CLI within 100 ms, each reply 400 ms late and saying the state as its op found it: the picker shows CLI
+      // from the second click on, never Console again (the user's recording: it jumped back to Console, then CLI)
+      await check(`${theme} race`, async () => { await row("Qwen Cloud Token Plan").getByRole("radio", { name: "CLI" }).click(); await p.waitForTimeout(300); await knob({ __DELAY__: 400 });
+        const seen = await p.evaluate(() => new Promise((done) => {
+          const group = document.querySelector(`[role=radiogroup][aria-label="How tazuna reads Qwen Cloud Token Plan's usage"]`), key = (n) => [...group.querySelectorAll("[role=radio]")].find((b) => b.textContent === n);
+          const picked = () => [...group.querySelectorAll("[role=radio]")].find((b) => b.getAttribute("aria-checked") === "true")?.textContent, out = [], t0 = performance.now();
+          const id = setInterval(() => out.push([Math.round(performance.now() - t0), picked()]), 8);
+          key("Console").click(); out.push([0, `click Console: ${picked()}`]);
+          setTimeout(() => { key("CLI").click(); out.push([Math.round(performance.now() - t0), "click CLI"]); }, 60);
+          setTimeout(() => { clearInterval(id); done(out); }, 1500);
+        }));
+        const at = seen.findIndex(([, w]) => w === "click CLI"), after = seen.slice(at + 1).map(([, w]) => w);
+        log.push(`${theme} race: ${JSON.stringify(seen.filter((x, i) => i === 0 || x[1] !== seen[i - 1][1]))}`);
+        ok(at > 0 && after.length > 100 && after.every((w) => w === "CLI"), `the picker after the CLI click: ${[...new Set(after)].join(", ")}`);
+        const tracks = (await sent("usage_track")).slice(-2).map((m) => m.method).join();
+        ok(tracks === "console,cli", `sent ${tracks}`); await knob({ __DELAY__: 20 }); await shot("Qwen Cloud Token Plan", "cli-after-race"); });
+      // the switch: its spinner while saving, a second click does nothing
+      await check(`${theme} track pending`, async () => { await knob({ __DELAY__: 2500 }); const n = (await sent("usage_track")).length;
+        await row("DeepSeek").getByRole("switch").click(); await p.waitForTimeout(150); await row("DeepSeek").getByRole("switch").click({ force: true }); await p.waitForTimeout(150); await shot("DeepSeek", "track-switch-saving");
+        ok((await sent("usage_track")).length === n + 1 && await row("DeepSeek").getByRole("switch").getAttribute("aria-busy") === "true", "a second switch click while saving");
+        await p.waitForTimeout(2600); ok(await row("DeepSeek").getByRole("switch").getAttribute("aria-checked") === "false" && await row("DeepSeek").getByRole("switch").getAttribute("aria-busy") === null, "after the reply");
+        await knob({ __DELAY__: 20 }); await row("DeepSeek").getByRole("switch").click(); await p.waitForTimeout(300); });
+      // a method chosen: shown at once, a spinner beside the choice until its reply
+      await check(`${theme} method saving`, async () => { await knob({ __DELAY__: 1500 }); await row("Qwen Cloud Token Plan").getByRole("radio", { name: "Count here" }).click(); await p.waitForTimeout(150);
+        await shot("Qwen Cloud Token Plan", "method-saving"); ok(await row("Qwen Cloud Token Plan").getByLabel("Saving").count() === 1, "no spinner beside the choice");
+        await p.waitForTimeout(1600); await knob({ __DELAY__: 20 }); ok(await row("Qwen Cloud Token Plan").getByLabel("Saving").count() === 0, "the spinner after the reply"); });
+      await check(`${theme} local not set up`, async () => { await p.waitForTimeout(100); await shot("Qwen Cloud Token Plan", "local-not-set-up");
+        ok((await clean("Qwen Cloud Token Plan")).includes("Not set up"), await said("Qwen Cloud Token Plan")); });
+      await check(`${theme} local saving`, async () => { const r = row("Qwen Cloud Token Plan");
         await r.getByLabel("Qwen Cloud Token Plan's allowance").fill("2000000"); await r.getByLabel("Period").selectOption("week"); await r.getByLabel("Resets on").selectOption("3");
-        await shot("Qwen Cloud Token Plan", "row-local-form"); });
-      await step(p, `${T}-local-saved`, async () => { await row("Qwen Cloud Token Plan").getByRole("button", { name: "Save" }).click(); await p.waitForTimeout(300); await shot("Qwen Cloud Token Plan", "row-local-saved");
-        ok((await said("Qwen Cloud Token Plan")).includes("counting tazuna's own use, 2,000,000 tokens a week"), await said("Qwen Cloud Token Plan"));
-        const sent = await p.evaluate(() => window.__SENT__.filter(([c, a]) => c === "op" && a.msg.op === "usage_allowance").map(([, a]) => a.msg).pop());
-        ok(JSON.stringify(sent) === JSON.stringify({ op: "usage_allowance", provider: "Qwen Cloud Token Plan", allowance: { amount: 2000000, unit: "tokens", period: "week", reset: 3 } }), JSON.stringify(sent)); });
-      await step(p, `${T}-vibe-local`, async () => { await shot("Mistral Vibe", "row-local-vibe"); ok((await said("Mistral Vibe")).includes("$150 a month"), await said("Mistral Vibe")); });
-      // an admin key: information beside the ways, never one of them
-      await step(p, `${T}-admin-key`, async () => { await shot("Mistral Vibe", "row-admin-key");
-        ok(await row("Mistral Vibe").getByRole("radio", { name: "Admin key" }).count() === 0 && (await said("Mistral Vibe")).includes("Admin key: an Admin key tells this month's spend only"), await said("Mistral Vibe")); });
-      // a console without a key (More providers): its switch all the same
-      await step(p, `${T}-console-no-key`, async () => { await p.getByRole("button", { name: /^More providers/ }).click(); await p.getByLabel("Search providers").fill("caffeine"); await p.waitForTimeout(300);
-        await shot("Caffeine", "row-console-no-key"); ok(await row("Caffeine").getByRole("switch").getAttribute("aria-checked") === "false", await said("Caffeine")); });
-      await step(p, `${T}-console-new`, async () => { await row("Caffeine").getByRole("switch").click(); await p.waitForTimeout(300); await shot("Caffeine", "row-console-new");
-        ok((await said("Caffeine")).includes("sign in once to find its usage page") && await row("Caffeine").getByRole("button", { name: "Forget sign-in" }).count() === 0, await said("Caffeine")); });
-      await step(p, `${T}-console-done`, async () => { await row("Caffeine").getByRole("button", { name: "Sign in…" }).click(); await p.waitForTimeout(600); await shot("Caffeine", "row-console-done");
-        ok((await said("Caffeine")).includes("nothing usage-like yet"), await said("Caffeine"));
-        ok(await p.evaluate(() => JSON.stringify(window.__SENT__.filter(([c]) => c === "console_open").pop()[1])) === JSON.stringify({ provider: "Caffeine", learn: true }), "console_open"); });
-      await step(p, `${T}-refused`, async () => { await row("Caffeine").getByRole("radio", { name: "Count here" }).click(); await p.waitForTimeout(400); await shot("Caffeine", "row-refused");
+        await knob({ __DELAY__: 2000 }); await r.getByRole("button", { name: "Save" }).click(); await p.waitForTimeout(150); await r.getByRole("button", { name: "Saving…" }).click({ force: true }); await p.waitForTimeout(100);
+        await shot("Qwen Cloud Token Plan", "local-saving"); ok((await sent("usage_allowance")).length === 1, "a second Save while saving");
+        await p.waitForTimeout(2100); await knob({ __DELAY__: 20 }); await shot("Qwen Cloud Token Plan", "local-saved");
+        ok((await clean("Qwen Cloud Token Plan")).includes("Counts use through tazuna"), await said("Qwen Cloud Token Plan"));
+        const a = (await sent("usage_allowance")).pop(); delete a.req;
+        ok(JSON.stringify(a) === JSON.stringify({ op: "usage_allowance", provider: "Qwen Cloud Token Plan", allowance: { amount: 2000000, unit: "tokens", period: "week", reset: 3 } }), JSON.stringify(a)); });
+      // Mistral Vibe: counted here, its admin key never shown
+      await check(`${theme} vibe`, async () => { await shot("Mistral Vibe", "local-mistral-vibe"); ok(await row("Mistral Vibe").getByRole("radio", { name: "Admin key" }).count() === 0, await clean("Mistral Vibe")); });
+      // a console without a key (More providers): never opened, opening, opened with nothing found, the page found, forgotten
+      await check(`${theme} console off`, async () => { await p.getByRole("button", { name: /^More providers/ }).click(); await p.getByLabel("Search providers").fill("caffeine"); await p.waitForTimeout(300);
+        await shot("Caffeine", "console-untracked"); ok(await row("Caffeine").getByRole("switch").getAttribute("aria-checked") === "false" && (await said("Caffeine")) === "Usage", await said("Caffeine")); });
+      await check(`${theme} console not set up`, async () => { await row("Caffeine").getByRole("switch").click(); await p.waitForTimeout(300); await shot("Caffeine", "console-not-set-up");
+        const t = await clean("Caffeine"); ok(t.includes("Not set up") && await row("Caffeine").getByRole("button", { name: "Sign in…" }).count() === 1 && await row("Caffeine").getByRole("button", { name: "Forget sign-in" }).count() === 0, t); });
+      await check(`${theme} console opening`, async () => { await knob({ __OPEN_DELAY__: 1500 }); await row("Caffeine").getByRole("button", { name: "Sign in…" }).click(); await p.waitForTimeout(150);
+        await row("Caffeine").getByRole("button", { name: "Opening…" }).click({ force: true }); await p.waitForTimeout(100); await shot("Caffeine", "console-opening");
+        ok((await sent("console_open")).length === 1, "a second Sign in… while opening"); await p.waitForTimeout(2000); await knob({ __OPEN_DELAY__: 0 }); });
+      // the user: "Done doesn't work: it goes back to 'not signed in yet'"
+      await check(`${theme} console no data`, async () => { await shot("Caffeine", "console-no-usage-data"); const t = await clean("Caffeine");
+        ok(t.includes("No usage data found yet") && !/not signed in/i.test(t) && await row("Caffeine").getByRole("button", { name: "Open again" }).count() === 1 && await row("Caffeine").getByRole("button", { name: "Forget sign-in" }).count() === 1, t);
+        ok(JSON.stringify((await sent("console_open")).pop()) === JSON.stringify({ provider: "Caffeine", learn: true }), "console_open"); });
+      await check(`${theme} console learned`, async () => { await knob({ __VISIT__: { page: "/inference/usage", fields: 2 } }); await row("Caffeine").getByRole("button", { name: "Open again" }).click(); await p.waitForTimeout(800);
+        await shot("Caffeine", "console-page-found-after-visit"); ok((await clean("Caffeine")).includes("Found /inference/usage"), await said("Caffeine")); await knob({ __VISIT__: null }); });
+      await check(`${theme} console forgetting`, async () => { await knob({ __FORGET_DELAY__: 1500 }); await row("Caffeine").getByRole("button", { name: "Forget sign-in" }).click(); await p.waitForTimeout(150);
+        await row("Caffeine").getByRole("button", { name: "Forgetting…" }).click({ force: true }); await p.waitForTimeout(100); await shot("Caffeine", "console-forgetting");
+        ok((await sent("console_forget")).length === 1 && await row("Caffeine").getByRole("button", { name: "Open again" }).isDisabled(), "Forget while forgetting, Open again meanwhile");
+        await p.waitForTimeout(1800); await knob({ __FORGET_DELAY__: 0 }); await shot("Caffeine", "console-sign-in-forgotten");
+        const t = await clean("Caffeine"); ok(t.includes("Signed out of its console.") && await row("Caffeine").getByRole("button", { name: "Sign in…" }).count() === 1 && await row("Caffeine").getByRole("button", { name: "Forget sign-in" }).count() === 0, t); });
+      await check(`${theme} refused`, async () => { await row("Caffeine").getByRole("radio", { name: "Count here" }).click(); await p.waitForTimeout(400); await shot("Caffeine", "refused");
         ok((await said("Caffeine")).includes("Not saved: ~/.config/tazuna/usage.json is read-only") && await row("Caffeine").getByRole("radio", { name: "Console" }).getAttribute("aria-checked") === "true", await said("Caffeine")); });
-      await step(p, `${T}-none`, async () => { await row("Groq").getByRole("switch").click(); await p.waitForTimeout(300); await row("Groq").getByRole("radio", { name: "None" }).click(); await p.waitForTimeout(300);
-        await shot("Groq", "row-none"); ok((await said("Groq")).includes("Groq's API tells no usage"), await said("Groq")); });
-      await step(p, `${T}-track-off`, async () => { await row("SubRouter").getByRole("switch").click(); await p.waitForTimeout(300); await shot("SubRouter", "row-off");
-        ok(!(await said("SubRouter")).includes("read automatically") && await row("SubRouter").getByRole("radio").count() === 0, await said("SubRouter")); });
+      await p.getByLabel("Search providers").fill(""); await p.getByRole("button", { name: /^More providers/ }).click(); await p.waitForTimeout(200);
+      await check(`${theme} none`, async () => { await row("Groq").getByRole("switch").click(); await p.waitForTimeout(300); await row("Groq").getByRole("radio", { name: "None" }).click(); await p.waitForTimeout(300);
+        await shot("Groq", "none"); const t = await clean("Groq"); ok(t.includes("No usage API") && await row("Groq").getByRole("button").count() === 0, t); });
+      await check(`${theme} track off`, async () => { await row("SubRouter").getByRole("switch").click(); await p.waitForTimeout(300); await shot("SubRouter", "untracked");
+        ok((await said("SubRouter")) === "Usage" && await row("SubRouter").getByRole("radio").count() === 0, await said("SubRouter")); });
+      // the whole dialog at 1440, with the lines as they now stand
+      await step(p, `${theme}-settings-1440-lower`, async () => { await row("Qwen Cloud Token Plan").scrollIntoViewIfNeeded(); });
       await esc(p);
-      await step(p, `${T}-usage-untracked`, async () => { await p.keyboard.press("Control+Shift+U"); await p.waitForTimeout(900);
-        const after = await p.getByText("$12.40", { exact: false }).count();
-        log.push(`${theme} SubRouter's "$12.40" on screen: ${before} tracked, ${after} untracked`);
-        ok(after === 0, `an untracked provider still shows: ${after}`); });
-      if (p.errs.length) log.push(`FAIL ${T} page errors: ${p.errs.join(" | ")}`);
+      await check(`${theme} usage-untracked`, async () => { await p.keyboard.press("Control+Shift+U"); await p.waitForTimeout(900);
+        const after = await p.getByText("$12.40", { exact: false }).count(); log.push(`${theme} SubRouter's "$12.40" on screen: ${before} tracked, ${after} untracked`); ok(after === 0, `an untracked provider still shows: ${after}`); });
+      await esc(p);
+      // the status bar on Qwen, whose reading says nothing (its CLI does not show the plan): its word alone, not a bare name
+      await step(p, `${theme}-statusbar-qwen`, async () => {
+        await p.evaluate(() => { const tid = window.__SENT__.find(([, a]) => a?.tid)?.[1].tid; return window.__TAURI_INTERNALS__.invoke("op", { tid, msg: { op: "model", model: "qwen3.8-max", url: "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1", key_env: "QWENCLOUD_TOKEN_PLAN_API_KEY" } }); });
+        await p.waitForTimeout(600); const first = (await p.locator("footer[aria-label=Status] button").first().innerText()).trim();
+        await p.locator("footer[aria-label=Status]").screenshot({ path: `${OUT}/${theme}-statusbar-qwen-bar.png` });
+        log.push(`${theme} status bar on Qwen: ${JSON.stringify(first)}`); ok(first === "Usage", `the bar says ${JSON.stringify(first)}`); });
+      if (p.errs.length) log.push(`FAIL ${theme} page errors: ${p.errs.join(" | ")}`);
+      await ctx.close();
+      // a narrow window: the dialog at its width there, the lines in their states
+      const [c2, q] = await ctxOf({ theme, w: 1000, h: 760 });
+      await q.evaluate(() => { window.__CLI__ = "no_plan"; });
+      await step(q, `${theme}-settings-1000`, async () => { await q.keyboard.press("Control+,"); await q.waitForTimeout(600); await q.getByRole("button", { name: "Providers", exact: true }).click(); await q.waitForTimeout(500); });
+      await step(q, `${theme}-settings-1000-lower`, async () => { await q.getByRole("switch", { name: "Track Qwen Cloud Token Plan's usage" }).scrollIntoViewIfNeeded(); });
+      await step(q, `${theme}-settings-1000-cli`, async () => { await q.getByRole("radiogroup", { name: "How tazuna reads Qwen Cloud Token Plan's usage" }).getByRole("radio", { name: "CLI" }).click(); await q.waitForTimeout(400);
+        const wide = await q.evaluate(() => { const b = document.querySelector("[role=dialog] .overflow-auto"); return b.scrollWidth - b.clientWidth; }); ok(wide <= 0, `the page is ${wide} px wider than the dialog`); });
+      await c2.close();
+    }
+    // the usage page with large values: every figure's caption whole (it was "$1,045.98 at API prices, not …"), at 1000 and 1440
+    for (const theme of ["dark", "light"]) for (const w of [1000, 1440]) {
+      const [ctx, p] = await ctxOf({ theme, w, h: 900, extra: "window.__BIG__ = true" });
+      await step(p, `${theme}-usage-big-${w}`, async () => { await p.keyboard.press("Control+Shift+U"); await p.waitForTimeout(1200);
+        const strip = p.getByRole("dialog", { name: "Usage" }).locator(".grid-cols-3").first(); await strip.scrollIntoViewIfNeeded(); await p.waitForTimeout(200);
+        await strip.screenshot({ path: `${OUT}/${theme}-usage-figures-${w}.png` });
+        const fig = await strip.evaluate((g) => [...g.children].map((f) => { const r = f.getBoundingClientRect();
+          return { text: f.innerText.replace(/\s+/g, " "), cut: [...f.querySelectorAll("span")].some((s) => s.scrollWidth > s.clientWidth + 1 || s.getBoundingClientRect().right > r.right + 0.5 || getComputedStyle(s).textOverflow === "ellipsis") }; }));
+        log.push(`${theme} ${w} figures: ${JSON.stringify(fig)}`);
+        ok(fig.length === 3 && fig.every((f) => !f.cut) && /\$\d{2},\d{3}/.test(fig[0].text) && /at API prices/.test(fig[1].text) && /not billed/.test(fig[1].text) && / B tokens/.test(fig[2].text), JSON.stringify(fig)); });
       await ctx.close();
     }
     if (process.env.ONLY === "sources") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok"); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }

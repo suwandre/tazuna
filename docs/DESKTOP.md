@@ -785,6 +785,14 @@ sign-in pages, Alibaba's for Qwen, Mistral's auth, id.ai for Caffeine); anything
 every 3 s per window, a URL carrying a sign-in code only as its site's root; a page bouncing back three times in 10 s
 closes its window.
 
+0.1.135 (with tazuna 0.1.233), the user's findings on usage sources: the usage page's captions wrap, never cut; each
+provider's usage line is one short status and one action (no Admin key line, one terms note, Forget whenever a console
+sign-in is kept); the console window draws nothing over the page: its state is in the window title and closing it is
+done, and it opens on each provider's usage page (Qwen's Token Plan analytics, Mistral's subscription, Caffeine's
+inference usage); "No usage data found yet" after a visit without any; every usage action shows that it is waiting and
+ignores a second click, ending on the core's exit or after 20 s; the method picker keeps the last click; Qwen's CLI that
+does not show the plan offers the console; provider statuses start with a capital.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

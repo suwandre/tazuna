@@ -61,14 +61,15 @@ function Meter({ name, of, used, at }: { name: string; of?: ReactNode; used: num
 
 /** A figure in a strip: its label, the number with what it is beside it ("3%  clear misses"), and the smaller numbers
  * under it each with its word ("3% pushback   467 runs"), or a quiet line when there is nothing. Until desktop 0.1.78 one
- * caption strung them with middle dots ("clear misses · 3% pushback · 467 runs", design review 6). */
+ * caption strung them with middle dots ("clear misses · 3% pushback · 467 runs", design review 6). The caption goes under
+ * the number where both do not fit, never cut ("$1,045.98 at API prices, not …", the user). */
 function Figure({ label, value, caption, more = [], quiet }: { label: string; value: string; caption?: string; more?: [string, string][]; quiet?: boolean }) {
   return (
     <div className="min-w-0 px-3.5 py-3">
       <div className="text-[11.5px] text-faint">{label}</div>
       {quiet ? <div className="pt-1.5 text-[13px] text-muted">{value}</div> : <>
-        <div className="mt-0.5 flex items-baseline gap-2"><span className="text-[20px] font-semibold tabular-nums tracking-[-0.02em] text-ink">{value}</span>
-          {caption && <span className="truncate text-[12px] text-muted">{caption}</span>}</div>
+        <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2"><span className="text-[20px] font-semibold tabular-nums tracking-[-0.02em] text-ink">{value}</span>
+          {caption && <span className="text-[12px] text-muted">{caption}</span>}</div>
         {more.length > 0 && <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[12px]">{more.map(([n, what]) => (
           <span key={what} className="whitespace-nowrap"><span className="font-medium tabular-nums text-ink-2">{n}</span> <span className="text-faint">{what}</span></span>))}</div>}
       </>}
@@ -175,7 +176,7 @@ export function UsageView({ onClose, limits, balance, choices = [], claude, sour
               {choice.key === "custom" && <span className="mb-1.5 mt-1 flex items-center gap-2">From
                 <input ref={start} type="datetime-local" aria-label="From" min="1970-01-01T00:00" value={fieldOf(choice.from)} onChange={(e) => setFrom(e.target.value)} className={field} />to
                 <input type="datetime-local" aria-label="To" min="1970-01-01T00:00" value={fieldOf(choice.to)} onChange={(e) => setTo(e.target.value)} className={field} /></span>}
-              {page ? words.note : "From the run log."} A plan's runs are counted at API prices, not billed.</>}>
+              {page ? words.note : "From the run log."}</>}>
             {!s || !page ? <div className="px-3.5 py-2.5 text-[12.5px] text-faint">Reading the run log…</div>
               // nothing in the range: one quiet line, no empty figures or chart frame
               : !s.runs ? <div className="px-3.5 py-2.5 text-[12.5px] text-muted">{choice.key === "all" ? "Nothing has run yet." : `Nothing ran ${words.within}.`}</div> : <>
@@ -185,8 +186,9 @@ export function UsageView({ onClose, limits, balance, choices = [], claude, sour
                 {/* each plan by its provider (the user, 2026-11-25: a Mistral Vibe run read "Claude plan"): one by name, several
                     as Plans with each one's part */}
                 {/* plans with no reference price run at $0: counted by their runs, "not billed", never "$0" (the review of 2026-11-25) */}
-                <Figure label={plans} value={!planRuns ? "–" : s.plan > 0 ? money(s.plan) : "not billed"} quiet={!planRuns} caption={s.plan > 0 ? "at API prices, not billed" : undefined}
-                  more={[...(s.plans.length > 1 ? s.plans.map((p) => [p.cost > 0 ? money(p.cost) : "not billed", p.name] as [string, string]) : []), [`${planRuns}`, "runs"]]} />
+                {/* "not billed" with the runs under the number: in its caption it was cut ("$1,045.98 at API prices, not …") */}
+                <Figure label={plans} value={!planRuns ? "–" : s.plan > 0 ? money(s.plan) : "not billed"} quiet={!planRuns} caption={s.plan > 0 ? "at API prices" : undefined}
+                  more={[...(s.plans.length > 1 ? s.plans.map((p) => [p.cost > 0 ? money(p.cost) : "not billed", p.name] as [string, string]) : []), [`${planRuns}`, s.plan > 0 ? "runs, not billed" : "runs"]]} />
                 <Figure label="From the cache" value={s.read ? `${pctText(pct1(s.cached, s.read))}%` : "Nothing read yet"} quiet={!s.read} caption="of the input" more={[[big(s.cached), "tokens"]]} />
               </div>
               <Bars bars={s.bars} unit={page.sp.unit} plans={plans} within={words.within} />

@@ -37,8 +37,10 @@ function Here({ here }: { here: Item[] }) {
   if (here[0].provider === "Claude") return <>Claude{here.map((i, n) => <span key={i.key} title={about(i)} className="flex items-center gap-1.5">{n > 0 && <Sep />}<span className="text-faint">{tag(i.label)}</span><Meter pct={i.pct ?? 0} /><span className={b}>{i.value}</span>{until(i)}</span>)}</>;
   const i = here[0];
   if (i.pct != null) return <span title={about(i)} className="flex items-center gap-1.5">{i.name.split(",")[0]}<Meter pct={i.pct} /><span className={b}>{i.value}</span>{i.name.split(", ")[1]}{until(i)}</span>;
-  // a balance its API does not tell is no news: the provider's name alone ("Mortera balance not reported" on every screen)
-  return <>{i.name} {i.value && <><span className={b}>{i.value.replace(/ (left|below zero)$/, "")}</span><span className="text-faint">{i.value.match(/ (left|below zero)$/)?.[1]}</span></>}</>;
+  // a balance its API does not tell is no news: nothing but the bar's own word ("Mortera balance not reported" on every
+  // screen; then the name alone, a bare "Qwen Cloud Token Plan" beside the refresh, read as a broken reading)
+  if (!i.value) return <>Usage</>;
+  return <>{i.name} <span className={b}>{i.value.replace(/ (left|below zero)$/, "")}</span><span className="text-faint">{i.value.match(/ (left|below zero)$/)?.[1]}</span></>;
 }
 
 /** Every account, the conversation's own marked, the ones that need you in their colour: in groups under their account
@@ -197,7 +199,7 @@ export function StatusBar({ usage: u, version, idle, numbers = true, accounts = 
       {numbers && !idle && u.contextPct > 0 && <span className={`${item} max-[900px]:hidden`} title="This conversation's context">context <span className={b}>{u.contextPct}%</span> of {u.contextMax}</span>}
       {numbers && !idle && u.cachedPct > 0 && <span className={`${item} max-[1100px]:hidden`} title="Input read from the cache in this conversation">cache <span className={b}>{pctText(u.cachedPct)}%</span></span>}
       {numbers && u.threadCost > 0 && (turns.length ? <ChatCost cost={u.threadCost} turns={turns} busy={busy} className={button}>this chat <span className={b}>{priceSaid(u.threadCost, turns.some((t) => t.estimate))}</span></ChatCost>
-        : <button onClick={openUsage} title={`This conversation's cost${usd(u.threadCost) !== usdExact(u.threadCost) ? `, ${usdExact(u.threadCost)}` : ""} · Usage`} className={button}>this chat <span className={b}>{usd(u.threadCost)}</span></button>)}
+        : <button onClick={openUsage} title={`This conversation's cost${usd(u.threadCost) !== usdExact(u.threadCost) ? `, ${usdExact(u.threadCost)}` : ""}`} className={button}>this chat <span className={b}>{usd(u.threadCost)}</span></button>)}
       {version && <Version version={version} />}
     </footer>
   );

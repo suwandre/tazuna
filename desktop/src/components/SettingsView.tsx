@@ -1,11 +1,11 @@
-import { Check, ChevronRight, Copy, ExternalLink, RefreshCw, Search, X } from "lucide-react";
+import { Check, ChevronRight, Copy, ExternalLink, LoaderCircle, RefreshCw, Search, X } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { useDialog } from "../lib/dialog";
 import { checkUpdate, installUpdate, progressText, useUpdate } from "../lib/update";
 import { safeMode } from "../lib/plugins";
-import { HOTKEY, core, defaultHotkey, type Allowance, type GalleryItem, type Hook, type Learned, type Mcp, type Provider, type Settings, type SignIn, type UsageMethod, type UsageSource } from "../lib/tazuna";
-import { allowanceWords, commandsIn, learnedWords } from "../lib/health";
+import { HOTKEY, core, defaultHotkey, usageReq, type Allowance, type GalleryItem, type Hook, type Learned, type Mcp, type Provider, type Settings, type SignIn, type UsageMethod, type UsageSource } from "../lib/tazuna";
+import { asked0, askUsage, cap as capital, usageAnswer, usageExpire, usageState, type Asked } from "../lib/health";
 import { matchesWords } from "../lib/types";
 import { dryRun, summary, widgets, type UserWidget } from "../lib/widgets";
 import { ACCENT, ACCENTS, LIVE, NUMBERS, PROSE, STATS, TEXT_SIZES, THEME, ZOOM, accentNow, look } from "../lib/chrome";
@@ -62,13 +62,26 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
   const [welcome, setWelcome] = useState(false);
   const [adding, setAdding] = useState({ name: "", target: "" });
   const [hook, setHook] = useState<Hook | null>(null);
-  // each provider's ways to read its usage and the user's choice (core usage sources), what the console reader's first visit
+  // each provider's ways to read its usage and the user's choice (core usage sources), what the console reader's visits
   // found, and a word on the last change (refused, signed out of a console)
   const [sources, setSources] = useState<Record<string, UsageSource>>({});
   const [learned, setLearned] = useState<Record<string, Learned | null>>({});
   const [usageNote, setUsageNote] = useState<{ provider: string; text: string; bad?: boolean } | null>(null);
-  // the provider last changed: a refusal (the core's `error`) is said on its row
-  const usageAt = useRef("");
+  // the usage requests in flight (lib/health.ts askUsage), by the window's own number (`req`, said back on its reply): a
+  // button waits until then, and a track request's choice is what the line shows until its own reply, so a reply to an
+  // earlier click never puts the picker back (the user's recording: Console, then CLI, and it jumped back); let go after
+  // 20 s or when the core exits
+  const flight = useRef<Asked>(asked0);
+  const [, setFlown] = useState(0);
+  const fly = (a: Asked) => { flight.current = a; setFlown((n) => n + 1); };
+  const pending = (provider: string, kind: string) => flight.current.pend.find((x) => x.provider === provider && x.kind === kind);
+  const ask = (provider: string, kind: "track" | "check" | "save", send: (req: number) => Promise<unknown>, track?: { on: boolean; method: string }) => {
+    const req = usageReq();
+    setUsageNote(null);
+    fly(askUsage(flight.current, { provider, kind, req, at: Date.now(), track }));
+    setTimeout(() => fly(usageExpire(flight.current, Date.now())), 20_100);
+    send(req).catch(() => fly({ ...flight.current, pend: flight.current.pend.filter((x) => x.req !== req) }));
+  };
   const learn = (provider: string) => core.consoleLearned(provider).then((l) => setLearned((all) => ({ ...all, [provider]: l })), () => {});
   // the app's own version beside its core's: "tazuna 0.1.173" alone read as the terminal's
   const [appVersion, setAppVersion] = useState("");
@@ -129,19 +142,23 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
       if (g.error || !g.text) { setPlugNote(`The gallery entry did not come: ${g.error ?? "empty"}`); return; }
       widgets.importText(g.text).then((id) => arrived(id, "the gallery")).catch((e) => setPlugNote(`Not added: ${e}`));
     });
-    const offSources = core.onUsageSources((list, error) => {
+    const offSources = core.onUsageSources((list, error, req) => {
+      // a reply answers its request and every one before it; a refusal is said on its own request's row
+      const { a, provider } = usageAnswer(flight.current, req);
+      if (a !== flight.current) fly(a);
+      if (error && provider) setUsageNote({ provider, text: error, bad: true });
+      if (!list) return;
       setSources(Object.fromEntries(list.map((x) => [x.provider, x])));
-      if (error) setUsageNote({ provider: usageAt.current, text: error, bad: true });
       for (const x of list) if (x.methods.some((m) => m.id === "console")) learn(x.provider);
     });
-    const offConsole = core.onConsoleClosed(learn);
+    const offConsole = core.onConsoleClosed(learn), offExit = core.onExit(() => fly(asked0));
     core.usageSources().catch(() => {});
     refresh();
     core.mcp().catch(() => {});
     core.hook().catch(() => {});
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") close.current(); };
     window.addEventListener("keydown", esc);
-    return () => { for (const o of [off, offMcp, offStatus, offHook, offGallery, offItem, offSign, offSources, offConsole]) o.then((f) => f()); window.removeEventListener("keydown", esc); };
+    return () => { for (const o of [off, offMcp, offStatus, offHook, offGallery, offItem, offSign, offSources, offConsole, offExit]) o.then((f) => f()); window.removeEventListener("keydown", esc); };
   }, []);
   // `key` given: what to send whatever the field holds ("" for Mistral's "Yes": keep the key it has); how it went comes
   // back as a `signin` line for the row
@@ -166,21 +183,21 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
     (other ? core.signInOther(p.name) : core.signIn(p.name, p.warn, p.needs_project != null ? projects[p.name] ?? p.needs_project : undefined)).catch(() => {});
   };
   const busy = (p: Provider) => !!signing[p.name] && signing[p.name].ok == null;
-  // tracked or not, and how: shown at once, the core's answer replaces it
-  const track = (u: UsageSource, on: boolean, method: string) => {
-    usageAt.current = u.provider;
-    setUsageNote(null);
-    setSources((all) => ({ ...all, [u.provider]: { ...u, track: { on, method } } }));
-    core.usageTrack(u.provider, on, method).catch(() => {});
-  };
-  const allow = (u: UsageSource, a: Allowance | null) => { usageAt.current = u.provider; setUsageNote(null); core.usageAllowance(u.provider, a).catch(() => {}); };
+  // tracked or not, and how: the choice shown at once and kept until its own reply (latest wins)
+  const track = (u: UsageSource, on: boolean, method: string) => ask(u.provider, "track", (req) => core.usageTrack(u.provider, on, method, req), { on, method });
+  const allow = (u: UsageSource, a: Allowance | null) => ask(u.provider, "save", (req) => core.usageAllowance(u.provider, a, req));
+  const check = (u: UsageSource) => { if (!pending(u.provider, "check")) ask(u.provider, "check", (req) => core.usageSources(req, u.provider)); };
   // the usage line: on your providers' rows, on a console's without a key too (it reads with a sign-in), and on any other
-  // row while it is tracked
-  const usageOf = (p: Provider) => { const u = sources[p.name]; return u && (p.key || p.local || u.track.on || u.methods.some((m) => m.id === "console")) ? u : undefined; };
+  // row while it is tracked; a track request in flight shows its choice
+  const usageOf = (p: Provider) => {
+    const u = sources[p.name], t = pending(p.name, "track")?.track;
+    return u && (p.key || p.local || u.track.on || u.methods.some((m) => m.id === "console")) ? (t ? { ...u, track: t } : u) : undefined;
+  };
   const provider = (p: Provider) => (
-    <Row key={p.name} title={p.name} below={usageOf(p) && <UsageLine u={usageOf(p)!} learned={learned[p.name]} track={track} allow={allow} refreshLearned={learn}
+    <Row key={p.name} title={p.name} below={usageOf(p) && <UsageLine u={usageOf(p)!} learned={learned[p.name]} track={track} allow={allow} check={check} refreshLearned={learn}
+      busy={{ track: !!pending(p.name, "track"), check: !!pending(p.name, "check"), save: !!pending(p.name, "save") }}
       note={usageNote?.provider === p.name ? usageNote : null} say={(text, bad) => setUsageNote({ provider: p.name, text, bad })} />} note={<>{/* one line: with the key field open, "managed key (tazuna subrouter --manage)" broke inside "--manage" */}
-      <span title={p.key || p.host} className={`block truncate ${p.plan_off || p.unsure ? "text-warn" : p.key ? "text-ok" : "font-mono text-[11.5px] text-faint"}`}>{p.key || p.host}</span>
+      <span title={p.key || p.host} className={`block truncate ${p.plan_off || p.unsure ? "text-warn" : p.key ? "text-ok" : "font-mono text-[11.5px] text-faint"}`}>{p.key ? capital(p.key) : p.host}</span>
       {/* its terms, quiet; in the warning colour only where the account may be at risk or it may refuse tazuna */}
       {p.note && <span className={`block ${p.warn ? "text-warn" : "text-faint"}`}>{p.note}</span>}
       {/* a key the core cannot price for sure (Mistral's MISTRAL_API_KEY from the environment) */}
@@ -506,8 +523,10 @@ function Row({ title, note, children, below }: { title: React.ReactNode; note?: 
   );
 }
 
-// A provider's usage line (review 14, usage sources): the Track switch, how it is read (a choice where there are several),
-// its state, and the one thing to do for that way. Words for the ways; the steps in full on the state's hover.
+// A provider's usage line (review 14, usage sources; its fix after the user's review): the Track switch, how it is read (a
+// choice where there are several), one short state and the one thing to do for it; the method's steps on the state's
+// hover. An admin key is never shown: it tells a month's spend, not the plan's use, and offered nothing to do. Every
+// request waits on its own reply: its button says so, and a second click meanwhile does nothing.
 const METHOD: Record<UsageMethod["id"], string> = { api: "API", api_scope: "API", admin_key: "Admin key", cli: "CLI", console: "Console", local: "Count here", none: "None" };
 const UNITS: [Allowance["unit"], string][] = [["tokens", "Tokens"], ["usd", "USD"], ["requests", "Requests"]];
 const PERIODS: [Allowance["period"], string][] = [["day", "Day"], ["week", "Week"], ["month", "Month"]];
@@ -517,58 +536,68 @@ const WEEKDAYS: [number, string][] = [[1, "Monday"], [2, "Tuesday"], [3, "Wednes
 const resetFor = (period: Allowance["period"], r: number | null) =>
   period === "day" ? 0 : period === "week" ? (r != null && r >= 0 && r <= 6 ? r : 1) : r != null && r >= 1 && r <= 31 ? r : 1;
 
-function UsageLine({ u, learned, track, allow, note, say, refreshLearned }: { refreshLearned: (provider: string) => void; u: UsageSource; learned: Learned | null | undefined; track: (u: UsageSource, on: boolean, method: string) => void;
-  allow: (u: UsageSource, a: Allowance | null) => void;
-  note: { text: string; bad?: boolean } | null; say: (text: string, bad?: boolean) => void }) {
-  // an admin key is never tracked (it tells a month's spend, not the plan's use): said beside the ways, never one of them
-  const ways = u.methods.filter((x) => x.id !== "admin_key"), admin = u.methods.find((x) => x.id === "admin_key");
+function UsageLine({ u, learned, busy, track, check, allow, note, say, refreshLearned }: { u: UsageSource; learned: Learned | null | undefined;
+  busy: { track: boolean; check: boolean; save: boolean };
+  track: (u: UsageSource, on: boolean, method: string) => void; check: (u: UsageSource) => void; allow: (u: UsageSource, a: Allowance | null) => void;
+  refreshLearned: (provider: string) => void; note: { text: string; bad?: boolean } | null; say: (text: string, bad?: boolean) => void }) {
+  const ways = u.methods.filter((x) => x.id !== "admin_key");
   const m = ways.find((x) => x.id === u.track.method) ?? ways[0];
   const [copied, setCopied] = useState("");
+  // the console window's open and Forget: Tauri commands that answer when done
+  const [doing, setDoing] = useState<"" | "open" | "forget">("");
   const [form, setForm] = useState<Allowance>(() => (u.allowance ? { ...u.allowance, reset: resetFor(u.allowance.period, u.allowance.reset) } : { amount: 0, unit: "tokens", period: "month", reset: 1 }));
   if (!m) return null;
-  const check = () => core.usageSources().catch(() => {});
-  const open = (url: string) => url && core.openLink(url).catch(() => {});
+  const st = usageState(m, u, learned);
   const copy = (c: string) => navigator.clipboard?.writeText(c).then(() => { setCopied(c); setTimeout(() => setCopied(""), 1400); }, () => {});
   const field = "rounded-md border border-line bg-field px-2 py-1 text-[12.5px] tabular-nums text-ink outline-none focus:border-accent";
-  const state = m.id === "console" ? [learnedWords(learned), !m.ready && m.why].filter(Boolean).join(" · ")
-    : m.id === "local" ? (u.allowance ? `counting tazuna's own use, ${allowanceWords(u.allowance)}` : "set the allowance")
-    : m.ready ? ({ api: "read automatically", api_scope: "read automatically", cli: "read by its CLI", none: "no way to read it" } as Record<string, string>)[m.id] ?? "ready"
-    : m.why ?? m.steps;
   // a day's reset is 0 here and may be null from the core: the same
   const same = (a: Allowance | null) => !!a && a.amount === form.amount && a.unit === form.unit && a.period === form.period && (a.reset ?? 0) === (form.reset ?? 0);
-  const changed = !same(u.allowance);
   const valid = form.amount > 0 && Number.isFinite(form.amount) && resetFor(form.period, form.reset) === (form.reset ?? 0);
-  const icon = (url: string, label: string) => url && <button onClick={() => open(url)} aria-label={label} title={label} className="rounded p-1 text-muted hover:text-ink"><ExternalLink size={14} strokeWidth={1.5} /></button>;
+  const console_ = (what: "open" | "forget") => {
+    if (doing) return;
+    setDoing(what);
+    (what === "open" ? core.consoleOpen(u.provider, true) : core.consoleForget(u.provider).then(() => { say("Signed out of its console."); refreshLearned(u.provider); }))
+      .catch((e) => say(`${what === "open" ? "Could not open its console" : "Not forgotten"}: ${e}`, true)).finally(() => setDoing(""));
+  };
+  // a button whose request is in flight: its words say so, and it takes no second click (aria-disabled keeps its focus)
+  const act = (label: string, waiting: string, on: boolean, run: () => void, disabled = false) => (
+    <button aria-disabled={on || disabled} disabled={disabled} onClick={() => { if (!on) run(); }} className={`flex items-center gap-1.5 ${quietButton} aria-disabled:opacity-60`}>
+      {on && <LoaderCircle size={12} strokeWidth={2} className="animate-spin" aria-hidden="true" />}{on ? waiting : label}</button>
+  );
+  const isConsole = u.track.on && m.id === "console";
+  const forget = (label: string) => act(label, "Forgetting…", doing === "forget", () => console_("forget"), doing === "open");
   return (
     <div className="flex flex-col gap-2 text-[12.5px]">
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
         <span className="text-faint">Usage</span>
-        <Switch on={u.track.on} onChange={(on) => track(u, on, m.id)} label={`Track ${u.provider}'s usage`} />
-        {/* untracked: the switch alone (the way and its state come with it) */}
+        <Switch on={u.track.on} busy={busy.track} onChange={(on) => track(u, on, m.id)} label={`Track ${u.provider}'s usage`} />
+        {/* untracked: the switch alone (and its wait, turning it off) */}
+        {!u.track.on && busy.track && <LoaderCircle size={12} strokeWidth={2} className="animate-spin text-faint" aria-label="Saving" />}
         {u.track.on && <>
           {ways.length > 1
             ? <Segmented label={`How tazuna reads ${u.provider}'s usage`} value={m.id} options={ways.map((x) => [x.id, METHOD[x.id]] as const)} onChange={(id) => track(u, true, id)} />
             : <span className="text-ink-2">{METHOD[m.id]}</span>}
-          <span title={m.steps || undefined} className={`min-w-0 ${!m.ready && m.id !== "console" && m.id !== "local" ? "text-ink-2" : "text-muted"}`}>{state}</span>
+          {busy.track && <LoaderCircle size={12} strokeWidth={2} className="animate-spin text-faint" aria-label="Saving" />}
+          {/* it narrows and wraps beside its button rather than send the button to a line of its own */}
+          {st.text && <span title={m.steps || undefined} className="min-w-0 flex-[1_1_7rem] text-muted">{st.text}</span>}
         </>}
-        {(u.track.on || learned?.store) && <span className="ml-auto flex flex-none items-center gap-2">
-          {u.track.on && m.id === "api_scope" && !m.ready && <><button onClick={() => open(m.link)} className={quietButton}>Turn on account:read for this key</button>
-            <button onClick={check} className={quietButton}>Check again</button></>}
-          {u.track.on && m.id === "cli" && !m.ready && <button onClick={check} className={quietButton}>Check again</button>}
-          {/* its sign-in can go whatever the switch says, while its window's store is there */}
-          {learned?.store && <button onClick={() => core.consoleForget(u.provider).then(() => { say("Signed out of its console."); refreshLearned(u.provider); }, (e) => say(`Not forgotten: ${e}`, true))} className={quietButton}>Forget sign-in</button>}
-          {u.track.on && m.id === "console" && <button onClick={() => core.consoleOpen(u.provider, true).catch((e) => say(`Could not open its console: ${e}`, true))} className={quietButton}>Sign in…</button>}
-          {u.track.on && m.id === "none" && icon(m.link, `Open ${u.provider}'s page`)}
+        {u.track.on && <span className="ml-auto flex flex-none items-center gap-2">
+          {st.action === "check" && act("Check again", "Checking…", busy.check, () => check(u))}
+          {st.action === "use" && m.instead && <button onClick={() => track(u, true, m.instead!)} className={quietButton}>Use {METHOD[m.instead]}</button>}
+          {(st.action === "signin" || st.action === "open") && act(st.action === "signin" ? "Sign in…" : "Open again", "Opening…", doing === "open", () => console_("open"), doing === "forget")}
         </span>}
       </div>
-      {u.track.on && m.id === "console" && <p className="text-faint">Reads the provider's own usage page with your sign-in. Automated reading may break its terms; off by default.</p>}
-      {u.track.on && m.id === "cli" && !m.ready && (commandsIn(m.steps).length ? <div className="flex flex-wrap items-center gap-2">
-        {commandsIn(m.steps).map((c) => <span key={c} className="flex items-center gap-1.5">
+      {/* the sign-in's line: what it risks, and its sign-in to forget (two buttons beside the state sent both under it); read
+          another way or not at all, its sign-in can go all the same */}
+      {isConsole && <div className="flex items-center gap-2"><p className="min-w-0 flex-1 text-faint">Uses your sign-in; may break the provider's terms.</p>
+        {learned?.store && forget("Forget sign-in")}</div>}
+      {u.track.on && !!st.commands?.length && <div className="flex flex-wrap items-center gap-2">
+        {st.commands.map((c) => <span key={c} className="flex items-center gap-1">
           <code className="rounded-md bg-field px-2 py-1 font-mono text-[11.5px] text-ink-2">{c}</code>
-          <button onClick={() => copy(c)} aria-label={`Copy ${c}`} title={`Copy the command: ${c}`} className="rounded p-1 text-muted hover:text-ink">
+          <button onClick={() => copy(c)} aria-label={`Copy ${c}`} title="Copy" className="rounded p-1 text-muted hover:text-ink">
             {copied === c ? <Check size={13} strokeWidth={1.75} className="text-ok" /> : <Copy size={13} strokeWidth={1.5} />}</button>
         </span>)}
-      </div> : <p className="text-muted">{m.steps}</p>)}
+      </div>}
       {u.track.on && m.id === "local" && <div className="flex flex-wrap items-center gap-2">
         <input type="number" min={0} step="any" value={form.amount || ""} onChange={(e) => setForm({ ...form, amount: Number(e.target.value) })} placeholder="Allowance"
           aria-label={`${u.provider}'s allowance`} className={`w-28 ${field} placeholder:text-faint`} />
@@ -583,19 +612,19 @@ function UsageLine({ u, learned, track, allow, note, say, refreshLearned }: { re
         {form.period === "week" && <label className="flex items-center gap-1.5 text-muted">from
           <select aria-label="Resets on" value={form.reset ?? 1} onChange={(e) => setForm({ ...form, reset: Number(e.target.value) })} className={field}>
             {WEEKDAYS.map(([v, d]) => <option key={d} value={v}>{d}</option>)}</select></label>}
-        <button disabled={!changed || !valid} onClick={() => allow(u, form)} className={quietButton}>Save</button>
-        {u.allowance && <button onClick={() => { setForm({ amount: 0, unit: "tokens", period: "month", reset: 1 }); allow(u, null); }} className={quietButton}>Clear</button>}
+        {act("Save", "Saving…", busy.save, () => allow(u, form), !busy.save && (same(u.allowance) || !valid))}
+        {u.allowance && !busy.save && <button onClick={() => { setForm({ amount: 0, unit: "tokens", period: "month", reset: 1 }); allow(u, null); }} className={quietButton}>Clear</button>}
       </div>}
-      {u.track.on && admin && <p className="flex items-center gap-1 text-faint">Admin key: {admin.why ?? admin.steps}{icon(admin.link, "Open the admin key page")}</p>}
+      {!isConsole && learned?.store && <div className="flex items-center gap-2"><p className="min-w-0 flex-1 text-faint">Console sign-in kept</p>{forget("Forget")}</div>}
       {note && <p role="status" className={note.bad ? "text-bad" : "text-ink-2"}>{note.text}</p>}
     </div>
   );
 }
 
-/** On or off. */
-function Switch({ on, onChange, label }: { on: boolean; onChange: (on: boolean) => void; label: string }) {
+/** On or off; `busy` while its change is being saved: a click then does nothing. */
+function Switch({ on, onChange, label, busy }: { on: boolean; onChange: (on: boolean) => void; label: string; busy?: boolean }) {
   return (
-    <button role="switch" aria-checked={on} aria-label={label} onClick={() => onChange(!on)}
+    <button role="switch" aria-checked={on} aria-label={label} aria-busy={busy || undefined} onClick={() => { if (!busy) onChange(!on); }}
       className={`relative h-5 w-9 flex-none rounded-full ${on ? "bg-accent" : "bg-line-strong"}`}>
       <span className={`absolute left-0.5 top-0.5 size-4 rounded-full bg-white shadow-sm transition-transform duration-150 ${on ? "translate-x-4" : ""}`} />
     </button>

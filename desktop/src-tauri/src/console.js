@@ -4,7 +4,8 @@
 // at the JSON the page itself gets from those sites. Learn mode reports each response's shape (field names and value
 // types; no values, cookies, headers or tokens) and, where usage-like fields appear, the page they appeared on; read mode
 // runs the extractor on usage-like JSON and reports its numbers. Everything goes through one command,
-// plugin:console|report, which checks it all again. review/console.cjs checks the pure parts and the wrappers.
+// plugin:console|report, which checks it all again. It draws nothing on the page (a bar over it hid Mistral's own sign-in):
+// what learning found is the window's title (main.rs learn_title). review/console.cjs checks the pure parts and the wrappers.
 (function (W, CFG, READ) {
   "use strict";
   // no "token": accessToken is a sign-in, not usage
@@ -21,6 +22,9 @@
       return t.length >= 8 && ((/\d/.test(t) && /[A-Za-z]/.test(t)) || (/[a-z]/.test(t) && caps >= 2 && caps * 3 >= t.length));
     });
   }
+  // query keys a learned page keeps, with the values each may have (main.rs SAFE_QUERY, the same): the region a console
+  // shows its usage for, so a reading opens the right one
+  var SAFE_QUERY = { region: ["ap-southeast-1", "us-east-1", "cn-beijing", "cn-hongkong", "eu-central-1"] };
   function key(k) { return NAME.test(k) && !valueLike(k) ? k : "*"; }
   function part(s) { return PART.test(s) && !valueLike(s) ? s : ":id"; }
   /** A URL's path with its parts made safe, and its query's keys alone: "/api/users/:id/usage?region&lang". */
@@ -29,6 +33,14 @@
     if (query) u.searchParams.forEach(function (_, k) { k = key(k); if (q.indexOf(k) < 0) q.push(k); });
     var p = u.pathname.split("/").map(function (s, i) { return i && s ? part(s) : s; }).join("/").slice(0, 300);
     return p + (q.length ? "?" + q.slice(0, 20).join("&") : "");
+  }
+  /** The page a usage response came on: its cleaned path and its region where the list has it ("/usage?region=ap-southeast-1"). */
+  function pageOf(u) {
+    var q = [];
+    u.searchParams.forEach(function (v, k) {
+      if (Object.prototype.hasOwnProperty.call(SAFE_QUERY, k) && SAFE_QUERY[k].indexOf(v) >= 0 && !q.some(function (x) { return x.split("=")[0] === k; })) q.push(k + "=" + v);
+    });
+    return u.origin + cleanPath(u, false) + (q.length ? "?" + q.join("&") : "");
   }
   /** A value's shape: objects keep their keys, arrays their first item, every other value its type's name. */
   function shape(v, d) {
@@ -62,13 +74,13 @@
   function onSite(sites, host) {
     return sites.indexOf(host) >= 0;
   }
-  var api = { valueLike: valueLike, key: key, part: part, cleanPath: cleanPath, shape: shape, usageKeys: usageKeys, onSite: onSite };
+  var api = { valueLike: valueLike, key: key, part: part, cleanPath: cleanPath, pageOf: pageOf, shape: shape, usageKeys: usageKeys, onSite: onSite };
   if (!W || !CFG || W.location.protocol !== "https:" || !onSite(CFG.sites, W.location.hostname)) return api;
 
-  var noop = function () {}, sent = [], text = null, done = false;
+  var noop = function () {}, sent = [];
   function report(kind, payload) {
     var I = W.__TAURI_INTERNALS__;
-    if (!I || done) return;
+    if (!I) return;
     var body = JSON.stringify(payload);
     if (body && body.length > 60000) return;
     // the same shape of the same call once per page
@@ -87,9 +99,8 @@
     var s = shape(j), use = usageKeys(s);
     if (CFG.mode === "learn") {
       var r = { path: cleanPath(u, true), method: String(method || "GET").toUpperCase().slice(0, 8), status: status | 0, shape: s };
-      if (use.length) r.page = W.location.origin + cleanPath(new URL(W.location.href), false);
+      if (use.length) r.page = pageOf(new URL(W.location.href));
       report("learn", r);
-      if (use.length && text) text.textContent = "tazuna found usage data on this page (" + use.length + " field" + (use.length === 1 ? "" : "s") + "). Open other usage pages, or press Done.";
     } else if (use.length && typeof READ === "function") {
       var n = null;
       try { n = READ(cleanPath(u, false), j); } catch (e) { n = null; }
@@ -130,26 +141,5 @@
   }
   // a sign-in page where the usage page was asked for (read mode): signed out
   if (CFG.mode === "read" && /(^|\/)(log-?in|sign-?in|auth)(\/|$)/i.test(W.location.pathname)) report("signed_out", null);
-  // learn mode: tazuna's bar over the page, in a closed shadow root (the page's styles do not reach it), made of elements
-  // (a page that enforces Trusted Types refuses innerHTML); it may move to the bottom, off the page's own header; Done
-  // closes the window
-  function bar() {
-    var D = W.document, host = D.createElement("div"), root = host.attachShadow({ mode: "closed" });
-    var el = function (tag, words, cls) { var e = D.createElement(tag); e.textContent = words; if (cls) e.className = cls; return e; };
-    host.style.cssText = "all:initial;position:fixed;left:0;right:0;top:0;z-index:2147483647";
-    var row = el("div", ""), move = el("button", "Move down"), end = el("button", "Done", "d");
-    text = el("span", "tazuna is learning this page's usage data: open your usage page. Only names of fields are kept.");
-    row.setAttribute("role", "status");
-    row.append(text, move, end);
-    root.append(el("style", "div{display:flex;align-items:center;gap:10px;padding:7px 12px 7px 16px;background:#23221e;color:#f6f4ef;font:13px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;box-shadow:0 1px 0 #0000004d}"
-      + "span{flex:1}button{font:inherit;font-size:12.5px;border-radius:6px;padding:3px 10px;cursor:pointer;border:1px solid #ffffff40;background:transparent;color:inherit}"
-      + "button.d{background:#7fb0d0;border-color:#7fb0d0;color:#0e1820;font-weight:500}button:focus-visible{outline:2px solid #7fb0d0;outline-offset:2px}"), row);
-    move.onclick = function () { var down = host.style.top === "0px"; host.style.top = down ? "auto" : "0px"; host.style.bottom = down ? "0px" : "auto"; move.textContent = down ? "Move up" : "Move down"; };
-    end.onclick = function () { report("done", null); done = true; };
-    D.documentElement.appendChild(host);
-  }
-  if (CFG.mode === "learn" && W.document) {
-    if (W.document.readyState === "loading") W.document.addEventListener("DOMContentLoaded", bar); else bar();
-  }
   return api;
 })
