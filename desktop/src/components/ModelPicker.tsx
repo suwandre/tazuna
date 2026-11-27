@@ -61,9 +61,9 @@ export function price(p: string): string {
 }
 
 /** What a row that cannot be picked needs, by the core's reason: a key, or a sign-in's state (core oauth.rs). */
-const NO_KEY: Record<string, string> = { "no key": "No key yet · add one in Settings", "not signed in": "Not signed in · sign in in Settings",
-  "plan use not allowed": "Plan use not allowed · allow it in Settings", "model list not loaded": "Its model list has not loaded yet",
-  "which key": "Same key as Mistral or Mistral Vibe · say which in Settings" };
+const NO_KEY: Record<string, string> = { "no key": "Add a key in Settings", "not signed in": "Sign in from Settings",
+  "plan use not allowed": "Allow plan use in Settings", "model list not loaded": "Its model list has not loaded yet",
+  "which key": "Say in Settings which key: Mistral or Mistral Vibe" };
 
 /** A row that cannot run, in a few words for its right-hand column: "not installed", never "on your plan" (design review 14). */
 const shortWhy = (why: string) => (/not installed/i.test(why) ? "not installed" : /not signed in/i.test(why) ? "not signed in" : why.split(/[:.·]/)[0].trim());
@@ -135,19 +135,25 @@ export function ModelPicker({ models, current, onPick, onClose, onKey, onRefresh
     const all = models?.choices ?? [], f = q.trim().toLowerCase();
     // the conversation's own row, first: the one the core marks, else (it marks none that cannot run) its model's, Claude's
     // where several providers have it
-    const same = () => { const name = modelLabel(current), s = all.filter((c) => c.model === current || modelLabel(c.model) === name); return s.find((c) => c.provider === "Claude") ?? s[0]; };
+    // where several providers have it (one that runs before one that needs a key)
+    const same = () => { const name = modelLabel(current), s = all.filter((c) => c.model === current || modelLabel(c.model) === name); return s.find((c) => c.provider === "Claude") ?? s.find((c) => !c.why_not) ?? s[0]; };
     const cur = all.find((c) => c.current) ?? (current ? same() : undefined);
     const found = (c: ModelChoice) => matchesWords(f, [modelLabel(c.model), c.label, c.model, c.place, c.provider].join(" "));
-    const rows = (f ? all.filter(found) : all.filter((c) => !c.why_not)).filter((c) => c !== cur);
+    // searching, the rows that run come first (stable: the core's order within each), and a provider's rows that cannot run
+    // form a group of their own after them all (Qwen4 Max on a signed-in plan sat under five keyless providers' rows; a
+    // provider with both, SubRouter's "not on your key", kept its disabled rows above the next provider's runnable ones)
+    const rows = (f ? all.filter(found).sort((a, b) => Number(!!a.why_not) - Number(!!b.why_not)) : all.filter((c) => !c.why_not)).filter((c) => c !== cur);
     const groups = new Map<string, ModelChoice[]>(cur && (!f || found(cur)) ? [["Current", [cur]]] : []);
-    for (const c of rows.slice(0, 300)) groups.set(c.provider, [...(groups.get(c.provider) ?? []), c]);
-    return { groups: [...groups], hidden: f ? Math.max(0, rows.length - 300) : all.length - rows.length - (cur ? 1 : 0) };
+    for (const c of rows.slice(0, 300)) { const k = c.why_not ? `${c.provider}\u0000off` : c.provider; groups.set(k, [...(groups.get(k) ?? []), c]); }
+    // (nothing typed: the runnable rows past 300 are counted too)
+    return { groups: [...groups], hidden: f ? Math.max(0, rows.length - 300) : all.length - rows.length - (cur ? 1 : 0) + Math.max(0, rows.length - 300) };
   }, [models, q, current]);
   // the score column only where a row has one (a "Score" header stood over an empty column, design review 12)
   const scored = groups.some(([, rows]) => rows.some((c) => c.bench));
   const query = q.trim().toLowerCase();
-  const catalogs = models?.catalogs?.filter(({ provider, state }) =>
-    state !== "ready" || seenPending.has(provider) || (!!query && (matchesWords(query, provider) || groups.some(([name]) => name === provider)))) ?? [];
+  // a list that is loading or failed, and one that became ready while the picker was open; not "Models ready" under every
+  // provider a search lists (two such lines took the room of the rows above them)
+  const catalogs = models?.catalogs?.filter(({ provider, state }) => state !== "ready" || seenPending.has(provider)) ?? [];
   return (
     <div ref={box} style={above ? { ...place.style, height: place.style.maxHeight } : place.style} onKeyDown={keys}
       className={`tz-pop absolute ${place.side} left-0 z-10 flex flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer`}>
@@ -171,14 +177,16 @@ export function ModelPicker({ models, current, onPick, onClose, onKey, onRefresh
           <span className="w-[112px] text-right" title="dollars per million tokens: input / output">$ per M, in / out</span></div>}
         {!models && <div className="px-3 py-2 text-[12.5px] text-faint">Loading…</div>}
         {models && query && groups.length === 0 && <div className="px-3 py-2 text-[12.5px] text-muted">No known models match this search.</div>}
-        {groups.map(([provider, rows]) => { const caution = models?.cautions?.[provider]; return (
-          <div key={provider}>
-            <div className="flex items-center px-3 pb-0.5 pt-2 text-[11.5px] font-medium text-faint">{provider === "Current" ? <>Current<Sep />{rows[0].provider}</> : provider}</div>
+        {groups.map(([key, rows], gi) => { const provider = key === "Current" ? key : rows[0].provider;
+          // its terms under its first group alone (a provider's rows that cannot run may follow as a second group)
+          const caution = groups.findIndex(([k, r]) => k !== "Current" && r[0].provider === provider) === gi ? models?.cautions?.[provider] : undefined; return (
+          <div key={key}>
+            <div className="flex items-center px-3 pb-0.5 pt-2.5 text-[13px] font-semibold text-muted">{provider === "Current" ? <>Current<Sep />{rows[0].provider}</> : provider}</div>
             {/* its terms once, under its name: in the warning colour only where the account may be at risk or it may refuse tazuna */}
             {caution?.note && <div className={`px-3 pb-0.5 text-[11.5px] ${caution.warn ? "text-warn" : "text-faint"}`}>{caution.note}</div>}
             {rows.map((c) => { const toKey = c.no_key && onKey; return (
               <button key={`${c.model}|${c.url}|${c.key_env}|${c.label}`} data-row disabled={!!c.why_not && !toKey} onClick={() => (toKey ? onKey(c.provider) : onPick(c))}
-                title={toKey ? (c.why_not === "not signed in" ? `Sign in to ${c.provider} in Settings` : `Add a ${c.provider} key in Settings`) : c.why_not ?? c.place}
+                title={toKey ? NO_KEY[c.why_not ?? ""] ?? NO_KEY["no key"] : c.why_not ?? c.place}
                 className="flex w-full items-center gap-2 px-3 py-[5px] text-left outline-offset-[-2px] hover:bg-hover focus-visible:bg-hover disabled:cursor-default disabled:hover:bg-transparent">
                 <span className="w-3.5 flex-none text-accent">{c.current && <Check size={14} strokeWidth={1.75} />}</span>
                 <span className="min-w-0 flex-1">
@@ -206,7 +214,7 @@ export function ModelPicker({ models, current, onPick, onClose, onKey, onRefresh
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5 text-[11.5px] font-medium text-ink">
                     <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${tone}`} />
-                    <span>{provider} · {label}</span>
+                    <span>{provider}</span><span className="font-normal text-muted">{label}</span>
                   </div>
                   {detail && <p className="ml-3 mt-0.5 text-[11.5px] text-muted">{detail}</p>}
                 </div>

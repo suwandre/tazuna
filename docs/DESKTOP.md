@@ -793,6 +793,13 @@ inference usage); "No usage data found yet" after a visit without any; every usa
 ignores a second click, ending on the core's exit or after 20 s; the method picker keeps the last click; Qwen's CLI that
 does not show the plan offers the console; provider statuses start with a capital.
 
+0.1.136: the model picker's search lists the models that run first, and a provider's models that cannot run come after
+them all as a group of their own (Qwen4 Max on a signed-in plan sat under five keyless providers); provider names at the
+rows' size; "Models ready" only for a list that loaded while the picker was open; row hints without middle dots ("Add a
+key in Settings"). The Changes section's branch wraps instead of being cut. The console reader's learn file keeps every
+different answer of one address (Qwen's console sends all its calls to one, and kept only the last: an order list, not
+the usage), at most 32 per address, the answers without usage-like fields going first when it is full.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

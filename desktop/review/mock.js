@@ -285,6 +285,8 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
         c({ model: "codestral-2508", label: "codestral-2508 · mistral", place: "api.mistral.ai", provider: "Mistral Vibe", price: "plan", url: "https://api.mistral.ai/v1", key_env: "MISTRAL_VIBE_API_KEY" }),
         c({ model: "mistral-large-3", label: "mistral-large-3 · mistral", place: "api.mistral.ai", provider: "Mistral Vibe", price: "plan", url: "https://api.mistral.ai/v1", key_env: "MISTRAL_VIBE_API_KEY", bench: "7.8 (12)" }),
         c({ model: "agy/gemini-4-hydrogen", label: "gemini-4-hydrogen · agy", place: "OmniRoute · agy", provider: "OmniRoute", price: "plan" }),
+        // a keyless provider's row of the same model before it, as the core lists them (the search puts the runnable one first)
+        { model: "qwen3.8-max", provider: "Alibaba Model Studio", price: "1.5 / 4.5", why_not: "no key: /login, or set the environment variable DASHSCOPE_API_KEY before starting tazuna", no_key: true },
         c({ model: "qwen3.8-max", label: "qwen3.8-max · qwen cloud", place: "token-plan.maas.qwencloudapi.com", provider: "Qwen Cloud Token Plan", price: "plan", url: "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1", key_env: "QWENCLOUD_TOKEN_PLAN_API_KEY" }),
         // rows that cannot be picked come compact (core 0.1.196): no key yet, or a host not trusted
         { model: "or/qwen-4-coder", label: "qwen-4-coder · openrouter", provider: "OpenRouter", price: "0.2 / 0.8", why_not: "no key: /login, or set the environment variable OPENROUTER_API_KEY before starting tazuna", no_key: true },

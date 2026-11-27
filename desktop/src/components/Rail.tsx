@@ -72,7 +72,7 @@ export function ChangesSection() {
     <Section icon={<GitBranch size={14} strokeWidth={1.5} className={ico} />} title="Changes"
       // a side with nothing is left out: never "+3 −0" (design review 12)
       right={added || removed ? <Counts added={added} removed={removed} /> : undefined}>
-      {w.branch && <div className="mb-1 truncate font-mono text-[12px] text-muted" title={`${w.branch}${w.base ? ` → ${w.base}` : ""}`} data-tip-clip>{w.branch}{w.base ? ` → ${w.base}` : ""}</div>}
+      {w.branch && <div className="mb-1 font-mono text-[12px] text-muted [overflow-wrap:anywhere]">{w.branch}{w.base ? ` → ${w.base}` : ""}</div>}
       {w.files.length === 0 ? <div className="py-0.5 text-[12.5px] text-muted">Nothing changed in this conversation yet.</div> : <>
         {shown.map((f) => {
           const [file, dir] = name(f.path);

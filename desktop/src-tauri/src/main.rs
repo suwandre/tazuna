@@ -1079,11 +1079,24 @@ fn write_atomic(path: &std::path::Path, v: &serde_json::Value) -> Result<(), Str
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
-/// The learn file with one more response: one entry per method and path (the newest), the usage page where the most
-/// usage-like fields appeared (a chat page that mentions a plan does not replace /usage), 1 MB at most (the oldest go first).
+/// The learn file with one more response: one entry per method, path and shape (the newest; a console that sends every
+/// call to one address, as Qwen's /data/api.json, kept only its last answer, an order list, and lost the usage), at most
+/// 32 shapes of one address, the usage page where the most usage-like fields appeared (a chat page that mentions a plan
+/// does not replace /usage), 200 entries and 1 MB as written at most. Over a limit the oldest entry without usage-like
+/// fields goes first, then the oldest: the usage answer comes on the first page, so it is the oldest, and a visit that
+/// clicks on through orders and keys must not push it out.
 fn merge_learn(mut old: serde_json::Value, entry: serde_json::Value, now: u64) -> serde_json::Value {
     let mut list: Vec<serde_json::Value> = old["responses"].as_array().cloned().unwrap_or_default();
-    list.retain(|e| !(e["path"] == entry["path"] && e["method"] == entry["method"]));
+    let same = |e: &serde_json::Value| e["path"] == entry["path"] && e["method"] == entry["method"];
+    list.retain(|e| !(same(e) && e["shape"] == entry["shape"]));
+    let drop_one = |list: &mut Vec<serde_json::Value>, of: &dyn Fn(&serde_json::Value) -> bool| {
+        if let Some(i) = list.iter().position(|e| of(e) && e["usage"] != true).or_else(|| list.iter().position(|e| of(e))) {
+            list.remove(i);
+        }
+    };
+    while list.iter().filter(|e| same(e)).count() >= 32 {
+        drop_one(&mut list, &same);
+    }
     if entry["page"].is_string() {
         let mut keys = vec![];
         usage_keys(&entry["shape"], &mut keys);
@@ -1093,8 +1106,9 @@ fn merge_learn(mut old: serde_json::Value, entry: serde_json::Value, now: u64) -
         }
     }
     list.push(entry);
-    while list.len() > 1 && (list.len() > 200 || serde_json::to_string(&list).map_or(0, |s| s.len()) > 1 << 20) {
-        list.remove(0);
+    // (measured as written_atomic writes it, pretty: some 2x the compact size)
+    while list.len() > 1 && (list.len() > 200 || serde_json::to_vec_pretty(&list).map_or(0, |s| s.len()) > 1 << 20) {
+        drop_one(&mut list, &|_| true);
     }
     serde_json::json!({"at": now, "page": old["page"], "page_fields": old["page_fields"], "responses": list})
 }
@@ -1803,6 +1817,20 @@ mod tests {
         let l = super::merge_learn(l, json!({"path": "/api/chat", "method": "GET", "status": 200, "usage": true, "shape": {"planName": "string"}, "page": "https://home.qwencloud.com/chat/:id"}), 12);
         assert_eq!((l["responses"].as_array().unwrap().len(), &l["page"], &l["at"]), (3, &json!("https://home.qwencloud.com/usage"), &json!(12)));
         assert_eq!(super::learned_summary(&l), json!({"page": "/usage", "fields": 4, "at": 12}));
+        // one address, two answers (Qwen's /data/api.json): both kept; the same answer again stays one
+        let gw = |shape: serde_json::Value| json!({"path": "/data/api.json?product&action", "method": "POST", "status": 200, "usage": true, "shape": shape});
+        let g = super::merge_learn(json!(null), gw(json!({"data": {"Remain": "number"}})), 1);
+        let g = super::merge_learn(g, gw(json!({"data": {"Orders": ["string"]}})), 2);
+        let g = super::merge_learn(g, gw(json!({"data": {"Orders": ["string"]}})), 3);
+        assert_eq!(g["responses"].as_array().unwrap().len(), 2);
+        // a visit that clicks on through many answers of that address: 32 at most, and the usage answer stays
+        let g = (0..60).fold(g, |l, i| super::merge_learn(l, json!({"path": "/data/api.json?product&action", "method": "POST", "status": 200, "usage": false, "shape": {"data": {format!("F{i}"): "string"}}}), 10 + i));
+        let r = g["responses"].as_array().unwrap();
+        assert_eq!((r.len(), r.iter().filter(|e| e["shape"] == json!({"data": {"Remain": "number"}})).count()), (32, 1));
+        // and over 200 entries the paths without usage go first
+        let g = (0..250).fold(g, |l, i| super::merge_learn(l, json!({"path": format!("/q{i}"), "method": "GET", "usage": false, "shape": {}}), 100 + i));
+        let r = g["responses"].as_array().unwrap();
+        assert_eq!((r.len(), r.iter().filter(|e| e["usage"] == true).count()), (200, 2));
         // the window's title: what it does, then what this visit found
         assert_eq!(super::learn_title("Mistral Vibe", 0), "Mistral Vibe: learning this page's usage data");
         assert_eq!(super::learn_title("Mistral Vibe", 3), "Mistral Vibe: found usage data (3 fields), close when done");

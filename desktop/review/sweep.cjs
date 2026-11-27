@@ -1062,8 +1062,14 @@ const log = [];
       const [c2, q] = await ctxOf({ theme });
       await step(q, `${T}-picker-current`, async () => {
         await q.locator("button[aria-haspopup=dialog]").filter({ hasText: "Opus" }).first().click(); await q.waitForTimeout(600);
-        const heads = await q.locator("input[aria-label='Search models and providers']").locator("xpath=ancestor::div[contains(@class,'tz-pop')]").locator("div.font-medium").allInnerTexts();
+        const heads = await q.locator("input[aria-label='Search models and providers']").locator("xpath=ancestor::div[contains(@class,'tz-pop')]").locator("div.font-semibold").allInnerTexts();
         ok(/^Current/.test(heads[0] ?? ""), `the picker's first group: ${heads.slice(0, 3)}`);
+      });
+      // searching, the provider whose row runs comes before a keyless one listed first (the user's Qwen4 Max under five)
+      await step(q, `${T}-picker-search-order`, async () => {
+        await q.keyboard.type("qwen3.8"); await q.waitForTimeout(300);
+        const heads = await q.locator("input[aria-label='Search models and providers']").locator("xpath=ancestor::div[contains(@class,'tz-pop')]").locator("div.font-semibold").allInnerTexts();
+        ok(heads[0] === "Qwen Cloud Token Plan" && heads.includes("Alibaba Model Studio"), `the search's groups: ${heads.slice(0, 4)}`);
       });
       await c2.close();
     }
@@ -1468,7 +1474,7 @@ const log = [];
     await step(p, `${T}-providers-search-quiet`, async () => { await p.getByLabel("Search providers").fill("opencode"); });
     await esc(p);
     await step(p, `${T}-picker-no-key`, async () => { await p.getByTitle("Model and effort").click(); await p.keyboard.type("cerebras"); });
-    await step(p, `${T}-picker-no-key-settings`, async () => { await p.getByText("No key yet · add one in Settings").first().click(); await p.waitForTimeout(600); });
+    await step(p, `${T}-picker-no-key-settings`, async () => { await p.getByText("Add a key in Settings").first().click(); await p.waitForTimeout(600); });
     log.push(`${theme} no key to Settings: focus on ${await p.evaluate(() => document.activeElement?.getAttribute("aria-label"))} (Cerebras key wanted)`);
     await esc(p); await esc(p);
     await step(p, `${T}-picker-caution`, async () => { await p.getByTitle("Model and effort").click(); await p.keyboard.type("glm"); });
@@ -1477,7 +1483,7 @@ const log = [];
     // another app's identity asks once, with its warning; its code to type; ChatGPT's own flow, its welcome once, then
     // signed in under Yours and its models in the picker
     await step(p, `${T}-picker-sign-in`, async () => { await p.getByTitle("Model and effort").click(); await p.keyboard.type("copilot"); });
-    await step(p, `${T}-sign-in-from-picker`, async () => { await p.getByText("Not signed in · sign in in Settings").first().click(); await p.waitForTimeout(600); });
+    await step(p, `${T}-sign-in-from-picker`, async () => { await p.getByText("Sign in from Settings").first().click(); await p.waitForTimeout(600); });
     log.push(`${theme} not signed in to Settings: focus on ${await p.evaluate(() => document.activeElement?.dataset.signIn)} (GitHub Copilot wanted)`);
     await step(p, `${T}-sign-in-warning`, async () => { await p.locator('[data-sign-in="GitHub Copilot"]').click(); });
     await step(p, `${T}-sign-in-code`, async () => { await p.getByRole("button", { name: "I understand, sign in" }).click(); await p.waitForTimeout(300); });
