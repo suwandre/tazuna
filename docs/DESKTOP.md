@@ -558,7 +558,7 @@ reviews on test data missed):
 - One conversation across a model switch and a Retry: the new model gets the conversation so far, the list shows one row,
   "continued on X" marks the switch; Retry runs the failed turn again without a second copy of the question.
 - A reopened conversation keeps its change cards; edit approvals show the change; the work panel never opens or closes by
-  itself (its tab counts the changes as they land), so the answer never moves sideways under the reader.
+  itself (its button counts the changes as they land), so the answer never moves sideways under the reader.
 - Answers: strikethrough, rules, setext headings, task lists, line breaks inside a paragraph, inline math by pandoc's rule
   (money stays money, code and shell variables stay text), tables whose code cells wrap.
 - Messages sent during a reply wait in the window and go one at a time; Stop gives them back to the box. A rate-limited
@@ -809,6 +809,9 @@ can be dragged anywhere and come back there; they wait while the pointer is on t
 
 0.1.138: the work panel's last card, Your messages, grows into the room left below the others (an empty band sat under
 a list cut at nine rows); it scrolls inside, and keeps up to nine rows when the cards fill the panel.
+
+0.1.139: one switch for the work panel: the header's panel button counts the files changed beside its icon, and the
+"Changes" tab on the sheet's edge, which opened the same panel, is gone.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

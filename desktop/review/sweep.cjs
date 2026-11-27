@@ -1687,8 +1687,8 @@ const log = [];
     await step(p, `${T}-receipt-mixed`, async () => { await p.getByTitle(/^The receipt/).nth(1).click(); await p.waitForTimeout(500); await p.mouse.move(640, 400); await p.mouse.wheel(0, 9000); });
     await step(p, `${T}-receipt-chat`, async () => { await toBar(p); await p.getByTitle(/^This conversation's receipt/).click(); }); await esc(p);
     await step(p, `${T}-panel-tab`, async () => { await p.mouse.move(640, 400); await p.mouse.wheel(0, -9000); });
-    await step(p, `${T}-panel-open`, async () => { await p.getByTitle(/^The work panel: changes/).click(); await p.waitForTimeout(500); });
-    const col = () => p.evaluate(() => `${document.querySelector('[style*="grid-template-columns"]').style.gridTemplateColumns.split(" ").pop()} column, ${document.querySelectorAll('button[aria-label^="The work panel"]').length} tab`);
+    await step(p, `${T}-panel-open`, async () => { await p.getByTitle(/^Open the work panel/).click(); await p.waitForTimeout(500); });
+    const col = () => p.evaluate(() => `${document.querySelector('[style*="grid-template-columns"]').style.gridTemplateColumns.split(" ").pop()} column, ${document.querySelectorAll('button[aria-label*="the work panel"]').length} switch`);
     log.push(`${theme} panel opened by its tab: ${await col()} (0px, 1 tab wanted: at 1280 it opens over the conversation, design review 12)`);
     await step(p, `${T}-receipt-paid`, async () => { await open(p, "Speed up the CI build"); await p.waitForTimeout(300); await p.getByTitle(/^The receipt/).first().click(); await p.waitForTimeout(500); });
     log.push(`${theme} then another empty project conversation: ${await col()} (0px, 1 tab wanted)`);
@@ -1713,7 +1713,7 @@ const log = [];
     // gh answers with an error (not installed, no remote): nothing to show, so the tab, not an empty panel
     const [ctx3, r] = await ctxOf({ theme, extra: "window.__PR_ERROR__ = true;" });
     await step(r, `${T}-pr-error-tab`, async () => { await open(r, "Why is the CI build"); });
-    log.push(`${theme} gh's error: ${await r.evaluate(() => `${document.querySelector('[style*="grid-template-columns"]').style.gridTemplateColumns.split(" ").pop()} column, ${document.querySelectorAll('button[aria-label^="The work panel"]').length} tab`)} (0px, 1 tab wanted)`);
+    log.push(`${theme} gh's error: ${await r.evaluate(() => `${document.querySelector('[style*="grid-template-columns"]').style.gridTemplateColumns.split(" ").pop()} column, ${document.querySelectorAll('button[aria-label*="the work panel"]').length} switch`)} (0px, 1 tab wanted)`);
     await ctx3.close();
   }
   { const [ctx, p] = await ctxOf({ w: 760, h: 640 });

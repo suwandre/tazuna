@@ -171,16 +171,16 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 ## Layout
 - Three columns: sidebar 248 px, main (header, transcript, composer), the work panel (300 px at first). The work panel never opens
   or closes by itself: opening at a turn's end moved the reading column under the reader, and Undo moved it back (design
-  review 12). In a project it stays folded, a small tab on the sheet's right edge that counts the files changed so far,
-  live while a reply edits ("Changes 2"; "Changes" alone at none, never "Changes 0"); the tab, ⌘\ and the header's button open it, for the conversation they are
-  pressed in (one choice for the whole window put the panel into plain chats), and closing it brings the tab back. A
-  plain chat has no tab. Open, it lies on the desk beside the sheet and the reading column is centred in what is left,
+  review 12). In a project it stays folded; the header's panel button counts the files changed so far beside its icon,
+  live while a reply edits (the icon alone at none, never "0"). That button and ⌘\ open it, for the conversation they are
+  pressed in (one choice for the whole window put the panel into plain chats). One control: a "Changes" tab on the sheet's
+  right edge did the same until desktop 0.1.139 (the user: it opened the panel whose button sat just above it). Open, it lies on the desk beside the sheet and the reading column is centred in what is left,
   gliding there with the panel's slide (its place and the sheet's width move together, the grid's 180 ms; under reduced
   motion it snaps), and back when it shuts: kept at its left edge (design review 12, B3 of `mockups/v9.html`) the text sat
   skewed right, about 340 px of sheet on its left and 40 on its right (design review 14). At 1440 the text keeps its 700 px, 92 px
   of sheet each side of it at 300. Where the sheet beside a 300 px panel would be under 816 px (a window under 1372 px with
-  the sidebar, any without it) the panel opens over the conversation instead, on a sheet of its own under its tab (the `pop`
-  elevation; Esc, a click outside, the tab, its button or ⌘\ shut it; focus goes into it and back to what opened it) and
+  the sidebar, any without it) the panel opens over the conversation instead, on a sheet of its own (the `pop`
+  elevation; Esc, a click outside, its button or ⌘\ shut it; focus goes into it and back to what opened it) and
   nothing under it moves (design review 12, B2 of `mockups/v9.html`). Beside or over is the window's choice, never the
   width's: a width that decided it would throw the panel onto the conversation in the middle of a drag. A reply being
   followed is still followed while the column moves. Esc shuts the innermost thing first: a menu or dialog, then the panel

@@ -1,5 +1,5 @@
 import { Fragment, createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ChevronDown, GitBranch, LoaderCircle, MessagesSquare, PanelLeft, PanelRight } from "lucide-react";
+import { ChevronDown, LoaderCircle, MessagesSquare, PanelLeft, PanelRight } from "lucide-react";
 import { AgentPanel } from "./components/AgentPanel";
 import { Approval } from "./components/Approval";
 import { Composer, DRAFT, MODES, PICK_MODEL, draftFiles, saveDraftFiles, type Completions } from "./components/Composer";
@@ -1116,6 +1116,7 @@ export default function App() {
               branch: session.branch, changed: session.changed, review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined,
               side: inTauri && view?.session_id ? () => (side ? closeSide(active) : openSide(active)) : undefined, sideOpen: !!side,
               pr: pr ? prChip(pr) : null, openPr: () => setShowPr(true), cost: usage.threadCost, panelOpen: panelOpen && !side && !agentHere, togglePanel: side || agentHere ? undefined : togglePanel,
+              files: changes,
               openIn: folder && openApps.length ? { path: folder, apps: openApps } : undefined }}>
               <Slot name="header.actions" props={{ data, folder }} />
             </HeaderCtx.Provider>
@@ -1140,11 +1141,6 @@ export default function App() {
           onDiff={inTauri ? (turn, path) => setReviewing({ scope: "turn", turn, path }) : undefined} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={inTauri ? (turn) => core.undo(turn) : undefined}
           onStop={inTauri ? stop : undefined} onChangeModel={inTauri ? () => { stop(); chooseModel(); } : undefined} />}
         </div>
-        {inTauri && col.tab && !side && !agentHere && !reviewing && !fresh && !failed && (
-          <button data-panel onClick={togglePanel} aria-expanded={panelOpen} aria-label={`The work panel: ${changes} file${changes === 1 ? "" : "s"} changed`} title={`The work panel: changes, checks, the pull request (${keysOf("⌘\\")})`}
-            className={`tz-enter absolute right-[var(--tz-sbw,0px)] top-[calc(40*var(--tz-pt)+13px)] z-[2] flex items-center gap-1.5 rounded-l-[7px] border border-r-0 border-line py-1 pl-2 pr-[9px] text-[12px] hover:text-ink ${panelOpen ? "bg-hover text-ink" : "bg-desk text-muted"}`}>
-            <GitBranch size={13} strokeWidth={1.5} aria-hidden="true" />Changes{changes > 0 && <span className="font-medium tabular-nums text-ink-2">{changes}</span>}</button>
-        )}
         {diff && <DiffView diff={diff} onClose={() => setDiff(null)} />}
         {reviewing && <ReviewView start={reviewing} turns={(view?.changes ?? []).filter((c) => !c.undone).map((c) => c.turn)}
           onClose={() => setReviewing(null)} onSend={(text) => say(text)} />}
@@ -1318,6 +1314,8 @@ const titleOf = (first?: string) => shortTitle(first) || "New conversation";
 /** The header's built-in chips read this (and a plugin replacing one can too). */
 export const HeaderCtx = createContext<{ modelLabel: string; effort: string; branch: string; changed: number; review?: () => void; side?: () => void; sideOpen?: boolean;
   pr?: string | null; openPr?: () => void; cost?: number; panelOpen?: boolean; togglePanel?: (e?: { currentTarget: EventTarget | null }) => void;
+  /** the files this conversation changed, counted on the work panel's switch */
+  files?: number;
   /** a project conversation: its folder and the apps it opens in ("files", "terminal", editors) */
   openIn?: { path: string; apps: string[] } }>({ modelLabel: "", effort: "", branch: "", changed: 0 });
 
@@ -1372,10 +1370,15 @@ function CostChip() {
   // nothing until there is a cost (a new chat showed $0.000)
   return h.cost ? <button onClick={openUsage} title={`This conversation's cost · Usage (${keysOf("⌘⇧U")})`} className="rounded-md px-2 py-1 text-[12.5px] tabular-nums text-muted hover:text-ink">{usd(h.cost)}</button> : null;
 }
+/** The work panel's switch, with the files this conversation changed beside it as they land (the panel never opens by
+ * itself). One control: a "Changes" tab on the sheet's edge did the same until desktop 0.1.139 (the user, 2026-11-27: "it
+ * opens the entire sidebar, which has the icon just above it already"). */
 function PanelChip() {
-  const h = useContext(HeaderCtx);
-  return h.togglePanel ? <button data-panel onClick={h.togglePanel} aria-pressed={h.panelOpen} title={`${h.panelOpen ? "Close" : "Open"} the work panel (${keysOf("⌘\\")})`}
-    className={`grid size-7 place-items-center rounded-md ${h.panelOpen ? "bg-field text-ink" : "text-muted hover:text-ink"}`}><PanelRight size={16} strokeWidth={1.5} /></button> : null;
+  const h = useContext(HeaderCtx), n = h.files ?? 0;
+  const what = `${h.panelOpen ? "Close" : "Open"} the work panel${n ? `: ${n} file${n === 1 ? "" : "s"} changed` : ""}`;
+  return h.togglePanel ? <button data-panel onClick={h.togglePanel} aria-pressed={h.panelOpen} aria-label={what} title={`${what} (${keysOf("⌘\\")})`}
+    className={`flex h-7 min-w-7 items-center justify-center gap-1 rounded-md px-1.5 ${h.panelOpen ? "bg-field text-ink" : "text-muted hover:text-ink"}`}><PanelRight size={16} strokeWidth={1.5} />
+    {n > 0 && <span className="text-[12px] font-medium tabular-nums text-ink-2">{n}</span>}</button> : null;
 }
 // the cost moved to the status bar (desktop 0.1.71): CostChip stays exported for a plugin that wants it in the header
 slots.register({ id: "header.panel", slot: "header.actions", order: 50, source: "tazuna", render: PanelChip });
