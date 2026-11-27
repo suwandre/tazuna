@@ -992,10 +992,11 @@ fn list_file(l: &Login) -> String {
 }
 
 /// models.dev's catalog (MIT), trimmed: `trim_modelsdev`'s lines for the providers in LOGINS. The built-in copy is the data
-/// folder's modelsdev.tsv as a release found it (`gzip -9n < ~/.local/share/tazuna/modelsdev.tsv > src/modelsdev.tsv.gz`);
-/// the data folder's is renewed at most once a day (`refresh_modelsdev`).
+/// folder's modelsdev2.tsv as a release found it (`gzip -9n < ~/.local/share/tazuna/modelsdev2.tsv > src/modelsdev.tsv.gz`);
+/// the data folder's is renewed at most once a day (`refresh_modelsdev`). modelsdev2: the window column (2026-11-27), in a
+/// file of its own, since a tazuna before it reads only lines of five columns and would have lost every models.dev row.
 const MODELSDEV_URL: &str = "https://models.dev/api.json";
-const MODELSDEV: &str = "modelsdev.tsv";
+const MODELSDEV: &str = "modelsdev2.tsv";
 const MODELSDEV_BUILTIN: &[u8] = include_bytes!("modelsdev.tsv.gz");
 
 /// A gzip file's deflate data (RFC 1952: the header and its optional fields skipped).
@@ -1059,6 +1060,7 @@ struct MdModel {
     reasoning_options: Value,
     modalities: Value,
     cost: Value,
+    limit: Value,
 }
 
 /// models.dev's api.json, read from `r` as it comes: for each provider in LOGINS its lines (`model_lines`), made as soon as
@@ -1100,7 +1102,9 @@ fn modelsdev_providers(r: &mut dyn std::io::Read) -> Option<std::collections::Ha
 
 /// A provider's models as `trim_modelsdev` lines: each chat model that calls tools (Claude left out: it runs through the
 /// claude CLI), with its input, output and cached-input price per M (empty where none is listed, or below 0 or above
-/// $1,000: not a price) and its effort levels ("*": it reasons, levels not named).
+/// $1,000: not a price), its effort levels ("*": it reasons, levels not named) and its window in tokens: `limit.input` with
+/// an "i" after it where listed (input alone; the output has its own budget), else `limit.context` (input and output
+/// together); empty where neither is.
 fn model_lines(ms: &std::collections::BTreeMap<String, MdModel>) -> String {
     let mut out = String::new();
     for (m, v) in ms {
@@ -1112,7 +1116,12 @@ fn model_lines(ms: &std::collections::BTreeMap<String, MdModel>) -> String {
         let named: Vec<&str> = v.reasoning_options.as_array().into_iter().flatten().filter(|o| o["type"] == "effort")
             .flat_map(|o| o["values"].as_array().into_iter().flatten().filter_map(Value::as_str)).collect();
         let levels = if !named.is_empty() { named.join(" ") } else if v.reasoning == true { "*".into() } else { String::new() };
-        out.push_str(&format!("{m}\t{}\t{}\t{}\t{levels}\n", n("input"), n("output"), n("cache_read")));
+        let window = match (v.limit["input"].as_u64().filter(|w| *w > 0), v.limit["context"].as_u64().filter(|w| *w > 0)) {
+            (Some(i), _) => format!("{i}i"),
+            (None, Some(c)) => c.to_string(),
+            _ => String::new(),
+        };
+        out.push_str(&format!("{m}\t{}\t{}\t{}\t{levels}\t{window}\n", n("input"), n("output"), n("cache_read")));
     }
     out
 }
@@ -1203,8 +1212,9 @@ fn refresh_modelsdev_at(url: &str, dir: &Path) {
             let Some(t) = t else { return };
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
             let tmp = dir.join(format!("{MODELSDEV}.tmp"));
-            if std::fs::write(&tmp, format!("#etag {tag}\n#at {now}\n{t}")).is_ok() {
-                let _ = std::fs::rename(&tmp, &path);
+            if std::fs::write(&tmp, format!("#etag {tag}\n#at {now}\n{t}")).is_ok() && std::fs::rename(&tmp, &path).is_ok() {
+                // the five-column copy before modelsdev2 (an older tazuna fetches its own again if it still runs)
+                let _ = std::fs::remove_file(dir.join("modelsdev.tsv"));
             }
         }
         _ => {}
@@ -1345,7 +1355,7 @@ fn modelsdev_choices(tsv: &str, file: &Value, trusted: &impl Fn(&str) -> bool) -
             at = LOGINS.iter().filter(|l| matches!(l.source, Source::ModelsDev(m) if m == id)).collect();
             continue;
         }
-        let [id, input, output, cached, levels] = line.split('\t').collect::<Vec<_>>()[..] else { continue };
+        let [id, input, output, cached, levels, ..] = line.split('\t').collect::<Vec<_>>()[..] else { continue };
         let n = |x: &str| x.parse::<f64>().ok().filter(|x| price_ok(*x));
         // 0 / 0 is no price listed (a gateway's router, Kilo's openrouter/auto, NanoGPT's auto-model, bills the model it
         // picks), unless the id says free; a plan's rows are "plan" whatever is listed
@@ -1385,6 +1395,69 @@ fn list_choices(l: &Login, list: &Value, md: &str, file: &Value, trusted: &impl 
         // chat models only: a plan's list also holds image, video and voice models (Qwen Cloud's: wan3.0-video, qwen-audio-…)
         .filter(|id| { let id = id.to_lowercase(); !["claude", "embed", "image", "video", "audio", "tts", "asr", "realtime", "rerank", "t2v", "i2v", "r2v"].iter().any(|w| id.contains(w)) })
         .map(|id| login_row(l, id, l.price, levels(id), file, trusted)).collect()
+}
+
+/// A model's input window in tokens, for the own loop's share of it and auto-compaction: models.dev's for the provider at
+/// `url` (its own section), else the entry in the provider's model list as tazuna keeps it (OpenRouter, Kenari, OmniRoute,
+/// Mortera, CheaperInference and the `Source::List` providers), else the largest models.dev lists for the id anywhere (a
+/// small one would compact early: OpenRouter's llama-3.3-70b read 12,288 from another provider's section against its
+/// 131,072, review of 2026-11-27); None for a server on this machine (its own setting decides) or where none is listed.
+pub fn context_window(url: &str, model: &str) -> Option<(u64, bool)> {
+    let url = url.trim_end_matches('/');
+    let host = url.split("://").nth(1).unwrap_or(url);
+    if local_server(url) || ["localhost", "127.", "[::1]", "0.0.0.0"].iter().any(|h| host.starts_with(h)) {
+        return None;
+    }
+    let dir = crate::labels::dir().ok();
+    let own = LOGINS.iter().find_map(|l| match l.source { Source::ModelsDev(id) if l.url == url => Some(id), _ => None });
+    let (mine, largest) = window_in(&modelsdev_tsv(dir.as_deref()), own, model);
+    let kept = || {
+        let list: Value = serde_json::from_str(&std::fs::read_to_string(dir.as_ref()?.join(kept_list(url)?)).ok()?).ok()?;
+        list["data"].as_array()?.iter().find(|m| m["id"] == model).and_then(listed_window)
+    };
+    mine.or_else(kept).or(largest)
+}
+
+/// The window models.dev gives `model` in the section `own`, and the largest it gives it in any section; each with whether
+/// it counts input alone.
+fn window_in(tsv: &str, own: Option<&str>, model: &str) -> (Option<(u64, bool)>, Option<(u64, bool)>) {
+    let (mut section, mut mine, mut largest) = ("", None, None::<(u64, bool)>);
+    for line in tsv.lines() {
+        if let Some(s) = line.strip_prefix('=') {
+            section = s;
+            continue;
+        }
+        let f: Vec<&str> = line.split('\t').collect();
+        let Some(w) = f.get(5).filter(|_| f[0] == model).and_then(|w| Some((w.trim_end_matches('i').parse::<u64>().ok()?, w.ends_with('i')))) else { continue };
+        if Some(section) == own {
+            mine = Some(w);
+        }
+        if largest.is_none_or(|l| w.0 > l.0) {
+            largest = Some(w);
+        }
+    }
+    (mine, largest)
+}
+
+/// The model's window from a provider's model list entry, and whether it counts input alone: an input cap where one is
+/// named (`max_input_tokens`: OmniRoute, Anthropic), else a whole context: OpenRouter's `context_length` (and its top
+/// provider's), others' `context_window`, Mistral's `max_context_length`, vLLM's `max_model_len`.
+pub fn listed_window(m: &Value) -> Option<(u64, bool)> {
+    if let Some(n) = m["max_input_tokens"].as_u64().filter(|n| *n > 0) {
+        return Some((n, true));
+    }
+    [&m["context_length"], &m["top_provider"]["context_length"], &m["context_window"], &m["max_context_length"], &m["max_model_len"]]
+        .iter().find_map(|v| v.as_u64().filter(|n| *n > 0)).map(|n| (n, false))
+}
+
+/// Where tazuna keeps the model list of the provider at `url` in the data folder (`refresh_openrouter`,
+/// `refresh_omniroute`, `refresh_lists`); None for one it keeps none of.
+fn kept_list(url: &str) -> Option<String> {
+    if let Some((_, name)) = keyed_lists().find(|(l, _)| l.url == url) {
+        return Some(name);
+    }
+    [("https://openrouter.ai/api/v1", "openrouter-models.json"), ("https://kenari.id/v1", "kenari-models.json"), (OMNIROUTE, "omniroute-models.json")]
+        .iter().find(|(u, _)| *u == url).map(|(_, n)| n.to_string())
 }
 
 /// The API a provider's models all take ("chat", "responses", "messages"), by its URL; None: by the model's name.
@@ -2301,8 +2374,8 @@ mod tests {
         }
         all["deepseek"]["models"] = serde_json::json!({
             "deepseek-flash": {"tool_call": true, "reasoning": true, "reasoning_options": [{"type": "toggle"}, {"type": "effort", "values": ["low", "high", "max"]}],
-                "modalities": {"output": ["text"]}, "cost": {"input": 0.15, "output": 0.6, "cache_read": 0.003}},
-            "thinker": {"tool_call": true, "reasoning": true, "cost": {"input": 0, "output": 0}},
+                "modalities": {"output": ["text"]}, "cost": {"input": 0.15, "output": 0.6, "cache_read": 0.003}, "limit": {"context": 1_000_000, "output": 384_000}},
+            "thinker": {"tool_call": true, "reasoning": true, "cost": {"input": 0, "output": 0}, "limit": {"context": 400_000, "input": 272_000}},
             "thinker:free": {"tool_call": true, "reasoning": true, "cost": {"input": 0, "output": 0}},
             "minus": {"tool_call": true, "cost": {"input": -1, "output": -1}},
             "absurd": {"tool_call": true, "cost": {"input": 5000, "output": 2}},
@@ -2315,8 +2388,23 @@ mod tests {
         all["opencode"]["models"]["glm-5-free"] = serde_json::json!({"tool_call": true, "cost": {"input": 0, "output": 0}});
         all.insert("not-listed".into(), serde_json::json!({"models": {"x": {"tool_call": true}}}));
         let tsv = trim_modelsdev(&mut Value::Object(all).to_string().as_bytes()).expect("a models.dev file");
-        assert!(tsv.contains("=deepseek\nabsurd\t\t2\t\t\ndeepseek-flash\t0.15\t0.6\t0.003\tlow high max\nminus\t\t\t\t\nno-price\t\t\t\t\nthinker\t0\t0\t\t*\nthinker:free\t0\t0\t\t*\n=moonshotai\nplain\t1\t2\t\t\n"),
+        // the last column: the input window (`limit.input` where listed, else `limit.context`)
+        assert!(tsv.contains("=deepseek\nabsurd\t\t2\t\t\t\ndeepseek-flash\t0.15\t0.6\t0.003\tlow high max\t1000000\nminus\t\t\t\t\t\nno-price\t\t\t\t\t\nthinker\t0\t0\t\t*\t272000i\nthinker:free\t0\t0\t\t*\t\n=moonshotai\nplain\t1\t2\t\t\t\n"),
                 "below 0 or above $1,000 is no price: {tsv}");
+        // the window: the provider's own section's, and the largest any section gives (never the first one found: sections
+        // disagree, OpenRouter's llama-3.3-70b read 12,288 from another's); none for a server on this machine
+        assert_eq!(window_in(&tsv, Some("deepseek"), "deepseek-flash"), (Some((1_000_000, false)), Some((1_000_000, false))));
+        assert_eq!((window_in(&tsv, None, "thinker"), window_in(&tsv, None, "thinker:free"), window_in(&tsv, None, "nowhere")), ((None, Some((272_000, true))), (None, None), (None, None)), "input alone: marked");
+        let conflict = "=a\nm\t1\t2\t\t\t12288\n=b\nm\t1\t2\t\t\t131072\n=c\nm\t1\t2\t\t\t65536\n";
+        assert_eq!((window_in(conflict, Some("c"), "m"), window_in(conflict, None, "m")), ((Some((65_536, false)), Some((131_072, false))), (None, Some((131_072, false)))), "the provider's own, else the largest");
+        assert_eq!(window_in("=a\nm\t1\t2\t\t\n", Some("a"), "m"), (None, None), "a line from before the column");
+        assert_eq!(context_window("http://127.0.0.1:8093/v1", "deepseek-flash"), None);
+        // the lists tazuna keeps: OpenRouter's own, a keyed one, none for a provider it keeps none of
+        assert_eq!((kept_list("https://openrouter.ai/api/v1").as_deref(), kept_list("https://subrouter.ai/v1")), (Some("openrouter-models.json"), None));
+        assert!(LOGINS.iter().any(|l| l.source == Source::List && kept_list(l.url).is_some()));
+        assert_eq!(listed_window(&serde_json::json!({"id": "x", "context_length": 131072, "top_provider": {"context_length": 32768}})), Some((131_072, false)));
+        assert_eq!(listed_window(&serde_json::json!({"max_input_tokens": 272000, "context_length": 400000})), Some((272_000, true)), "an input cap first, as input alone");
+        assert_eq!((listed_window(&serde_json::json!({"max_context_length": 128000})), listed_window(&serde_json::json!({"context_length": null}))), (Some((128_000, false)), None));
         assert!(!tsv.contains("claude") && !tsv.contains("painter") && !tsv.contains("no-tools") && !tsv.contains("not-listed"));
         assert!(trim_modelsdev(&mut r#"{"deepseek": {"models": {}}}"#.as_bytes()).is_none(), "a file with too few providers is not models.dev's");
         let rows = modelsdev_choices(&format!("#etag W/\"x\"\n{tsv}"), &serde_json::json!({}), &|h: &str| h == "api.deepseek.com");
@@ -2437,6 +2525,8 @@ mod tests {
         });
         let dir = std::env::temp_dir().join(format!("tazuna-mdrefresh-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
+        // the five-column copy from before modelsdev2: gone once the new one is written
+        std::fs::write(dir.join("modelsdev.tsv"), "#at 1\n=deepseek\nold\t1\t2\t\t\n").unwrap();
         let file = dir.join(MODELSDEV);
         let stale = || std::fs::File::options().append(true).open(&file).unwrap().set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 86_400)).unwrap();
         let read = || std::fs::read_to_string(&file).unwrap();
@@ -2445,8 +2535,9 @@ mod tests {
         let req = rx.recv().unwrap();
         assert!(req.contains("accept-encoding: gzip") && !req.contains("if-none-match"), "{req}");
         let first = read();
-        assert!(first.starts_with("#etag W/\"1\"\n#at ") && first.contains("\n=deepseek\nm\t1\t2\t\t\n") && !first.contains("unlisted"), "{first}");
+        assert!(first.starts_with("#etag W/\"1\"\n#at ") && first.contains("\n=deepseek\nm\t1\t2\t\t\t\n") && !first.contains("unlisted"), "{first}");
         assert!(fetched_at(&first) + 60 > std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
+        assert!(!dir.join("modelsdev.tsv").exists(), "the old copy left");
         // fresh (under a day): no request at all
         refresh_modelsdev_at(&url, &dir);
         // a day on: asked with its ETag; 304 keeps the copy and makes it fresh again
@@ -2466,7 +2557,7 @@ mod tests {
         stale();
         refresh_modelsdev_at(&url, &dir);
         rx.recv().unwrap();
-        assert!(read().starts_with("#etag W/\"4\"\n#at ") && read().contains("\n=deepseek\nm\t1\t2\t\t\n"));
+        assert!(read().starts_with("#etag W/\"4\"\n#at ") && read().contains("\n=deepseek\nm\t1\t2\t\t\t\n"));
         assert!(rx.try_recv().is_err(), "one request each, none when fresh");
         std::fs::remove_dir_all(&dir).ok();
     }

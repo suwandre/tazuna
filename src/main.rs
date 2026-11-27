@@ -2368,8 +2368,8 @@ fn app_server(a: &Args) -> Result<()> {
                                 _ => info(&mut s, "the cap was not saved".into()),
                             }
                         }
-                        // Claude's auto-compact threshold (a percent from 1 to 100, or null for Claude's default):
-                        // ~/.config/tazuna/claude-autocompact, read as claude starts (live::autocompact). No line of its
+                        // the auto-compact threshold (a percent from 1 to 100, or null for the default): ~/.config/tazuna/
+                        // claude-autocompact, read as claude or the own loop's engine starts (live::autocompact). No line of its
                         // own: the window asks for the settings after it, and a value that did not take is said in its row
                         // (a notice here showed in the conversation behind the dialog)
                         Some("autocompact") => {

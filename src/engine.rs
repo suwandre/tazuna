@@ -312,6 +312,17 @@ pub fn serve(args: &[String]) -> Result<()> {
     let session = resumed.as_ref().filter(|_| !fork).map(|r| r.0.clone()).unwrap_or_else(|| format!("own-{}-{:x}", std::process::id(),
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)));
     let marks = resumed.as_ref().map(|r| r.1.marks.clone()).unwrap_or_default();
+    let before = resumed.as_ref().and_then(|r| r.1.before.clone());
+    // the same session again: old histories nothing names any more go (a crash between writing one and naming it)
+    if !fork && resumed.is_some() {
+        sweep_befores(&session, before.as_deref());
+    }
+    // the model's input window (the view's share of it, auto-compaction): set, as its provider lists it, else models.dev's
+    let window = std::env::var("TAZUNA_CONTEXT_WINDOW").ok().and_then(|v| v.trim().parse().ok()).map(|w| (w, false)).or(LISTED_WINDOW.get().copied())
+        .or_else(|| crate::models::context_window(&url, &model));
+    // the setting's share in a conversation; a headless task keeps the default, as claude's do (live.rs autocompact_env)
+    let usable = usable_window(window, api, CHAT_MAX_OUT.get().copied());
+    let compact_at = compact_at(usable, if headless() { None } else { crate::live::autocompact() }, std::env::var("TAZUNA_COMPACT_AT_TOKENS").ok().as_deref());
     let mut fns = tool_list(&mode);
     // the user's MCP servers (`/mcp on`, 0.1.80): one tool for all of them, the same all session
     let hub = std::env::var_os("TAZUNA_MCP").is_some().then(crate::mcpc::Hub::connect);
@@ -324,9 +335,11 @@ pub fn serve(args: &[String]) -> Result<()> {
     // the model's prices, so the screen's running cost is this model's and not Claude's list prices (a Luna turn read
     // ~$3 while it ran and $0.007 at its end, 2026-11-06); `plan`: those prices are a reference, the plan pays (the user,
     // 2026-11-25)
-    emit(&json!({"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": cwd, "tools": names, "slash_commands": [],
+    // `compact`: tazuna's own /compact (`compact_command`), listed as claude lists its commands
+    emit(&json!({"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": cwd, "tools": names, "slash_commands": ["compact"],
                  "price_per_m": [price.0 * 1e6, price.1 * 1e6, price.2 * 1e6], "provider": crate::models::paid_to(&url, &key_env),
-                 "plan": plan, "mcp_servers": mcp_status(hub.as_ref())}));
+                 "plan": plan, "mcp_servers": mcp_status(hub.as_ref()), "context_window": usable,
+                 "context_window_full": window.map(|w| w.0)}));
     let send_reasoning = reasoning_back(&url, &model);
     let mut loop_ = Loop {
         call,
@@ -356,6 +369,7 @@ pub fn serve(args: &[String]) -> Result<()> {
         plan,
         route_calls: vec![],
         connector: connect_key,
+        comp: Compaction { at: compact_at, window, before, ..Default::default() },
         out: Box::new(|e: &Value| emit(e)),
     };
     // the session's own engine: its streamed replies reach the screen as they come (not the explorer's server or `ask`)
@@ -391,20 +405,61 @@ fn history_file(session: &str) -> Option<std::path::PathBuf> {
     ours.then(|| crate::labels::dir().ok()).flatten().map(|d| d.join("own-sessions").join(format!("{session}.json")))
 }
 
-/// A saved conversation: its messages (without a Chat system prompt) and where each typed message begins in them.
+/// A saved conversation: its messages (without a Chat system prompt), where each typed message begins in them, and the
+/// file of the conversation as it was before its last compaction (the same three again, its `before` the one before
+/// that). An older tazuna reads msgs and marks and leaves `before` alone: it resumes from the summary, and a rewind past
+/// the compaction there leaves the history whole.
 #[derive(Debug, PartialEq)]
 struct History {
     msgs: Vec<Value>,
     /// (the message's id from tazuna, its index in `msgs`)
     marks: Vec<(String, usize)>,
+    before: Option<String>,
 }
 
 impl History {
-    /// Back to before the typed message `uuid`; an id it never saw (a history from before 0.1.141) leaves it whole.
-    fn cut_before(&mut self, uuid: &str) {
+    fn read(v: &Value) -> History {
+        let msgs = v["msgs"].as_array().cloned().unwrap_or_default();
+        let marks = v["marks"].as_array().into_iter().flatten()
+            .filter_map(|m| Some((m[0].as_str()?.to_string(), m[1].as_u64().filter(|&i| i as usize <= msgs.len())? as usize))).collect();
+        History { msgs, marks, before: v["before"].as_str().map(String::from) }
+    }
+
+    /// Back to before the typed message `uuid`: one from before a compaction brings back the conversation as it was then,
+    /// up to that message. An id it never saw (a history from before 0.1.141) leaves it whole; false then.
+    fn cut_before(&mut self, uuid: &str) -> bool {
         if let Some(i) = self.marks.iter().position(|m| m.0 == uuid) {
             self.msgs.truncate(self.marks[i].1);
             self.marks.truncate(i);
+            return true;
+        }
+        let file = self.before.as_deref().and_then(history_file);
+        let Some(mut old) = file.and_then(|f| serde_json::from_str::<Value>(&std::fs::read_to_string(f).ok()?).ok()).map(|v| History::read(&v)) else { return false };
+        let found = old.cut_before(uuid);
+        if found {
+            *self = old;
+        }
+        found
+    }
+}
+
+/// The old histories of session `id` (`Loop::keep_before`) that its chain from `head` does not name, and half-written
+/// ones: left by a crash between writing one and the main file naming it. Another session's are not touched (a fork's
+/// chain names its parent's, and a parent's chain only grows).
+fn sweep_befores(id: &str, head: Option<&str>) {
+    let Some(dir) = history_file(id).and_then(|p| p.parent().map(std::path::Path::to_path_buf)) else { return };
+    let mut named = std::collections::HashSet::new();
+    let mut at = head.map(String::from);
+    while let Some(n) = at.filter(|n| named.insert(n.clone())) {
+        at = history_file(&n).and_then(|f| std::fs::read_to_string(f).ok()).and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .and_then(|v| v["before"].as_str().map(String::from));
+    }
+    let prefix = format!("{id}-b");
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let named_here = name.strip_suffix(".json").is_some_and(|s| named.contains(s));
+        if name.starts_with(&prefix) && !named_here {
+            let _ = std::fs::remove_file(e.path());
         }
     }
 }
@@ -412,10 +467,7 @@ impl History {
 /// A saved history, when it was written for the same API (a Chat history means nothing to Responses or Messages).
 fn load_history(session: &str, api: Api) -> Option<History> {
     let v: Value = serde_json::from_str(&std::fs::read_to_string(history_file(session)?).ok()?).ok()?;
-    let msgs = v["msgs"].as_array().cloned().unwrap_or_default();
-    let marks = v["marks"].as_array().into_iter().flatten()
-        .filter_map(|m| Some((m[0].as_str()?.to_string(), m[1].as_u64().filter(|&i| i as usize <= msgs.len())? as usize))).collect();
-    (v["api"] == format!("{api:?}")).then_some(History { msgs, marks })
+    (v["api"] == format!("{api:?}")).then(|| History::read(&v))
 }
 
 struct Loop {
@@ -467,6 +519,23 @@ struct Loop {
     /// Permission questions asked so far (their request ids).
     asked: u32,
     out: Box<dyn FnMut(&Value)>,
+    comp: Compaction,
+}
+
+/// The own loop's compaction state (2026-11-27; out/review-14/compaction-design.md).
+#[derive(Default)]
+struct Compaction {
+    /// The input size from which the next call compacts first (`compact_at`); None: no auto-compaction.
+    at: Option<u64>,
+    /// The model's window and whether it counts input alone (else input and output together), for the summary's output
+    /// cap; None: not known.
+    window: Option<(u64, bool)>,
+    /// The last call's input tokens, cached ones included; after a compaction, the new history's estimated size.
+    last_input: u64,
+    /// The input at the last failed auto-compaction (`due`).
+    failed_at: Option<u64>,
+    /// The file of the conversation before its last compaction (`History::before`).
+    before: Option<String>,
 }
 
 /// A provider's refusal of requests that carry `prompt_cache_key`: SubRouter's "no available channel" (503
@@ -486,6 +555,155 @@ fn drop_thinking(msgs: &mut [Value]) -> bool {
         }
     }
     dropped
+}
+
+/// The summary call's instruction (own-loop compaction, 2026-11-27; out/review-14/compaction-design.md): what the work needs
+/// to go on without the turns it replaces.
+const SUMMARY_PROMPT: &str = "The conversation is about to be replaced by a summary, because the context is nearly full. \
+Write that summary now, so the work can continue from it alone. Do not call any tools: answer with the summary only, in \
+these sections:\n\
+1. Requests: each request of the user, verbatim when it is short, else its exact points.\n\
+2. Decisions: what was decided, and why.\n\
+3. Files: every path read, and every path changed with what changed in it.\n\
+4. State: what is done and works now, what is half done.\n\
+5. Errors: each error seen, what was tried for it, and the outcome.\n\
+6. Open: what is still to do.\n\
+7. Next step: exactly what to do next.\n\
+Be specific (paths, names, commands, numbers) and leave out what no longer matters. When the conversation begins with an \
+earlier summary, carry over what it says that still holds: its requests, decisions and changed files are this work's too \
+(a change you find in a file may be one you made). At most about 2,000 words.";
+
+/// The summary call's system prompt when it gets the conversation as text (`transcript`).
+const SUMMARY_SYSTEM: &str = "You summarise a coding agent's conversation with its user, so the agent can continue the work from the summary alone.";
+
+/// The compacted history's first turn: this, then the summary.
+const SUMMARY_HEAD: &str = "[A summary of the earlier conversation: the context was compacted, and this replaces the turns before it.]";
+
+/// After the summary when the compaction came inside a run.
+const SUMMARY_GO_ON: &str = "[The task is still running: continue it from the next step above. Read a file again before you change it.]";
+
+/// After the summary turn, as the assistant's: strict chat templates take no two user turns in a row.
+const SUMMARY_ACK: &str = "Understood: I will continue from this summary.";
+
+/// The summary call's output cap in tokens, its reasoning included.
+const SUMMARY_MAX_OUT: u64 = 20_000;
+
+/// A summary call is running: its streamed text stays off the screen (it is no reply), all else of the call shows.
+static HIDE_TEXT: AtomicBool = AtomicBool::new(false);
+
+/// The compacted history's summary turn.
+fn summary_turn(m: &Value) -> bool {
+    m["role"] == "user" && m["content"].as_str().is_some_and(|c| c.starts_with(SUMMARY_HEAD))
+}
+
+/// Context-length refusals as the providers word them (OpenAI and vLLM-style servers, DeepSeek, OpenRouter, Mistral,
+/// Groq, Cerebras: "maximum context length", `context_length_exceeded`; Responses: "exceeds the context window"; Anthropic:
+/// "prompt is too long", "exceed context limit"; Gemini: "exceeds the maximum number of tokens"; xAI: "maximum prompt
+/// length"; Kimi: "exceeded model token limit"; MiniMax: "context window exceeds limit"; GLM: "Prompt exceeds max length";
+/// Qwen: "Range of input length"; Bedrock: "Input is too long"; Copilot: `model_max_prompt_tokens_exceeded`; Ollama: "prompt
+/// too long; exceeded max context length"; llama.cpp: "exceeds the available context size"; LM Studio: "context length of
+/// only"; Cohere: "too many tokens").
+const TOO_LONG: [&str; 22] = ["context_length_exceeded", "maximum context length", "max context length", "context length exceeded",
+    "exceeds the context window", "context window exceeds", "exceed context limit", "exceeds context limit", "prompt is too long",
+    "prompt too long", "input is too long", "input length exceeds", "too many tokens", "maximum prompt length", "exceeded model token limit",
+    "prompt exceeds max length", "range of input length", "model_max_prompt_tokens_exceeded", "exceeds the maximum number of tokens",
+    "exceeds the available context size", "context length of only", "greater than the context length"];
+
+/// A provider's refusal of a request longer than the model's window (a 413 too, unless it is a rate limit): compacting
+/// the conversation is the fix, not waiting or another route. A rate limit on tokens (Groq's and OpenAI's "Request too
+/// large ... tokens per minute") is not one.
+fn too_long(e: &str) -> bool {
+    let t = e.to_lowercase();
+    if ["rate limit", "rate_limit", "per min", "per hour", "per day", "quota", "(tpm)"].iter().any(|w| t.contains(w)) {
+        return false;
+    }
+    t.starts_with("http 413") || TOO_LONG.iter().any(|p| t.contains(p))
+}
+
+/// `/compact` typed in an own-loop session, with what to focus on after it as claude's takes: tazuna's, never the model's.
+fn compact_command(text: &str) -> Option<&str> {
+    let rest = text.trim().strip_prefix("/compact")?;
+    (rest.is_empty() || rest.starts_with(char::is_whitespace)).then(|| rest.trim())
+}
+
+/// What of the model's window a request's input may fill: Anthropic counts input and max_tokens against the window
+/// ("exceed context limit": refusals began at 136k of 200k, past where Compact showed), OpenRouter and vLLM a Chat call's
+/// max_tokens (sent where the list names a maximum); at least half of it. A window of input alone is that already. The
+/// view's share and auto-compaction use it.
+fn usable_window(window: Option<(u64, bool)>, api: Api, chat_max_out: Option<u32>) -> Option<u64> {
+    let reserve = match api {
+        Api::Messages => u64::from(MAX_OUTPUT),
+        Api::Chat => chat_max_out.map_or(0, u64::from),
+        _ => 0,
+    };
+    window.map(|(w, input)| if input { w } else { w.saturating_sub(reserve).max(w / 2) })
+}
+
+/// The input size from which the next call compacts the conversation first: `TAZUNA_COMPACT_AT_TOKENS` (a test's), else
+/// `share` percent of the model's window (Settings › Auto-compact; 90 without one); None where the window is unknown.
+fn compact_at(window: Option<u64>, share: Option<u8>, tokens: Option<&str>) -> Option<u64> {
+    tokens.and_then(|t| t.trim().parse().ok()).or_else(|| window.map(|w| w * u64::from(share.unwrap_or(90)) / 100))
+}
+
+/// The window the model list named (`price`) and whether it is input alone, for `serve`.
+static LISTED_WINDOW: OnceLock<(u64, bool)> = OnceLock::new();
+
+/// A reply's text in any API's shape.
+fn reply_text(r: &Value, api: Api) -> String {
+    let blocks = |v: &Value, kinds: &[&str]| v.as_array().into_iter().flatten().filter(|b| kinds.iter().any(|k| b["type"] == *k))
+        .filter_map(|b| b["text"].as_str().map(String::from)).collect::<Vec<_>>().join("\n");
+    match api {
+        Api::Responses => r["output"].as_array().into_iter().flatten().filter(|i| i["type"] == "message")
+            .map(|i| blocks(&i["content"], &["output_text", "text"])).collect::<Vec<_>>().join("\n"),
+        Api::Messages => blocks(&r["content"], &["text"]),
+        Api::Chat | Api::Gemini => chat_content(&r["choices"][0]["message"]["content"]).0,
+    }
+}
+
+/// The conversation as plain text for a summary that cannot take it whole: one entry per turn, call and result, in any
+/// API's shape; tool calls and results cut to their first and last `cut` characters; words whole up to thirty times that
+/// at each end (a pasted spec, an earlier summary: never cut); no thinking or reasoning.
+fn transcript(msgs: &[Value], cut: usize) -> Vec<String> {
+    let clip = |s: &str, n: usize| -> String {
+        let len = s.chars().count();
+        if len <= 2 * n {
+            return s.to_string();
+        }
+        let head: String = s.chars().take(n).collect();
+        let tail: String = s.chars().skip(len - n).collect();
+        format!("{head}\n[... {} characters left out ...]\n{tail}", len - 2 * n)
+    };
+    let args = |a: &Value| a.as_str().map_or_else(|| a.to_string(), String::from);
+    let mut out = vec![];
+    for m in msgs {
+        match (m["type"].as_str(), m["role"].as_str()) {
+            (Some("reasoning"), _) | (_, Some("system" | "developer")) => {}
+            (Some("function_call"), _) => out.push(format!("Tool call {}: {}", m["name"].as_str().unwrap_or("?"), clip(&args(&m["arguments"]), cut))),
+            (Some("function_call_output"), _) => out.push(format!("Tool result: {}", clip(&args(&m["output"]), cut))),
+            (_, Some("tool")) => out.push(format!("Tool result: {}", clip(&text_of(&m["content"]), cut))),
+            _ if m["content"] == SUMMARY_ACK => {}
+            _ if summary_turn(m) => out.push(m["content"].as_str().unwrap_or_default().to_string()),
+            (_, role) => {
+                let who = if role == Some("assistant") { "Assistant" } else { "User" };
+                match &m["content"] {
+                    Value::String(s) if !s.trim().is_empty() => out.push(format!("{who}: {}", clip(s, 30 * cut))),
+                    Value::Array(bs) => for b in bs {
+                        match b["type"].as_str() {
+                            Some("text" | "input_text" | "output_text") => out.push(format!("{who}: {}", clip(b["text"].as_str().unwrap_or_default(), 30 * cut))),
+                            Some("tool_use") => out.push(format!("Tool call {}: {}", b["name"].as_str().unwrap_or("?"), clip(&b["input"].to_string(), cut))),
+                            Some("tool_result") => out.push(format!("Tool result: {}", clip(&text_of(&b["content"]), cut))),
+                            _ => {}
+                        }
+                    },
+                    _ => {}
+                }
+                for c in m["tool_calls"].as_array().into_iter().flatten() {
+                    out.push(format!("Tool call {}: {}", c["function"]["name"].as_str().unwrap_or("?"), clip(&args(&c["function"]["arguments"]), cut)));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// A Responses output item as the next request's input: without `status`, which the API reports but some gateways
@@ -803,7 +1021,13 @@ impl Loop {
         if let Some(d) = p.parent() {
             let _ = std::fs::create_dir_all(d);
         }
-        let _ = std::fs::write(p, json!({"api": format!("{:?}", self.api), "msgs": &self.msgs[self.skip()..], "marks": self.marks}).to_string());
+        let _ = std::fs::write(p, json!({"api": format!("{:?}", self.api), "msgs": &self.msgs[self.skip()..], "marks": self.marks, "before": self.comp.before}).to_string());
+    }
+
+    /// A conversation of its own (the explorer's each question): no messages, marks, compaction state or old history left.
+    fn fresh(&mut self) {
+        self.msgs = if self.api == Api::Chat { vec![json!({"role": "system", "content": self.system})] } else { vec![] };
+        (self.marks, self.comp) = (vec![], Compaction::default());
     }
 
     /// The messages before the conversation in `msgs`: a Chat history's system prompt (not saved; rebuilt at start).
@@ -811,10 +1035,318 @@ impl Loop {
         usize::from(self.api == Api::Chat).min(self.msgs.len())
     }
 
+    /// A request in the session's API: `msgs` the history in its shape (a Chat history with its system message in it),
+    /// `system` and `tools` the rest.
+    fn request(&self, msgs: Value, system: &str, tools: &[Value]) -> Value {
+        let mut body = match self.api {
+            Api::Responses => {
+                // stateless (store: false): earlier reasoning comes back encrypted and is sent again with the history.
+                // The cache key keeps a conversation on one cache: without it BeatAPI cached 18-47% of GPT input
+                // (99.97% with it, from the second call on)
+                let tools: Vec<Value> = tools.iter().map(|t| json!({"type": "function", "name": t["function"]["name"], "description": t["function"]["description"], "parameters": t["function"]["parameters"]})).collect();
+                let mut b = json!({"model": self.model, "instructions": system, "input": msgs, "tools": tools, "store": false,
+                    "include": ["reasoning.encrypted_content"]});
+                if self.cache_key {
+                    b["prompt_cache_key"] = json!(self.session);
+                }
+                if let Some(e) = &self.effort {
+                    b["reasoning"] = json!({"effort": api_effort(e)});
+                }
+                b
+            }
+            Api::Messages => {
+                let tools: Vec<Value> = tools.iter().map(|t| json!({"name": t["function"]["name"], "description": t["function"]["description"], "input_schema": t["function"]["parameters"]})).collect();
+                // adaptive is the only thinking mode from Claude 4.7 on; the top-level cache breakpoint moves to the
+                // end of the conversation on each call
+                let mut b = json!({"model": self.model, "max_tokens": MAX_OUTPUT, "messages": msgs, "tools": tools,
+                    "thinking": {"type": "adaptive"}, "cache_control": {"type": "ephemeral"}});
+                if !system.is_empty() {
+                    b["system"] = json!(system);
+                }
+                if let Some(e) = &self.effort {
+                    b["output_config"] = json!({"effort": e});
+                }
+                b
+            }
+            Api::Chat | Api::Gemini => {
+                let mut b = json!({"model": self.model, "messages": msgs, "tools": tools});
+                if let Some(n) = self.max_out {
+                    b["max_tokens"] = json!(n);
+                }
+                // no field when the id carries the level itself (OmniRoute's agy/gemini-4-argon-high)
+                if let Some(e) = self.effort.as_ref().filter(|e| !self.model.ends_with(&format!("-{e}"))) {
+                    b["reasoning_effort"] = json!(api_effort(e));
+                }
+                b
+            }
+        };
+        // no tools (the chat profile): no "tools" field, which some APIs refuse empty
+        if tools.is_empty() && let Some(o) = body.as_object_mut() {
+            o.remove("tools");
+        }
+        body
+    }
+
+    /// The last call's input reached the auto-compaction threshold, and grew a tenth of it past the input at the last
+    /// failed attempt (each attempt costs a summary call or two; one failed before every later call, review of 2026-11-27).
+    fn due(&self) -> bool {
+        let c = &self.comp;
+        c.at.is_some_and(|at| c.last_input >= at && c.failed_at.is_none_or(|f| c.last_input >= f + at / 10))
+    }
+
+    /// A call's tokens and cost into the session (its cost, the task's cap, `usage` for the result) and its row on the
+    /// receipt (`message_delta`); `secs` for the route's speed. Returns its input tokens, cached ones included. A summary
+    /// call (`summary`) leaves the route's and the group's speed and cache rules alone: an uncached summary is no sign of a
+    /// route that stopped caching.
+    fn account(&mut self, reply: &Value, secs: f64, usage: &mut [u64; 3], summary: bool) -> u64 {
+        let u = &reply["usage"];
+        let (prompt, out, cached, written) = if self.api == Api::Messages {
+            // Anthropic's input_tokens leaves out cache reads and writes
+            let n = |k: &str| u[k].as_u64().unwrap_or(0);
+            let (read, written) = (n("cache_read_input_tokens"), n("cache_creation_input_tokens"));
+            (n("input_tokens") + read + written, n("output_tokens"), read, written)
+        } else {
+            // either API's field names: some gateways answer the Responses API with Chat Completions usage (UnoRouter)
+            let n = |chat: &Value, resp: &Value| {
+                let (a, b) = if self.api == Api::Responses { (resp, chat) } else { (chat, resp) };
+                a.as_u64().or(b.as_u64()).unwrap_or(0)
+            };
+            let prompt = n(&u["prompt_tokens"], &u["input_tokens"]);
+            (prompt, n(&u["completion_tokens"], &u["output_tokens"]), n(&u["prompt_tokens_details"]["cached_tokens"], &u["input_tokens_details"]["cached_tokens"]).min(prompt), 0)
+        };
+        if !summary {
+            groups().note(prompt, cached);
+            if !self.routes.is_empty() {
+                self.route_calls.push((secs, prompt, cached));
+            }
+        }
+        for note in groups().drain() {
+            (self.out)(&json!({"type": "system", "subtype": "group_switch", "message": note}));
+        }
+        // the billed cost when the provider reports it (CheaperInference, OpenRouter), else the price list; a cache write
+        // costs 1.25x input (Anthropic, 5 minutes). No usage at all: not known, so null on the receipt (it read "$0").
+        // On a plan the reference price always: what the plan's API reports is its own figure, not the API price
+        let reported = u["cost"].is_number() || prompt + out > 0;
+        let charged = u["cost"].as_f64().filter(|_| !self.plan).unwrap_or((prompt - cached) as f64 * self.price.0 + written as f64 * self.price.0 * 0.25
+            + cached as f64 * self.price.1 + out as f64 * self.price.2);
+        self.cost += charged;
+        for (sum, n) in usage.iter_mut().zip([prompt - cached, cached, out]) {
+            *sum += n;
+        }
+        // `tazuna_cost`: what this call was charged, for its row on the receipt (the session priced it again by its own
+        // rule, without the provider's figure or the cache write's surcharge: the rows did not add up to the run)
+        let mut delta = json!({"type": "message_delta", "tazuna_cost": if reported { json!(charged) } else { Value::Null },
+            "usage": {"input_tokens": prompt - cached, "cache_creation_input_tokens": 0, "cache_read_input_tokens": cached, "output_tokens": out}});
+        if UNCOUNTED.get() > 0 {
+            delta["tazuna_uncounted"] = json!(UNCOUNTED.replace(0));
+        }
+        (self.out)(&json!({"type": "stream_event", "event": delta}));
+        // the conversation's size; a summary call's input is another request's (a rejected text form read 45k and the
+        // backoff waited from there)
+        if !summary {
+            self.comp.last_input = prompt;
+        }
+        prompt
+    }
+
+    /// The summary's output cap: `SUMMARY_MAX_OUT`, the session's own where lower, and what a whole-context window leaves
+    /// after `input` tokens and a margin (vLLM counts the cap against max_model_len: a 16k server refused a 20k one), at
+    /// least 8k; a window of input alone (`limit.input`, `max_input_tokens`) leaves the output a budget of its own.
+    fn cap_summary(&self, body: &mut Value, input: u64) {
+        let k = if self.api == Api::Responses { "max_output_tokens" } else { "max_tokens" };
+        let room = match self.comp.window {
+            Some((w, false)) => w.saturating_sub(input + 1000 + w / 50).max(8_000),
+            _ => SUMMARY_MAX_OUT,
+        };
+        body[k] = json!(body[k].as_u64().unwrap_or(SUMMARY_MAX_OUT).min(SUMMARY_MAX_OUT).min(room));
+    }
+
+    /// One summary call, a call like any (`account`), its row marked as the compaction's, its text kept off the screen
+    /// (it is no reply; retries, keep-alive waits and the stall limit as for any call). A refusal that names a field the
+    /// summary added (`tool_choice`, the output cap: ChatGPT's Codex backend takes no max_output_tokens) goes again without
+    /// it. Its reply, its input tokens and the request's length in bytes.
+    fn summary_call(&mut self, body: &Value, usage: &mut [u64; 3]) -> Result<(Value, u64, usize)> {
+        if stop_pending() {
+            bail!("stopped");
+        }
+        (self.out)(&json!({"type": "stream_event", "event": {"type": "message_start", "tazuna_request_start": true, "tazuna_role": "compaction"}}));
+        let (t0, mut body) = (std::time::Instant::now(), body.clone());
+        TAZUNA_WROTE.set(true);
+        loop {
+            HIDE_TEXT.store(true, Ordering::Relaxed);
+            let r = (self.call)(&body);
+            HIDE_TEXT.store(false, Ordering::Relaxed);
+            match r {
+                Ok(r) => {
+                    let prompt = self.account(&r, t0.elapsed().as_secs_f64(), usage, true);
+                    return Ok((r, prompt, body.to_string().len()));
+                }
+                Err(e) => {
+                    let t = format!("{e:#}");
+                    let named = ["tool_choice", "max_output_tokens", "max_completion_tokens", "max_tokens"].into_iter()
+                        .find(|k| t.contains("400") && t.contains(k) && body.get(k).is_some() && !too_long(&t));
+                    match (named, body.as_object_mut()) {
+                        (Some(k), Some(o)) => {
+                            o.remove(k);
+                        }
+                        _ => return Err(e),
+                    }
+                }
+            }
+        }
+    }
+
+    /// A summary reply's text when it can stand for the conversation: some text, no tool call (the API's or one written as
+    /// text) and not cut off at its output cap. "Let me check the current state first." with a call after it became a
+    /// history once (review of 2026-11-27).
+    fn summary_of(&self, r: &Value) -> Option<String> {
+        let text = reply_text(r, self.api);
+        let names: Vec<&str> = self.tools.iter().filter_map(|t| t["function"]["name"].as_str()).collect();
+        let called = match self.api {
+            Api::Responses => r["output"].as_array().is_some_and(|o| o.iter().any(|i| i["type"] == "function_call")),
+            Api::Messages => r["content"].as_array().is_some_and(|c| c.iter().any(|b| b["type"] == "tool_use")),
+            Api::Chat | Api::Gemini => r["choices"][0]["message"]["tool_calls"].as_array().is_some_and(|c| !c.is_empty()),
+        } || !text_tool_calls(&text, &names).1.is_empty();
+        let cut = r["choices"][0]["finish_reason"] == "length" || r["stop_reason"] == "max_tokens" || r["status"] == "incomplete";
+        (!called && !cut && !text.trim().is_empty()).then_some(text)
+    }
+
+    /// The conversation replaced by a summary of it, written by the same model in one call (2026-11-27; design:
+    /// out/review-14/compaction-design.md). The call goes as the request would, with the instruction after it and no tool
+    /// to call, so its input is the provider's cached prefix; when that brings no summary that can stand (`summary_of`) or
+    /// does not fit, the conversation goes as text without tools (twice at most, the oldest half dropped the second time).
+    /// The new history: the system prompt and tools as they were, a user turn with the summary, a short acknowledgement
+    /// (strict templates take no two user turns in a row: Mistral's, Gemma's), then `keep`, the run's own message, as it
+    /// was, with a line to continue the task after it where `go_on`. Every mark stays with the old history, that message's
+    /// too: the summary holds it and its progress, so an edit of it goes back to the history before it, not to the summary. No other assistant turn is left, so no thinking or
+    /// reasoning (Anthropic requires a tool-use turn's thinking; a conversation without one has none to keep). The old
+    /// history goes to a file of its own with its marks (`keep_before`), for a rewind past it. Err: why not; the history is
+    /// left as it was.
+    fn compact(&mut self, trigger: &str, keep: Option<usize>, go_on: bool, focus: &str, usage: &mut [u64; 3]) -> Result<(), String> {
+        let skip = self.skip();
+        let kept = keep.filter(|k| (skip..self.msgs.len()).contains(k));
+        let rest = self.msgs.iter().enumerate().skip(skip).filter(|(i, m)| Some(*i) != kept && !summary_turn(m) && m["content"] != SUMMARY_ACK).count();
+        if rest == 0 {
+            return Err("nothing to compact yet".into());
+        }
+        let pre = self.comp.last_input;
+        let ask = if focus.is_empty() { SUMMARY_PROMPT.to_string() } else { format!("{SUMMARY_PROMPT}\nThe user asks the summary to focus on: {focus}") };
+        (self.out)(&json!({"type": "system", "subtype": "status", "status": "compacting"}));
+        let mut msgs = if self.api == Api::Chat { self.chat_messages() } else { json!(self.msgs) };
+        msgs.as_array_mut().expect("a history is a list").push(json!({"role": "user", "content": ask}));
+        let mut body = self.request(msgs, &self.system, &self.tools);
+        // no call wanted; not on Messages, where a changed tool_choice drops the cached messages
+        if matches!(self.api, Api::Chat | Api::Responses) && !self.tools.is_empty() {
+            body["tool_choice"] = json!("none");
+        }
+        self.cap_summary(&mut body, pre + 1000);
+        let mut got = self.summary_call(&body, usage).map(|(r, p, b)| (self.summary_of(&r), p, b));
+        if !matches!(got, Ok((Some(_), _, _))) && !stop_pending() {
+            let mut parts = transcript(&self.msgs[skip..], 1000);
+            let mut left = 0;
+            for attempt in 0..2 {
+                let mut text = parts.first().cloned().unwrap_or_default();
+                if left > 0 {
+                    text.push_str(&format!("\n\n[{left} earlier entries left out]"));
+                }
+                for p in parts.iter().skip(1) {
+                    text.push_str("\n\n");
+                    text.push_str(p);
+                }
+                let user = json!({"role": "user", "content": format!("{ask}\n\n<conversation>\n{text}\n</conversation>")});
+                let msgs = if self.api == Api::Chat { json!([{"role": "system", "content": SUMMARY_SYSTEM}, user]) } else { json!([user]) };
+                let mut body = self.request(msgs, SUMMARY_SYSTEM, &[]);
+                // read once: no cache to write for it
+                body.as_object_mut().map(|o| o.remove("cache_control"));
+                self.cap_summary(&mut body, text.len() as u64 / 3 + 1000);
+                got = self.summary_call(&body, usage).map(|(r, p, b)| (self.summary_of(&r), p, b));
+                // still too long: the oldest half goes, the first request stays
+                if attempt > 0 || parts.len() < 3 || !got.as_ref().is_err_and(|e| too_long(&format!("{e:#}"))) || stop_pending() {
+                    break;
+                }
+                let target = parts.iter().map(String::len).sum::<usize>() / 2;
+                while parts.len() > 2 && parts.iter().map(String::len).sum::<usize>() > target {
+                    parts.remove(1);
+                    left += 1;
+                }
+            }
+        }
+        (self.out)(&json!({"type": "system", "subtype": "status", "status": null}));
+        let (summary, prompt, bytes) = got.map_err(|e| format!("{e:#}"))?;
+        let summary = summary.ok_or("the model wrote no summary that can stand (a tool call, or cut off)")?;
+        let old = self.msgs.split_off(skip);
+        let mut turn = format!("{SUMMARY_HEAD}\n\n{}", summary.trim());
+        let mut tail = kept.map(|k| old[k - skip].clone());
+        // the line to go on once, however often the run compacts (twice and it no longer read as the run's message: the
+        // third compaction dropped it, the free-model check of 2026-11-27)
+        match tail.as_mut().map(|m| &mut m["content"]) {
+            Some(Value::String(t)) if go_on => *t = format!("{}\n\n{SUMMARY_GO_ON}", t.strip_suffix(&format!("\n\n{SUMMARY_GO_ON}")).unwrap_or(t)),
+            None if go_on => turn = format!("{turn}\n\n{SUMMARY_GO_ON}"),
+            _ => {}
+        }
+        self.msgs.push(json!({"role": "user", "content": turn}));
+        self.msgs.push(json!({"role": "assistant", "content": SUMMARY_ACK}));
+        self.msgs.extend(tail);
+        let marks = std::mem::take(&mut self.marks);
+        self.keep_before(old, marks);
+        // what the reads returned is gone with the turns: a read again is not "unchanged since read #3 above"
+        self.server.forget_reads();
+        // the new request's size by the summary call's tokens per byte, at most one (the next call says it exactly)
+        let msgs = if self.api == Api::Chat { self.chat_messages() } else { json!(self.msgs) };
+        let now = self.request(msgs, &self.system, &self.tools).to_string().len() as f64;
+        let per_byte = if prompt > 0 && bytes > 0 { (prompt as f64 / bytes as f64).min(1.0) } else { 0.25 };
+        let post = (now * per_byte).round() as u64;
+        (self.comp.last_input, self.comp.failed_at) = (post, None);
+        // the main file names the old history now, not after the run: a crash mid-run leaves no file nothing names
+        self.save();
+        (self.out)(&json!({"type": "system", "subtype": "compact_boundary", "compact_metadata": {"trigger": trigger, "pre_tokens": pre, "post_tokens": post}}));
+        // the summary alone at the threshold: every call would compact again
+        if self.comp.at.is_some_and(|at| post >= at) {
+            self.comp.at = None;
+            (self.out)(&json!({"type": "system", "subtype": "compact_note", "message": "Auto-compact off for this conversation: the summary alone reaches its threshold"}));
+        }
+        Ok(())
+    }
+
+    /// The history before a compaction, written once to a file of its own beside the session's (the main file keeps its
+    /// name: a 1M window's history is ~4 MB, rewritten after every message until 2026-11-27's review). Nothing without a
+    /// session file (a rewind needs one).
+    fn keep_before(&mut self, old: Vec<Value>, marks: Vec<(String, usize)>) {
+        let stem = self.saved.as_ref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned());
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        let Some((name, file)) = stem.map(|s| format!("{s}-b{nanos:x}")).and_then(|n| Some((n.clone(), history_file(&n)?))) else {
+            self.comp.before = None;
+            return;
+        };
+        let _ = file.parent().map(std::fs::create_dir_all);
+        let tmp = file.with_extension("json.tmp");
+        let ok = std::fs::write(&tmp, json!({"api": format!("{:?}", self.api), "msgs": old, "marks": marks, "before": self.comp.before}).to_string()).is_ok()
+            && std::fs::rename(&tmp, &file).is_ok();
+        self.comp.before = ok.then_some(name);
+    }
+
+    /// `compact` for an automatic trigger: a failure is said on the screen (not when stopped) and remembered, so the next
+    /// attempt waits for the input to grow (`due`). Whether it compacted.
+    fn auto_compact(&mut self, keep: Option<usize>, go_on: bool, usage: &mut [u64; 3]) -> bool {
+        let pre = self.comp.last_input;
+        match self.compact("auto", keep, go_on, "", usage) {
+            Ok(()) => true,
+            Err(e) => {
+                self.comp.failed_at = Some(pre);
+                if !stop_pending() {
+                    let why: String = e.chars().take(160).collect();
+                    (self.out)(&json!({"type": "system", "subtype": "compact_failed", "message": format!("Compaction failed: {why}")}));
+                }
+                false
+            }
+        }
+    }
+
     /// One user message: model calls and tool runs until the model answers without tools, or a cap or interrupt ends it.
     fn run(&mut self, content: &Value, followup: bool, rx: &Receiver<Value>) {
-        self.msgs.push(json!({"role": "user", "content": text_of(content)}));
-        TAZUNA_WROTE.set(followup || NEXT_IS_TAZUNAS.replace(false));
+        let typed = text_of(content);
+        // `/compact` typed: tazuna compacts, the model never sees the message
+        let manual = if followup { None } else { compact_command(&typed) };
         if !followup {
             self.task = (std::time::Instant::now(), self.cost);
         }
@@ -859,6 +1391,36 @@ impl Loop {
             }
             (s.out)(&r);
         };
+        if let Some(focus) = manual {
+            return match self.compact("manual", None, false, focus, &mut usage) {
+                Ok(()) => end(self, "success", String::new(), 0, usage),
+                Err(e) if e == "nothing to compact yet" => end(self, "error_during_execution", "Nothing to compact yet".into(), 0, usage),
+                Err(e) => end(self, "error_during_execution", format!("Compaction failed: {e}"), 0, usage),
+            };
+        }
+        // the task's dollar cap, a plan's calls aside (their cost is the reference price, not money: the user, 2026-11-25;
+        // a plan has no fallbacks, `serve`, so a task never mixes the two)
+        let cap = std::env::var("TAZUNA_MAX_USD").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(MAX_USD);
+        let spent = |s: &Self| !s.plan && s.cost - start >= cap;
+        // auto-compaction between runs: the conversation before this message, which follows the summary as it was typed
+        // (its mark goes with it, or back where it was when the compaction fails); none on a spent cap (the run ends below)
+        if self.due() && !spent(self) {
+            let at = self.msgs.len() - self.skip();
+            let mark = if self.marks.last().is_some_and(|m| m.1 == at) { self.marks.pop() } else { None };
+            self.auto_compact(None, false, &mut usage);
+            if let Some((u, _)) = mark {
+                let at = self.msgs.len() - self.skip();
+                self.marks.push((u, at));
+            }
+        }
+        self.msgs.push(json!({"role": "user", "content": typed.clone()}));
+        // the run's own message: kept as it was after a summary inside the run (a benchmark spec's acceptance criteria);
+        // found by its words, since a route switch takes reasoning items out from before it
+        let go_on = format!("\n\n{SUMMARY_GO_ON}");
+        let own = |s: &Self| s.msgs.iter().rposition(|m| m["role"] == "user" && m["content"].as_str().is_some_and(|c| c.strip_suffix(go_on.as_str()).unwrap_or(c) == typed));
+        TAZUNA_WROTE.set(followup || NEXT_IS_TAZUNAS.replace(false));
+        // the call in hand was compacted for already (once: a second refusal for its length ends the run)
+        let mut compacted = false;
         loop {
             loop {
                 match rx.try_recv() {
@@ -880,62 +1442,23 @@ impl Loop {
                     return end(self, "error_max_time", format!("[stopped: {m} min]"), turns, usage);
                 }
             }
-            let cap = std::env::var("TAZUNA_MAX_USD").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(MAX_USD);
-            // a plan's calls cost the cap nothing: their cost is the reference price, not money (the user, 2026-11-25); a plan
-            // has no fallbacks (`serve`), so a task never mixes the two
-            if !self.plan && self.cost - start >= cap {
+            if spent(self) {
                 return end(self, "error_max_budget_usd", format!("[stopped: ${cap:.2} spent]"), turns, usage);
             }
             // a route that has slowed down or stopped caching is left before the next call (0.0.79)
             if let Some(why) = (!self.routes.is_empty()).then(|| route_trouble(&self.route_calls)).flatten() {
                 self.switch_route(&why);
             }
-            let mut body = match self.api {
-                Api::Responses => {
-                    // stateless (store: false): earlier reasoning comes back encrypted and is sent again with the history.
-                    // The cache key keeps a conversation on one cache: without it BeatAPI cached 18-47% of GPT input
-                    // (99.97% with it, from the second call on)
-                    let tools: Vec<Value> = self.tools.iter().map(|t| json!({"type": "function", "name": t["function"]["name"], "description": t["function"]["description"], "parameters": t["function"]["parameters"]})).collect();
-                    let mut b = json!({"model": self.model, "instructions": self.system, "input": self.msgs, "tools": tools, "store": false,
-                        "include": ["reasoning.encrypted_content"]});
-                    if self.cache_key {
-                        b["prompt_cache_key"] = json!(self.session);
-                    }
-                    if let Some(e) = &self.effort {
-                        b["reasoning"] = json!({"effort": api_effort(e)});
-                    }
-                    b
+            // auto-compaction inside the run, before its next call (out/review-14/compaction-design.md); the cap again
+            // after it
+            if turns > 0 && !compacted && self.due() && self.auto_compact(own(self), true, &mut usage) {
+                compacted = true;
+                if spent(self) {
+                    return end(self, "error_max_budget_usd", format!("[stopped: ${cap:.2} spent]"), turns, usage);
                 }
-                Api::Messages => {
-                    let tools: Vec<Value> = self.tools.iter().map(|t| json!({"name": t["function"]["name"], "description": t["function"]["description"], "input_schema": t["function"]["parameters"]})).collect();
-                    // adaptive is the only thinking mode from Claude 4.7 on; the top-level cache breakpoint moves to the
-                    // end of the conversation on each call
-                    let mut b = json!({"model": self.model, "max_tokens": MAX_OUTPUT, "messages": self.msgs, "tools": tools,
-                        "thinking": {"type": "adaptive"}, "cache_control": {"type": "ephemeral"}});
-                    if !self.system.is_empty() {
-                        b["system"] = json!(self.system);
-                    }
-                    if let Some(e) = &self.effort {
-                        b["output_config"] = json!({"effort": e});
-                    }
-                    b
-                }
-                Api::Chat | Api::Gemini => {
-                    let mut b = json!({"model": self.model, "messages": self.chat_messages(), "tools": self.tools});
-                    if let Some(n) = self.max_out {
-                        b["max_tokens"] = json!(n);
-                    }
-                    // no field when the id carries the level itself (OmniRoute's agy/gemini-4-argon-high)
-                    if let Some(e) = self.effort.as_ref().filter(|e| !self.model.ends_with(&format!("-{e}"))) {
-                        b["reasoning_effort"] = json!(api_effort(e));
-                    }
-                    b
-                }
-            };
-            // no tools (the chat profile): no "tools" field, which some APIs refuse empty
-            if self.tools.is_empty() && let Some(o) = body.as_object_mut() {
-                o.remove("tools");
             }
+            let msgs = if self.api == Api::Chat { self.chat_messages() } else { json!(self.msgs) };
+            let mut body = self.request(msgs, &self.system, &self.tools);
             (self.out)(&json!({"type": "stream_event", "event": {"type": "message_start", "tazuna_request_start": true}}));
             let t0 = std::time::Instant::now();
             let first = (self.call)(&body);
@@ -943,6 +1466,18 @@ impl Loop {
             TAZUNA_WROTE.set(true);
             let mut reply = match first {
                 Ok(r) => r,
+                // longer than the model's window: compacted once and the same turn sent again, the run's own message as it
+                // was after the summary (before the arms below: a Messages 400 would drop the thinking). Not compacted: the
+                // next route, if one waits; refused again after compacting: the provider's error, as before compaction
+                Err(e) if !compacted && !stop_pending() && too_long(&format!("{e:#}")) && self.auto_compact(own(self), turns > 0, &mut usage) => {
+                    compacted = true;
+                    if spent(self) {
+                        return end(self, "error_max_budget_usd", format!("[stopped: ${cap:.2} spent]"), turns, usage);
+                    }
+                    continue;
+                }
+                Err(e) if too_long(&format!("{e:#}")) && !compacted && !stop_pending() && self.switch_route(&format!("{e:#}").chars().take(120).collect::<String>()) => continue,
+                Err(e) if too_long(&format!("{e:#}")) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
                 // a thinking block's signature holds only on the upstream account that wrote it: a gateway that moves the
                 // conversation to another account mid-run (Mortera Cloud's failover) answers 400 "invalid" (Haiku 5.5
                 // after 39 calls); the same request without them goes through
@@ -1032,48 +1567,9 @@ impl Loop {
                 UNCOUNTED.set(UNCOUNTED.get() + 1);
                 continue;
             }
-            let secs = t0.elapsed().as_secs_f64();
             turns += 1;
-            let u = &reply["usage"];
-            let (prompt, out, cached, written) = if self.api == Api::Messages {
-                // Anthropic's input_tokens leaves out cache reads and writes
-                let n = |k: &str| u[k].as_u64().unwrap_or(0);
-                let (read, written) = (n("cache_read_input_tokens"), n("cache_creation_input_tokens"));
-                (n("input_tokens") + read + written, n("output_tokens"), read, written)
-            } else {
-                // either API's field names: some gateways answer the Responses API with Chat Completions usage (UnoRouter)
-                let n = |chat: &Value, resp: &Value| {
-                    let (a, b) = if self.api == Api::Responses { (resp, chat) } else { (chat, resp) };
-                    a.as_u64().or(b.as_u64()).unwrap_or(0)
-                };
-                let prompt = n(&u["prompt_tokens"], &u["input_tokens"]);
-                (prompt, n(&u["completion_tokens"], &u["output_tokens"]), n(&u["prompt_tokens_details"]["cached_tokens"], &u["input_tokens_details"]["cached_tokens"]).min(prompt), 0)
-            };
-            groups().note(prompt, cached);
-            if !self.routes.is_empty() {
-                self.route_calls.push((secs, prompt, cached));
-            }
-            for note in groups().drain() {
-                (self.out)(&json!({"type": "system", "subtype": "group_switch", "message": note}));
-            }
-            // the billed cost when the provider reports it (CheaperInference, OpenRouter), else the price list; a cache write
-            // costs 1.25x input (Anthropic, 5 minutes). No usage at all: not known, so null on the receipt (it read "$0").
-            // On a plan the reference price always: what the plan's API reports is its own figure, not the API price
-            let reported = u["cost"].is_number() || prompt + out > 0;
-            let charged = u["cost"].as_f64().filter(|_| !self.plan).unwrap_or((prompt - cached) as f64 * self.price.0 + written as f64 * self.price.0 * 0.25
-                + cached as f64 * self.price.1 + out as f64 * self.price.2);
-            self.cost += charged;
-            for (sum, n) in usage.iter_mut().zip([prompt - cached, cached, out]) {
-                *sum += n;
-            }
-            // `tazuna_cost`: what this call was charged, for its row on the receipt (the session priced it again by its own
-            // rule, without the provider's figure or the cache write's surcharge: the rows did not add up to the run)
-            let mut delta = json!({"type": "message_delta", "tazuna_cost": if reported { json!(charged) } else { Value::Null },
-                "usage": {"input_tokens": prompt - cached, "cache_creation_input_tokens": 0, "cache_read_input_tokens": cached, "output_tokens": out}});
-            if UNCOUNTED.get() > 0 {
-                delta["tazuna_uncounted"] = json!(UNCOUNTED.replace(0));
-            }
-            (self.out)(&json!({"type": "stream_event", "event": delta}));
+            compacted = false;
+            self.account(&reply, t0.elapsed().as_secs_f64(), &mut usage, false);
 
             // the step's reasoning, for the transcript only (0.0.95): which steps the model deliberates on, and why, could
             // not be read before (41 of tazuna's 176 calls wrote over 5K tokens against Claude Code's 8 of 190, 2026-10-27)
@@ -1279,14 +1775,7 @@ pub fn ask(url: &str, key: &str, model: &str, effort: &str, system: &str, prompt
             "reasoning_effort": effort}),
     };
     let r = chat(&http, url.trim_end_matches('/'), key, api, &body)?;
-    let blocks = |v: &Value, kind: &str| v.as_array().into_iter().flatten().filter(|b| b["type"] == kind)
-        .filter_map(|b| b["text"].as_str().map(String::from)).collect::<Vec<_>>().join("\n");
-    let text = match api {
-        Api::Responses => r["output"].as_array().into_iter().flatten().filter(|i| i["type"] == "message")
-            .map(|i| blocks(&i["content"], "output_text")).collect::<Vec<_>>().join("\n"),
-        Api::Messages => blocks(&r["content"], "text"),
-        Api::Chat | Api::Gemini => chat_content(&r["choices"][0]["message"]["content"]).0,
-    };
+    let text = reply_text(&r, api);
     let u = &r["usage"];
     let n = |a: &Value, b: &Value| a.as_u64().or(b.as_u64()).unwrap_or(0);
     let cached = n(&u["input_tokens_details"]["cached_tokens"], &u["prompt_tokens_details"]["cached_tokens"]) + u["cache_read_input_tokens"].as_u64().unwrap_or(0);
@@ -1516,6 +2005,7 @@ session: format!("explore-{}", std::process::id()),
         plan: crate::models::on_plan(&url, &key_env),
         route_calls: vec![],
         connector: connect_key,
+        comp: Compaction::default(),
         out: Box::new(move |e: &Value| {
             if e["type"] == "result" {
                 *sink.borrow_mut() = e["result"].as_str().unwrap_or_default().to_string();
@@ -1537,7 +2027,7 @@ session: format!("explore-{}", std::process::id()),
             "tools/call" => {
                 let question = msg["params"]["arguments"]["question"].as_str().unwrap_or_default().to_string();
                 // a fresh conversation per question: answers stay focused and its context small
-                l.msgs = if l.api == Api::Chat { vec![json!({"role": "system", "content": l.system})] } else { vec![] };
+                l.fresh();
                 let before = l.cost;
                 NEXT_IS_TAZUNAS.set(true);
                 l.run(&json!(question), false, &rx);
@@ -1721,7 +2211,12 @@ static STOPS_SENT: AtomicUsize = AtomicUsize::new(0);
 static STOPS_TAKEN: AtomicUsize = AtomicUsize::new(0);
 
 fn stop_pending() -> bool {
-    STOPS_SENT.load(Ordering::SeqCst) > STOPS_TAKEN.load(Ordering::SeqCst)
+    STOPS_SENT.load(Ordering::SeqCst) > STOPS_TAKEN.load(Ordering::SeqCst) || cfg!(test) && TEST_STOP.get()
+}
+
+thread_local! {
+    /// A stop in one test alone (the counters above are the process's, and tests run side by side).
+    static TEST_STOP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 fn is_stop(m: &Value) -> bool {
@@ -1956,6 +2451,8 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
         // on a thread of its own, so a stop is heard while the provider has not answered; the call given up stops reading
         // at its next chunk and shows nothing more
         let (payload, to_ui, cancel) = (body.to_string(), stream && STREAM_TO_UI.load(Ordering::Relaxed), Arc::new(AtomicBool::new(false)));
+        // a summary call's text stays off the screen; its waits and the stall limit stay
+        let hide = HIDE_TEXT.load(Ordering::Relaxed);
         let (done, reply) = std::sync::mpsc::channel();
         let c = cancel.clone();
         std::thread::spawn(move || {
@@ -1964,7 +2461,7 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
                 let body = r.body_mut().with_config().limit(50 << 20);
                 let text = if status == 200 && to_ui {
                     let quiet = c.clone();
-                    read_streaming(Stoppable(body.reader(), c), api, stall_limit(), &mut |e| if !quiet.load(Ordering::Relaxed) { emit(e) }).map_err(ureq::Error::Io)?
+                    read_streaming(Stoppable(body.reader(), c), api, stall_limit(), &mut |e| if !quiet.load(Ordering::Relaxed) && !(hide && e["type"] == "stream_event") { emit(e) }).map_err(ureq::Error::Io)?
                 } else {
                     body.read_to_string()?
                 };
@@ -2008,8 +2505,9 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
         };
         if status == 200 {
             match sse(&text).map(|events| from_stream(&events, api)) {
-                // an error inside a stream (a gateway's upstream failed after the headers) is retried like a 5xx
-                Some(Err(e)) if wait > 0 && !(sign_in.is_some() && refused_for_good(&format!("{e:#}"))) => {
+                // an error inside a stream (a gateway's upstream failed after the headers) is retried like a 5xx; one that
+                // says the request is longer than the model takes is the loop's to compact for
+                Some(Err(e)) if wait > 0 && !(sign_in.is_some() && refused_for_good(&format!("{e:#}"))) && !too_long(&format!("{e:#}")) => {
                     UNCOUNTED.set(UNCOUNTED.get() + 1);
                     retry(&format!("{e:#}"), wait);
                     continue;
@@ -2077,8 +2575,9 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
             bail!("{}", http_error(status, &text));
         }
         // Mortera Cloud's 422 "model_unavailable" says not to retry, yet passes within a minute or two (Muse Spark came
-        // back after one; it ended a Haiku run at call 38): tried again like a 5xx
-        if wait == 0 || permanent || !(status == 429 || status >= 500 || text.contains("model_unavailable")) {
+        // back after one; it ended a Haiku run at call 38): tried again like a 5xx. A request longer than the model takes
+        // never fits by waiting, whatever its status: the loop compacts (`too_long`)
+        if wait == 0 || permanent || too_long(&http_error(status, &text)) || !(status == 429 || status >= 500 || text.contains("model_unavailable")) {
             bail!("{}", http_error(status, &text));
         }
         retry(&http_error(status, &text), wait);
@@ -2174,7 +2673,7 @@ fn from_stream(events: &[Value], api: Api) -> Result<Value> {
     }
     if api == Api::Messages {
         // blocks start whole and grow by deltas: text, thinking, signature, and a tool's input as pieces of JSON
-        let (mut blocks, mut usage) = (Vec::<Value>::new(), json!({}));
+        let (mut blocks, mut usage, mut stop) = (Vec::<Value>::new(), json!({}), Value::Null);
         for e in events {
             match e["type"].as_str().unwrap_or_default() {
                 "error" => bail!("provider error in stream: {}", e.to_string().chars().take(300).collect::<String>()),
@@ -2190,7 +2689,12 @@ fn from_stream(events: &[Value], api: Api) -> Result<Value> {
                     }
                 }
                 // the final output count, and on some servers the input counts again
-                "message_delta" => usage.as_object_mut().into_iter().for_each(|u| u.extend(e["usage"].as_object().cloned().unwrap_or_default())),
+                "message_delta" => {
+                    usage.as_object_mut().into_iter().for_each(|u| u.extend(e["usage"].as_object().cloned().unwrap_or_default()));
+                    if e["delta"]["stop_reason"].is_string() {
+                        stop = e["delta"]["stop_reason"].clone();
+                    }
+                }
                 _ => {}
             }
         }
@@ -2200,24 +2704,34 @@ fn from_stream(events: &[Value], api: Api) -> Result<Value> {
                 b["input"] = serde_json::from_str(&j).unwrap_or(json!({}));
             }
         }
-        return Ok(json!({"content": blocks, "usage": usage}));
+        // the stop reason as an unstreamed reply has it: "max_tokens" is a reply cut at its cap (a summary that cannot stand)
+        let mut r = json!({"content": blocks, "usage": usage});
+        if !stop.is_null() {
+            r["stop_reason"] = stop;
+        }
+        return Ok(r);
     }
     if api == Api::Responses {
         // the closing event carries the whole response
         if let Some(e) = events.iter().find(|e| e["type"] == "error" || e["type"] == "response.failed") {
             bail!("provider error in stream: {}", e.to_string().chars().take(300).collect::<String>());
         }
-        return events.iter().rev().find(|e| e["type"] == "response.completed").map(|e| e["response"].clone())
+        // cut at max_output_tokens (a summary's cap) it ends with response.incomplete: that response, its status saying so
+        // (retried as a failed stream it was billed up to 12 times)
+        return events.iter().rev().find(|e| e["type"] == "response.completed" || e["type"] == "response.incomplete").map(|e| e["response"].clone())
             .context("stream ended without response.completed");
     }
     // calls by their `index`, which some gateways count across content blocks (text 0, tools 1, 2, ...)
-    let (mut content, mut reasoning, mut usage, mut calls) = (String::new(), String::new(), Value::Null, Vec::<(u64, Value)>::new());
+    let (mut content, mut reasoning, mut usage, mut calls, mut finish) = (String::new(), String::new(), Value::Null, Vec::<(u64, Value)>::new(), Value::Null);
     for e in events {
         if let Some(err) = e.get("error") {
             bail!("provider error in stream: {}", err.to_string().chars().take(300).collect::<String>());
         }
         if !e["usage"].is_null() {
             usage = e["usage"].clone();
+        }
+        if e["choices"][0]["finish_reason"].is_string() {
+            finish = e["choices"][0]["finish_reason"].clone();
         }
         let d = &e["choices"][0]["delta"];
         let (text, thinking) = chat_content(&d["content"]);
@@ -2252,7 +2766,12 @@ fn from_stream(events: &[Value], api: Api) -> Result<Value> {
     if !reasoning.is_empty() {
         message["reasoning_content"] = json!(reasoning);
     }
-    Ok(json!({"choices": [{"message": message}], "usage": usage}))
+    // "length": cut at its output cap, as an unstreamed reply says it
+    let mut r = json!({"choices": [{"message": message}], "usage": usage});
+    if !finish.is_null() {
+        r["choices"][0]["finish_reason"] = finish;
+    }
+    Ok(r)
 }
 
 /// Said by a Gemini reply no wait mends (blocked, stopped for safety or a malformed call): `refused_for_good` ends it at
@@ -2454,7 +2973,7 @@ fn from_gemini(events: &[Value]) -> Result<Value> {
     if !blocks.is_empty() {
         message["gemini_thoughts"] = json!(blocks);
     }
-    let mut r = json!({"choices": [{"message": message}], "usage": {"prompt_tokens": prompt, "completion_tokens": output,
+    let mut r = json!({"choices": [{"message": message, "finish_reason": if finish == "MAX_TOKENS" { "length" } else { "stop" }}], "usage": {"prompt_tokens": prompt, "completion_tokens": output,
         "prompt_tokens_details": {"cached_tokens": n("cachedContentTokenCount").min(prompt)}}});
     if !usage.is_object() {
         r["usage"] = Value::Null;
@@ -2511,6 +3030,9 @@ fn price(http: &ureq::Agent, url: &str, key: &str, model: &str) -> Result<(Price
     let m = listed(&list, url, model)?;
     if let Some(n) = listed_max_out(m) {
         let _ = CHAT_MAX_OUT.set(n);
+    }
+    if let Some(n) = crate::models::listed_window(m) {
+        let _ = LISTED_WINDOW.set(n);
     }
     let (p, openai) = parse_price(m).map_err(|_| missing_price(url, model))?;
     Ok((p, api(openai)))
@@ -2788,6 +3310,7 @@ session: "s".into(),
             plan: false,
             route_calls: vec![],
             connector: next,
+            comp: Compaction::default(),
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -2842,6 +3365,7 @@ session: "s".into(),
             plan: false,
             route_calls: vec![],
             connector: none,
+            comp: Compaction::default(),
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -2893,6 +3417,7 @@ session: "s1".into(),
             plan: false,
             route_calls: vec![],
             connector: connect_key,
+            comp: Compaction::default(),
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -2948,6 +3473,7 @@ session: "s1".into(),
         plan: false,
         route_calls: vec![],
         connector: connect_key,
+        comp: Compaction::default(),
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -3014,6 +3540,7 @@ session: "s".into(),
         plan: false,
         route_calls: vec![],
         connector: connect_key,
+        comp: Compaction::default(),
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -3091,6 +3618,7 @@ session: "s".into(),
             plan: false,
             route_calls: vec![],
             connector: connect_key,
+            comp: Compaction::default(),
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -3198,6 +3726,7 @@ session: "s".into(),
         plan: false,
         route_calls: vec![],
         connector: connect_key,
+        comp: Compaction::default(),
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -3290,6 +3819,7 @@ session: "s".into(),
                 plan: false,
                 route_calls: vec![],
                 connector: none,
+                comp: Compaction::default(),
                 out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
             };
             let (_tx, rx) = std::sync::mpsc::channel();
@@ -3936,6 +4466,7 @@ session: "s".into(),
         plan: false,
         route_calls: vec![],
         connector: connect_key,
+        comp: Compaction::default(),
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -3994,6 +4525,7 @@ session: "s".into(),
         plan: false,
         route_calls: vec![],
         connector: connect_key,
+        comp: Compaction::default(),
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -4113,6 +4645,7 @@ session: "s".into(),
         plan: false,
         route_calls: vec![],
         connector: connect_key,
+        comp: Compaction::default(),
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -4166,6 +4699,7 @@ session: "s".into(),
         plan: false,
         route_calls: vec![],
         connector: connect_key,
+        comp: Compaction::default(),
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -4240,6 +4774,7 @@ session: "s".into(),
             plan: true,
             route_calls: vec![],
             connector: connect_key,
+            comp: Compaction::default(),
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -4297,6 +4832,7 @@ session: "s".into(),
         plan: false,
         route_calls: vec![],
         connector: connect_key,
+        comp: Compaction::default(),
             out: Box::new(move |e: &Value| {
                 if e["type"] == "control_request" {
                     if let Some((tx, r)) = &reply {
@@ -4519,5 +5055,799 @@ session: "s".into(),
         assert!(super::inside(&dir, "src/a.go").is_some() && super::inside(&dir, "/etc/hosts").is_none());
         assert!(super::inside(&dir, &format!("{}/../x", dir.display())).is_none());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A loop for the compaction tests: canned replies (an `Err` is a provider's error text), the requests it sent and the
+    /// events it put out; the read tool and a.txt in a scratch folder.
+    #[allow(clippy::type_complexity)]
+    fn compact_loop(api: Api, replies: Vec<Result<Value, String>>, dir: &std::path::Path) -> (Loop, Rc<RefCell<Vec<Value>>>, Rc<RefCell<Vec<Value>>>) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
+        let (sent, events) = (Rc::new(RefCell::new(vec![])), Rc::new(RefCell::new(vec![])));
+        let (s, ev, r) = (sent.clone(), events.clone(), RefCell::new(VecDeque::from(replies)));
+        let l = Loop {
+            call: Box::new(move |b: &Value| {
+                s.borrow_mut().push(b.clone());
+                r.borrow_mut().pop_front().expect("a reply for each call").map_err(|e| anyhow::anyhow!(e))
+            }),
+            api,
+            system: "sys".into(),
+            model: "m".into(),
+            effort: Some("high".into()),
+            price: (1e-6, 1e-7, 4e-6),
+            tools: vec![json!({"type": "function", "function": {"name": "read", "description": "read a file", "parameters": {"type": "object"}}})],
+            msgs: if api == Api::Chat { vec![json!({"role": "system", "content": "sys"})] } else { vec![] },
+            marks: vec![],
+            max_out: None,
+            saved: None,
+            server: crate::mcp::Server::new(dir.to_path_buf()).with_read_dedupe(),
+            hub: None,
+            session: "s".into(),
+            cost: 0.0,
+            task: (std::time::Instant::now(), 0.0),
+            queued: VecDeque::new(),
+            mode: "bypassPermissions".into(),
+            asked: 0,
+            send_reasoning: false,
+            cache_key: true,
+            routes: VecDeque::new(),
+            plan: false,
+            route_calls: vec![],
+            connector: connect_key,
+            comp: Compaction::default(),
+            out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
+        };
+        (l, sent, events)
+    }
+
+    /// A session file for the loop (the old history goes beside it); the files' stem, for `drop_files`.
+    fn with_file(l: &mut Loop, tag: &str) -> String {
+        let id = format!("own-test-{tag}-{}", std::process::id());
+        l.saved = super::history_file(&id);
+        id
+    }
+
+    /// The session's file and the old histories beside it.
+    fn drop_files(id: &str) {
+        let dir = super::history_file(id).unwrap().parent().unwrap().to_path_buf();
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            if e.file_name().to_string_lossy().starts_with(id) {
+                std::fs::remove_file(e.path()).ok();
+            }
+        }
+    }
+
+    /// The old history the loop's last compaction wrote.
+    fn before_of(l: &Loop) -> Value {
+        serde_json::from_str(&std::fs::read_to_string(super::history_file(l.comp.before.as_deref().expect("an old history")).unwrap()).unwrap()).unwrap()
+    }
+
+    fn boundaries(events: &[Value]) -> Vec<Value> {
+        events.iter().filter(|e| e["subtype"] == "compact_boundary").map(|e| e["compact_metadata"].clone()).collect()
+    }
+
+    fn failures(events: &[Value]) -> Vec<String> {
+        events.iter().filter(|e| e["subtype"] == "compact_failed").filter_map(|e| e["message"].as_str().map(String::from)).collect()
+    }
+
+    /// A reply that reads a.txt, in `api`'s shape, with `input` tokens.
+    fn read_reply(api: Api, input: u64) -> Value {
+        match api {
+            Api::Responses => json!({"output": [{"type": "reasoning", "encrypted_content": "enc"}, {"type": "function_call", "call_id": "c1", "name": "read", "arguments": "{\"path\":\"a.txt\"}"}],
+                "usage": {"input_tokens": input, "output_tokens": 10}}),
+            Api::Messages => json!({"content": [{"type": "thinking", "thinking": "plan", "signature": "sig"}, {"type": "tool_use", "id": "c1", "name": "read", "input": {"path": "a.txt"}}],
+                "usage": {"input_tokens": input, "output_tokens": 10}}),
+            _ => json!({"choices": [{"message": {"content": "", "reasoning_content": "plan", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "read", "arguments": "{\"path\":\"a.txt\"}"}}]}}],
+                "usage": {"prompt_tokens": input, "completion_tokens": 10}}),
+        }
+    }
+
+    /// A reply that says `text`, in `api`'s shape, with `input` tokens.
+    fn say_reply(api: Api, text: &str, input: u64) -> Value {
+        match api {
+            Api::Responses => json!({"output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]}], "usage": {"input_tokens": input, "output_tokens": 50}}),
+            Api::Messages => json!({"content": [{"type": "text", "text": text}], "usage": {"input_tokens": input, "output_tokens": 50}}),
+            _ => json!({"choices": [{"message": {"content": text}}], "usage": {"prompt_tokens": input, "completion_tokens": 50}}),
+        }
+    }
+
+    /// The history a request carried, in any API's shape.
+    fn history(body: &Value) -> Vec<Value> {
+        body["messages"].as_array().or(body["input"].as_array()).cloned().unwrap_or_default()
+    }
+
+    /// The providers' own words for a request longer than the model's window (real bodies, through `http_error` as the
+    /// loop sees them), and the refusals that are not one: a rate limit on tokens, an output cap, an effort.
+    #[test]
+    fn too_long_errors_are_told_from_rate_limits_and_output_caps() {
+        let long = [
+            (400, r#"{"error":{"message":"This model's maximum context length is 128000 tokens. However, your messages resulted in 130415 tokens. Please reduce the length of the messages.","type":"invalid_request_error","param":"messages","code":"context_length_exceeded"}}"#),
+            (400, r#"{"error":{"message":"Your input exceeds the context window of this model. Please adjust your input and try again.","type":"invalid_request_error","param":"input","code":"context_length_exceeded"}}"#),
+            (400, r#"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 215384 tokens > 200000 maximum"}}"#),
+            (400, r#"{"type":"error","error":{"type":"invalid_request_error","message":"input length and `max_tokens` exceed context limit: 188240 + 21333 > 200000, decrease input length or `max_tokens` and try again"}}"#),
+            (400, r#"{"error":{"message":"This model's maximum context length is 131072 tokens. However, you requested 140123 tokens (76123 in the messages, 64000 in the completion). Please reduce the length of the messages or completion.","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}"#),
+            (400, r#"{"object":"error","message":"Prompt contains 140123 tokens and 0 draft tokens, too large for model with 131072 maximum context length","type":"invalid_request_message_error","param":null,"code":"3051"}"#),
+            (400, r#"{"error":{"code":400,"message":"The input token count (1196265) exceeds the maximum number of tokens allowed (1048575).","status":"INVALID_ARGUMENT"}}"#),
+            (400, r#"{"code":"Client specified an invalid argument","error":"This model's maximum prompt length is 131072 but the request contains 140123 tokens."}"#),
+            (400, r#"{"error":{"message":"Invalid request: Your request exceeded model token limit: 262144","type":"invalid_request_error"}}"#),
+            (400, r#"{"error":{"code":"1261","message":"Prompt exceeds max length"}}"#),
+            (400, r#"{"error":{"message":"<400> InternalError.Algo.InvalidParameter: Range of input length should be [1, 129024]","type":"invalid_request_error","code":"invalid_parameter_error"}}"#),
+            (400, r#"{"message":"Input is too long for requested model."}"#),
+            (400, r#"{"error":{"message":"prompt token count of 130415 exceeds the limit of 128000","code":"model_max_prompt_tokens_exceeded"}}"#),
+            (400, r#"{"error":{"code":400,"message":"the request exceeds the available context size, try increasing it","type":"exceed_context_size_error","n_prompt_tokens":5000,"n_ctx":4096}}"#),
+            (500, r#"{"error":"prompt too long; exceeded max context length by 1234 tokens"}"#),
+            (400, r#"{"error":{"message":"This endpoint's maximum context length is 131072 tokens. However, you requested about 140123 tokens (140123 of text input). Please reduce the length of either one.","code":400}}"#),
+            (400, r#"{"error":{"message":"invalid params, context window exceeds limit (2013)","type":"invalid_request_error"}}"#),
+            (413, "Request Entity Too Large"),
+        ];
+        for (status, body) in long {
+            assert!(too_long(&http_error(status, body)), "{status} {body}");
+        }
+        assert!(too_long("provider error in stream: {\"type\":\"error\",\"error\":{\"message\":\"prompt is too long: 215384 tokens > 200000 maximum\"}}"));
+        let not = [
+            (413, r#"{"error":{"message":"Request too large for model `llama-3.3-70b-versatile` in organization `org_x` service tier `on_demand` on tokens per minute (TPM): Limit 12000, Requested 15000, please reduce your message size and try again.","type":"tokens","code":"rate_limit_exceeded"}}"#),
+            (429, r#"{"error":{"message":"Rate limit reached for gpt-4o in organization org-x on tokens per min (TPM): Limit 30000, Used 25000, Requested 9000.","type":"tokens","code":"rate_limit_exceeded"}}"#),
+            (429, r#"{"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed the rate limit for your organization of 400,000 input tokens per minute."}}"#),
+            (400, r#"{"error":{"message":"max_tokens is too large: 64000. This model supports at most 16384 completion tokens, whereas you provided 64000.","type":"invalid_request_error","param":"max_tokens","code":null}}"#),
+            (400, r#"{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: 64000 > 32000, which is the maximum allowed number of output tokens for claude-haiku"}}"#),
+            (429, r#"{"error":{"message":"You exceeded your current quota","code":"insufficient_quota"}}"#),
+            (400, r#"{"error":{"message":"'reasoning_effort' does not support 'max'"}}"#),
+            (400, r#"{"error":{"message":"Return reasoning_content from every previous assistant message when using tools"}}"#),
+            (503, r#"{"error":{"code":"responses_source_unavailable"}}"#),
+        ];
+        for (status, body) in not {
+            assert!(!too_long(&http_error(status, body)), "{status} {body}");
+        }
+    }
+
+    /// A 5xx that says the request is too long is not waited out (15 minutes of tries): one request, the loop compacts.
+    #[test]
+    fn a_too_long_error_is_not_retried() {
+        use std::io::Write;
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", server.local_addr().unwrap());
+        server.set_nonblocking(true).unwrap();
+        let seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let s = seen.clone();
+        let t = std::thread::spawn(move || {
+            let end = std::time::Instant::now() + Duration::from_secs(3);
+            while std::time::Instant::now() < end {
+                match server.accept() {
+                    Ok((mut c, _)) => {
+                        c.set_nonblocking(false).unwrap();
+                        read_request(&mut c);
+                        c.write_all(b"HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\n\r\n{\"error\":\"prompt too long; exceeded max context length by 1234 tokens\"}").unwrap();
+                        s.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(_) => std::thread::sleep(Duration::from_millis(20)),
+                }
+            }
+        });
+        let http: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+        let e = chat(&http, &url, "k", Api::Chat, &json!({"model": "m", "messages": []})).unwrap_err();
+        assert!(too_long(&format!("{e:#}")), "{e:#}");
+        t.join().unwrap();
+        assert_eq!(seen.load(Ordering::Relaxed), 1);
+    }
+
+    /// The threshold: the setting's share of a known window (90% without one), a test's token count over it, none for an
+    /// unknown window; what of the window a request may fill (Anthropic's max_tokens, a Chat call's cap); `/compact` with or
+    /// without a focus, and nothing else.
+    #[test]
+    fn the_auto_compaction_threshold_and_the_command() {
+        assert_eq!(compact_at(Some(200_000), None, None), Some(180_000), "90% by default");
+        assert_eq!([50, 70, 80, 90].map(|p| compact_at(Some(1_000_000), Some(p), None)), [Some(500_000), Some(700_000), Some(800_000), Some(900_000)]);
+        assert_eq!(compact_at(None, Some(70), None), None, "a window not known: no share of it");
+        assert_eq!((compact_at(None, None, Some("8000")), compact_at(Some(200_000), Some(50), Some(" 8000 "))), (Some(8000), Some(8000)));
+        assert_eq!(compact_at(Some(200_000), None, Some("lots")), Some(180_000));
+        // Claude on Messages asks 64k out: 136k of 200k fits; a Chat cap where one is sent; at least half the window
+        assert_eq!(usable_window(Some((200_000, false)), Api::Messages, None), Some(136_000));
+        assert_eq!(usable_window(Some((1_000_000, false)), Api::Messages, None), Some(936_000));
+        assert_eq!((usable_window(Some((131_072, false)), Api::Chat, Some(16_384)), usable_window(Some((131_072, false)), Api::Chat, None)), (Some(114_688), Some(131_072)));
+        assert_eq!((usable_window(Some((400_000, false)), Api::Responses, Some(64_000)), usable_window(Some((32_768, false)), Api::Chat, Some(64_000))), (Some(400_000), Some(16_384)));
+        assert_eq!(usable_window(Some((272_000, true)), Api::Messages, None), Some(272_000), "a window of input alone is room already");
+        assert_eq!(usable_window(None, Api::Messages, None), None);
+        assert_eq!(compact_at(usable_window(Some((200_000, false)), Api::Messages, None), None, None), Some(122_400), "below the 85% Compact shows at");
+        assert_eq!([compact_command("/compact"), compact_command("  /compact  "), compact_command("/compact keep the API notes")], [Some(""), Some(""), Some("keep the API notes")]);
+        assert_eq!([compact_command("/compacted"), compact_command("please /compact"), compact_command("/clear")], [None, None, None]);
+    }
+
+    /// Auto-compaction inside a run, on each API: the summary call is the request as it went with the instruction after
+    /// it, no tool to call on Chat and Responses (none sent on Messages, where it drops the cached messages), its output
+    /// capped; the next call has the system prompt and tools as before, the summary, the acknowledgement, and the run's own
+    /// message as typed with the line to go on, nothing of the old turns (no thinking, no reasoning items). A "compacting"
+    /// status around it, the event, the call's role, the old history in its own file with the marks, the run's mark on its
+    /// message, a read after it not "unchanged".
+    #[test]
+    fn a_run_compacts_before_its_next_call_on_each_api() {
+        for api in [Api::Chat, Api::Responses, Api::Messages] {
+            let dir = std::env::temp_dir().join(format!("tazuna-compact-{api:?}-{}", std::process::id()));
+            let replies = vec![Ok(read_reply(api, 1000)), Ok(say_reply(api, "Requests: read a.txt", 1100)), Ok(read_reply(api, 200)), Ok(say_reply(api, "it says hello", 300))];
+            let (mut l, sent, events) = compact_loop(api, replies, &dir);
+            let id = with_file(&mut l, &format!("each-{api:?}"));
+            l.comp.at = Some(500);
+            l.marks.push(("u1".into(), 0));
+            let (_tx, rx) = std::sync::mpsc::channel();
+            l.run(&json!("what is in a.txt?"), false, &rx);
+            let sent = sent.borrow();
+            let events = events.borrow();
+            assert_eq!(sent.len(), 4, "{api:?}");
+            let (first, summary, next) = (&sent[0], &sent[1], &sent[2]);
+            let asked = history(summary);
+            assert_eq!(asked.last().unwrap()["content"].as_str(), Some(SUMMARY_PROMPT), "{api:?}");
+            let was = history(first);
+            assert!(asked.len() > was.len() + 1 && asked[..was.len()] == was[..], "{api:?}: the conversation as it went, the cached prefix");
+            assert_eq!(summary[if api == Api::Responses { "max_output_tokens" } else { "max_tokens" }], json!(SUMMARY_MAX_OUT), "{api:?}");
+            assert_eq!(summary.get("tool_choice").cloned(), (api != Api::Messages).then(|| json!("none")), "{api:?}");
+            assert_eq!((&summary["tools"], &next["tools"]), (&first["tools"], &first["tools"]), "{api:?}: tools untouched");
+            let turns: Vec<Value> = history(next).into_iter().filter(|m| m["role"] != "system").collect();
+            assert_eq!(turns, vec![json!({"role": "user", "content": format!("{SUMMARY_HEAD}\n\nRequests: read a.txt")}), json!({"role": "assistant", "content": SUMMARY_ACK}),
+                json!({"role": "user", "content": format!("what is in a.txt?\n\n{SUMMARY_GO_ON}")})], "{api:?}");
+            if api == Api::Chat {
+                assert_eq!(history(next)[0], json!({"role": "system", "content": "sys"}));
+            } else {
+                assert_eq!(next[if api == Api::Responses { "instructions" } else { "system" }], json!("sys"), "{api:?}");
+            }
+            let text = json!(history(next)).to_string();
+            assert!(!text.contains("thinking") && !text.contains("reasoning") && !text.contains("enc") && !text.contains("plan"), "{api:?}: {text}");
+            let at = |f: &dyn Fn(&Value) -> bool| events.iter().position(|e| f(e)).unwrap();
+            let (on, boundary, off) = (at(&|e| e["subtype"] == "status" && e["status"] == "compacting"), at(&|e| e["subtype"] == "compact_boundary"), at(&|e| e["subtype"] == "status" && e["status"].is_null()));
+            assert!(on < off && off < boundary, "{api:?}: {on} {off} {boundary}");
+            let b = boundaries(&events);
+            assert_eq!((b.len(), &b[0]["trigger"], &b[0]["pre_tokens"]), (1, &json!("auto"), &json!(1000)), "{api:?}");
+            assert!(b[0]["post_tokens"].as_u64().is_some_and(|p| p > 0 && p < 1100), "{api:?}: {b:?}");
+            assert!(events.iter().any(|e| e["event"]["tazuna_role"] == "compaction"));
+            let before = before_of(&l);
+            assert_eq!((before["msgs"].as_array().unwrap().len(), &before["marks"]), (if api == Api::Responses { 4 } else { 3 }, &json!([["u1", 0]])), "{api:?}");
+            assert!(l.marks.is_empty(), "{api:?}: the run's mark stays with the old history (the summary holds its message)");
+            let reread = events.iter().filter(|e| e["type"] == "user").filter_map(|e| e["message"]["content"][0]["content"].as_str()).last().unwrap().to_string();
+            assert!(reread.contains("hello") && !reread.contains("unchanged"), "{api:?}: {reread}");
+            let r = events.last().unwrap();
+            assert_eq!((r["subtype"].as_str(), r["result"].as_str()), (Some("success"), Some("it says hello")));
+            assert_eq!(r["usage"]["input_tokens"].as_u64().unwrap() + r["usage"]["cache_read_input_tokens"].as_u64().unwrap(), 1000 + 1100 + 200 + 300, "the summary call's tokens are the run's");
+            drop_files(&id);
+            std::fs::remove_dir_all(&dir).ok();
+        }
+    }
+
+    /// Compacted three times in one run: the run's message after each summary as typed, the line to go on once, its mark
+    /// on it (the free-model check of 2026-11-27 lost it at the third).
+    #[test]
+    fn a_run_that_compacts_again_keeps_its_message() {
+        let dir = std::env::temp_dir().join(format!("tazuna-compact-again-{}", std::process::id()));
+        let mut replies = vec![];
+        for i in 0..3 {
+            replies.extend([Ok(read_reply(Api::Chat, 1000)), Ok(say_reply(Api::Chat, &format!("S{i}"), 900))]);
+        }
+        replies.push(Ok(say_reply(Api::Chat, "done", 300)));
+        let (mut l, sent, events) = compact_loop(Api::Chat, replies, &dir);
+        let id = with_file(&mut l, "again");
+        l.msgs.extend([json!({"role": "user", "content": "earlier"}), json!({"role": "assistant", "content": "ok"})]);
+        (l.comp.at, l.marks) = (Some(500), vec![("u0".into(), 0), ("u1".into(), 2)]);
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("what is in a.txt?"), false, &rx);
+        assert_eq!(boundaries(&events.borrow()).len(), 3);
+        let last = sent.borrow().last().unwrap()["messages"].clone();
+        assert_eq!(last[3], json!({"role": "user", "content": format!("what is in a.txt?\n\n{SUMMARY_GO_ON}")}), "{last}");
+        assert!(last[1]["content"].as_str().unwrap().ends_with("S2") && l.marks.is_empty());
+        // "edit from here" on the run's message: the history before it, not the summary of it and its progress
+        l.save();
+        let mut h = super::load_history(&id, Api::Chat).unwrap();
+        assert!(h.cut_before("u1"));
+        assert_eq!(h.msgs, vec![json!({"role": "user", "content": "earlier"}), json!({"role": "assistant", "content": "ok"})]);
+        drop_files(&id);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A summary that cannot stand goes to the text form: a reply with text and a call (the API's or one written as text),
+    /// or cut at its cap ("length", Messages' "max_tokens", Responses' "incomplete"). A cut-off text form fails it, the
+    /// history left as it was.
+    #[test]
+    fn a_summary_with_a_call_or_cut_off_does_not_stand() {
+        let dir = std::env::temp_dir().join(format!("tazuna-compact-stand-{}", std::process::id()));
+        let check = "Let me check the current state first.";
+        let cases = [
+            (Api::Chat, json!({"choices": [{"message": {"content": check, "tool_calls": [{"id": "c9", "type": "function", "function": {"name": "read", "arguments": "{\"path\":\"a.txt\"}"}}]}}], "usage": {}})),
+            (Api::Chat, json!({"choices": [{"message": {"content": format!("{check}<tool_call>{{\"name\": \"read\", \"arguments\": {{\"path\": \"a.txt\"}}}}</tool_call>")}}], "usage": {}})),
+            (Api::Chat, json!({"choices": [{"message": {"content": "1. Requests: fix the par"}, "finish_reason": "length"}], "usage": {}})),
+            (Api::Messages, json!({"content": [{"type": "text", "text": check}, {"type": "tool_use", "id": "c9", "name": "read", "input": {}}], "usage": {}})),
+            (Api::Messages, json!({"content": [{"type": "text", "text": "1. Requests: fix"}], "stop_reason": "max_tokens", "usage": {}})),
+            (Api::Responses, json!({"output": [{"type": "message", "content": [{"type": "output_text", "text": check}]}, {"type": "function_call", "call_id": "c9", "name": "read", "arguments": "{}"}], "usage": {}})),
+            (Api::Responses, json!({"status": "incomplete", "output": [{"type": "message", "content": [{"type": "output_text", "text": "1. Req"}]}], "usage": {}})),
+        ];
+        for (i, (api, a)) in cases.into_iter().enumerate() {
+            let (mut l, sent, events) = compact_loop(api, vec![Ok(a), Ok(say_reply(api, "Requests: fix the parser", 900))], &dir);
+            l.msgs.extend([json!({"role": "user", "content": "fix the parser"}), json!({"role": "assistant", "content": "done"})]);
+            let (_tx, rx) = std::sync::mpsc::channel();
+            l.run(&json!("/compact"), false, &rx);
+            let sent = sent.borrow();
+            assert_eq!(sent.len(), 2, "case {i}: the text form after it");
+            assert!(sent[1].get("tools").is_none() && sent[1].get("cache_control").is_none() && json!(history(&sent[1])).to_string().contains("<conversation>"), "case {i}: {}", sent[1]);
+            assert_eq!(l.msgs.iter().filter(|m| summary_turn(m)).count(), 1, "case {i}");
+            assert!(!json!(l.msgs).to_string().contains(check), "case {i}: {:?}", l.msgs);
+            assert_eq!(boundaries(&events.borrow()).len(), 1, "case {i}");
+        }
+        // the text form cut off too: no compaction, the conversation as it was
+        let cut = json!({"choices": [{"message": {"content": "1. Req"}, "finish_reason": "length"}], "usage": {}});
+        let (mut l, _, events) = compact_loop(Api::Chat, vec![Ok(cut.clone()), Ok(cut)], &dir);
+        l.msgs.extend([json!({"role": "user", "content": "fix the parser"}), json!({"role": "assistant", "content": "done"})]);
+        let was = l.msgs.clone();
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("/compact"), false, &rx);
+        let r = events.borrow().last().unwrap().clone();
+        assert_eq!((l.msgs == was, r["result"].as_str().unwrap().starts_with("Compaction failed: the model wrote no summary")), (true, true), "{r}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The text form goes twice at most: too long, then its oldest half dropped and too long again, and it gives up.
+    #[test]
+    fn the_text_form_goes_twice_at_most() {
+        let dir = std::env::temp_dir().join(format!("tazuna-compact-twice-{}", std::process::id()));
+        let refusal = || Err("HTTP 400: prompt is too long: 215384 tokens > 200000 maximum".to_string());
+        let (mut l, sent, events) = compact_loop(Api::Chat, vec![refusal(), refusal(), refusal(), refusal()], &dir);
+        for i in 0..6 {
+            l.msgs.extend([json!({"role": "user", "content": format!("step {i}")}), json!({"role": "assistant", "content": format!("did {i}")})]);
+        }
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("/compact"), false, &rx);
+        let sent = sent.borrow();
+        assert_eq!(sent.len(), 3, "the request's own form, then the text form twice");
+        let (one, two) = (sent[1]["messages"][1]["content"].as_str().unwrap(), sent[2]["messages"][1]["content"].as_str().unwrap());
+        assert!(two.len() < one.len() && two.contains("User: step 0") && two.contains("earlier entries left out") && !two.contains("User: step 1"), "{two}");
+        assert!(events.borrow().last().unwrap()["result"].as_str().unwrap().starts_with("Compaction failed: "));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A run's first call refused as too long (no window known, so no auto-compaction): compacted once and sent again, the
+    /// run's message after the summary and its acknowledgement as typed, its mark with it. The summary in the request's form
+    /// is too long as well: the text form, without tools, words whole and tool output cut. Refused again after compacting:
+    /// the provider's error, no second compaction; nothing to compact: the error at once.
+    #[test]
+    fn a_too_long_call_compacts_once_and_goes_again() {
+        let dir = std::env::temp_dir().join(format!("tazuna-compact-long-{}", std::process::id()));
+        let refusal = "HTTP 400: This model's maximum context length is 131072 tokens. However, you requested 140123 tokens. (invalid_request_error)";
+        let replies = vec![Err(refusal.to_string()), Err(refusal.to_string()),
+            Ok(json!({"choices": [{"message": {"content": "Requests: fix the parser"}}], "usage": {"prompt_tokens": 40_000, "completion_tokens": 900}})),
+            Ok(json!({"choices": [{"message": {"content": "fixed"}}], "usage": {"prompt_tokens": 5000, "completion_tokens": 20}}))];
+        let (mut l, sent, events) = compact_loop(Api::Chat, replies, &dir);
+        let id = with_file(&mut l, "long");
+        let spec = format!("fix the parser: {}", "the grammar must accept nested lists. ".repeat(150));
+        l.msgs.extend([json!({"role": "user", "content": spec.clone()}),
+            json!({"role": "assistant", "content": "", "reasoning_content": "think", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "read", "arguments": "{\"path\":\"p.go\"}"}}]}),
+            json!({"role": "tool", "tool_call_id": "c1", "content": "x".repeat(5000)}),
+            json!({"role": "assistant", "content": "The parser is fixed."})]);
+        l.marks = vec![("u1".into(), 0), ("u2".into(), 4)];
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("now the tests"), false, &rx);
+        let sent = sent.borrow();
+        assert_eq!(sent.len(), 4);
+        let b = &sent[2];
+        assert!(b.get("tools").is_none() && b["messages"][0] == json!({"role": "system", "content": SUMMARY_SYSTEM}) && b["messages"].as_array().unwrap().len() == 2, "{b}");
+        let text = b["messages"][1]["content"].as_str().unwrap();
+        assert!(text.starts_with(SUMMARY_PROMPT) && text.contains(&format!("User: {spec}")) && text.contains("Tool call read: {\"path\":\"p.go\"}")
+            && text.contains("characters left out") && text.contains("User: now the tests") && !text.contains("think"), "{text}");
+        assert_eq!(sent[3]["messages"], json!([{"role": "system", "content": "sys"}, {"role": "user", "content": format!("{SUMMARY_HEAD}\n\nRequests: fix the parser")},
+            {"role": "assistant", "content": SUMMARY_ACK}, {"role": "user", "content": "now the tests"}]));
+        assert_eq!((&l.marks, &before_of(&l)["marks"]), (&vec![], &json!([["u1", 0], ["u2", 4]])));
+        let events = events.borrow();
+        assert_eq!((boundaries(&events).len(), events.last().unwrap()["result"].as_str()), (1, Some("fixed")));
+        drop_files(&id);
+
+        let replies = vec![Err(refusal.to_string()), Ok(json!({"choices": [{"message": {"content": "S"}}], "usage": {}})), Err(refusal.to_string())];
+        let (mut l, sent, events) = compact_loop(Api::Chat, replies, &dir);
+        l.msgs.extend([json!({"role": "user", "content": "a"}), json!({"role": "assistant", "content": "b"})]);
+        l.run(&json!("c"), false, &rx);
+        assert_eq!(sent.borrow().len(), 3);
+        let events = events.borrow();
+        let r = events.last().unwrap();
+        assert_eq!((r["subtype"].as_str(), boundaries(&events).len()), (Some("error_during_execution"), 1));
+        assert!(r["result"].as_str().unwrap().starts_with("[provider error: HTTP 400: This model's maximum context length"), "{r}");
+        let (mut l, sent, events) = compact_loop(Api::Chat, vec![Err(refusal.to_string())], &dir);
+        l.run(&json!("a huge paste"), false, &rx);
+        assert_eq!((sent.borrow().len(), boundaries(&events.borrow()).len(), failures(&events.borrow())), (1, 0, vec!["Compaction failed: nothing to compact yet".to_string()]));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The too-long path on Responses and Messages: their own refusals, compacted, the turn again in their own shape (the
+    /// summary, the acknowledgement, the run's message), no thinking or reasoning left (Messages' 400 arm would have dropped
+    /// the thinking and tried again).
+    #[test]
+    fn a_too_long_call_compacts_on_responses_and_messages() {
+        let dir = std::env::temp_dir().join(format!("tazuna-compact-long2-{}", std::process::id()));
+        for (api, refusal) in [(Api::Responses, "HTTP 400: Your input exceeds the context window of this model. Please adjust your input and try again. (invalid_request_error, input, context_length_exceeded)"),
+                               (Api::Messages, "HTTP 400: prompt is too long: 215384 tokens > 200000 maximum (invalid_request_error)")] {
+            let replies = vec![Err(refusal.to_string()), Ok(say_reply(api, "Requests: list files", 9000)), Ok(say_reply(api, "done", 800))];
+            let (mut l, sent, events) = compact_loop(api, replies, &dir);
+            match api {
+                Api::Responses => l.msgs.extend([json!({"role": "user", "content": "list files"}), json!({"type": "reasoning", "encrypted_content": "enc"}),
+                    json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "a.txt"}]})]),
+                _ => l.msgs.extend([json!({"role": "user", "content": "list files"}), json!({"role": "assistant", "content": [{"type": "thinking", "thinking": "plan", "signature": "sig"}, {"type": "text", "text": "a.txt"}]})]),
+            }
+            let (_tx, rx) = std::sync::mpsc::channel();
+            l.run(&json!("and the folders"), false, &rx);
+            let sent = sent.borrow();
+            assert_eq!(sent.len(), 3, "{api:?}");
+            assert_eq!(history(&sent[2]), vec![json!({"role": "user", "content": format!("{SUMMARY_HEAD}\n\nRequests: list files")}), json!({"role": "assistant", "content": SUMMARY_ACK}),
+                json!({"role": "user", "content": "and the folders"})], "{api:?}");
+            let events = events.borrow();
+            assert!(events.iter().all(|e| e["subtype"] != "thinking_dropped"), "{api:?}");
+            assert_eq!((boundaries(&events).len(), events.last().unwrap()["result"].as_str()), (1, Some("done")), "{api:?}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A failed auto-compaction is said and leaves the call to its own refusal: the too-long path still compacts once; a
+    /// too-long call with nothing to compact goes to the next route instead of ending the run.
+    #[test]
+    fn a_failed_compaction_leaves_the_too_long_path_and_the_next_route() {
+        let dir = std::env::temp_dir().join(format!("tazuna-compact-fail-{}", std::process::id()));
+        let refusal = || Err("HTTP 400: prompt is too long: 215384 tokens > 200000 maximum".to_string());
+        let boom = || Err("HTTP 500: boom".to_string());
+        let replies = vec![Ok(read_reply(Api::Chat, 1000)), boom(), boom(), refusal(), Ok(say_reply(Api::Chat, "S", 900)), Ok(say_reply(Api::Chat, "done", 300))];
+        let (mut l, sent, events) = compact_loop(Api::Chat, replies, &dir);
+        l.comp.at = Some(500);
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("what is in a.txt?"), false, &rx);
+        let events = events.borrow();
+        assert_eq!(sent.borrow().len(), 6);
+        assert_eq!((failures(&events), boundaries(&events).len()), (vec!["Compaction failed: HTTP 500: boom".to_string()], 1));
+        assert_eq!(events.last().unwrap()["result"], "done");
+
+        fn next(_: &str, _: &str, _: &str) -> Result<(Box<dyn FnMut(&Value) -> Result<Value>>, Api, Price)> {
+            Ok((Box::new(|_: &Value| Ok(json!({"choices": [{"message": {"role": "assistant", "content": "done there"}}], "usage": {}}))), Api::Chat, (1e-6, 1e-7, 4e-6)))
+        }
+        let (mut l, _, events) = compact_loop(Api::Chat, vec![refusal()], &dir);
+        (l.routes, l.connector) = (VecDeque::from([("https://b.example/v1".to_string(), "k".to_string())]), next);
+        l.run(&json!("a huge paste"), false, &rx);
+        let events = events.borrow();
+        assert!(events.iter().any(|e| e["subtype"] == "route_switch") && failures(&events).len() == 1, "{events:?}");
+        assert_eq!(events.last().unwrap()["result"], "done there");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// After a failed auto-compaction the next attempt waits until the input grows a tenth of the threshold past it, and
+    /// each failure is said once (it was tried before every later call, paying a summary call or two each time).
+    #[test]
+    fn a_failed_auto_compaction_is_not_tried_before_every_call() {
+        let dir = std::env::temp_dir().join(format!("tazuna-compact-retry-{}", std::process::id()));
+        let boom = || Err("HTTP 500: boom".to_string());
+        let replies = vec![Ok(read_reply(Api::Chat, 1000)), boom(), boom(), Ok(read_reply(Api::Chat, 1050)), Ok(read_reply(Api::Chat, 1100)),
+            Ok(say_reply(Api::Chat, "S", 900)), Ok(say_reply(Api::Chat, "done", 300))];
+        let (mut l, sent, events) = compact_loop(Api::Chat, replies, &dir);
+        l.comp.at = Some(1000);
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("what is in a.txt?"), false, &rx);
+        let roles: Vec<&str> = sent.borrow().iter().map(|b| if b["messages"].as_array().unwrap().last().unwrap()["content"] == SUMMARY_PROMPT { "A" }
+            else if b.get("tools").is_none() { "B" } else { "call" }).collect();
+        assert_eq!(roles, ["call", "A", "B", "call", "call", "A", "call"], "no attempt at 1050, one at 1100");
+        let events = events.borrow();
+        assert_eq!((failures(&events).len(), boundaries(&events).len(), events.last().unwrap()["result"].as_str()), (1, 1, Some("done")));
+        assert!(events.iter().any(|e| e["subtype"] == "compact_failed") && l.comp.failed_at.is_none(), "cleared by the compaction");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A text form that came back but cannot stand (cut off) fails the attempt; the backoff and the conversation's size are
+    /// the input before it, not the summary call's (a 45k text form read as the conversation and the backoff waited from
+    /// there).
+    #[test]
+    fn a_rejected_text_form_leaves_the_input_as_it_was() {
+        let dir = std::env::temp_dir().join(format!("tazuna-compact-rejected-{}", std::process::id()));
+        let cut = |input: u64| json!({"choices": [{"message": {"content": "1. Req"}, "finish_reason": "length"}], "usage": {"prompt_tokens": input}});
+        let replies = vec![Ok(read_reply(Api::Chat, 1000)), Ok(cut(1100)), Ok(cut(45_000)), Ok(say_reply(Api::Chat, "done", 1080))];
+        let (mut l, sent, events) = compact_loop(Api::Chat, replies, &dir);
+        l.comp.at = Some(500);
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("what is in a.txt?"), false, &rx);
+        assert_eq!(sent.borrow().len(), 4);
+        assert_eq!((l.comp.failed_at, failures(&events.borrow()).len()), (Some(1000), 1));
+        assert_eq!(l.comp.last_input, 1080, "the run's own last call, not the 45k text form");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A stop during the summary call: no text form after it, no second row, the run interrupted.
+    #[test]
+    fn a_stop_during_the_summary_ends_it() {
+        let dir = std::env::temp_dir().join(format!("tazuna-compact-stop-{}", std::process::id()));
+        let (mut l, sent, events) = compact_loop(Api::Chat, vec![], &dir);
+        let s = sent.clone();
+        l.call = Box::new(move |b: &Value| {
+            s.borrow_mut().push(b.clone());
+            TEST_STOP.set(true);
+            anyhow::bail!("stopped")
+        });
+        l.msgs.extend([json!({"role": "user", "content": "fix it"}), json!({"role": "assistant", "content": "done"})]);
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("/compact"), false, &rx);
+        TEST_STOP.set(false);
+        let events = events.borrow();
+        assert_eq!(sent.borrow().len(), 1);
+        assert_eq!(events.iter().filter(|e| e["event"]["type"] == "message_start").count(), 1);
+        assert_eq!((events.last().unwrap()["result"].as_str(), failures(&events).len()), (Some("[interrupted]"), 0));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The dollar cap again right after a compaction (its call counts), and no compaction between runs on a spent cap.
+    #[test]
+    fn the_cap_is_checked_after_a_compaction() {
+        let dir = std::env::temp_dir().join(format!("tazuna-compact-cap-{}", std::process::id()));
+        let costly = json!({"choices": [{"message": {"content": "S"}}], "usage": {"prompt_tokens": 900, "cost": 1.5}});
+        let (mut l, sent, events) = compact_loop(Api::Chat, vec![Ok(read_reply(Api::Chat, 1000)), Ok(costly)], &dir);
+        l.comp.at = Some(500);
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("what is in a.txt?"), false, &rx);
+        assert_eq!((sent.borrow().len(), events.borrow().last().unwrap()["subtype"].as_str()), (2, Some("error_max_budget_usd")));
+        // a follow-up on a spent task: no summary call at all
+        let (mut l, sent, events) = compact_loop(Api::Chat, vec![], &dir);
+        l.msgs.extend([json!({"role": "user", "content": "fix it"}), json!({"role": "assistant", "content": "done"})]);
+        (l.comp.at, l.comp.last_input, l.cost) = (Some(500), 1000, 2.0);
+        l.run(&json!("tests fail"), true, &rx);
+        assert_eq!((sent.borrow().len(), events.borrow().last().unwrap()["subtype"].as_str()), (0, Some("error_max_budget_usd")));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Between runs the conversation before the new message is compacted, the message after the summary and its
+    /// acknowledgement as typed, its mark with it; when that fails, the mark goes back where it was.
+    #[test]
+    fn between_runs_the_new_message_stays_as_typed() {
+        let dir = std::env::temp_dir().join(format!("tazuna-compact-between-{}", std::process::id()));
+        let replies = vec![Ok(json!({"choices": [{"message": {"content": "S"}}], "usage": {"prompt_tokens": 9000}})), Ok(json!({"choices": [{"message": {"content": "ok"}}], "usage": {"prompt_tokens": 800}}))];
+        let (mut l, sent, events) = compact_loop(Api::Chat, replies, &dir);
+        let id = with_file(&mut l, "between");
+        l.msgs.extend([json!({"role": "user", "content": "fix it"}), json!({"role": "assistant", "content": "done"})]);
+        (l.marks, l.comp.at, l.comp.last_input) = (vec![("u1".into(), 0), ("u2".into(), 2)], Some(5000), 9000);
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("next task"), false, &rx);
+        let sent = sent.borrow();
+        assert!(!sent[0].to_string().contains("next task"), "the summary is of the conversation before it");
+        assert_eq!(sent[1]["messages"], json!([{"role": "system", "content": "sys"}, {"role": "user", "content": format!("{SUMMARY_HEAD}\n\nS")},
+            {"role": "assistant", "content": SUMMARY_ACK}, {"role": "user", "content": "next task"}]));
+        assert_eq!((&l.marks, &before_of(&l)["marks"]), (&vec![("u2".to_string(), 2)], &json!([["u1", 0]])));
+        assert_eq!((boundaries(&events.borrow())[0]["trigger"].as_str(), l.comp.last_input), (Some("auto"), 800));
+        drop_files(&id);
+
+        let boom = || Err("HTTP 500: boom".to_string());
+        let (mut l, sent, events) = compact_loop(Api::Chat, vec![boom(), boom(), Ok(json!({"choices": [{"message": {"content": "ok"}}], "usage": {}}))], &dir);
+        l.msgs.extend([json!({"role": "user", "content": "fix it"}), json!({"role": "assistant", "content": "done"})]);
+        (l.marks, l.comp.at, l.comp.last_input) = (vec![("u1".into(), 0), ("u2".into(), 2)], Some(5000), 9000);
+        l.run(&json!("next task"), false, &rx);
+        assert_eq!(l.marks, vec![("u1".to_string(), 0), ("u2".to_string(), 2)], "the mark back where it was");
+        assert_eq!(sent.borrow()[2]["messages"].as_array().unwrap().len(), 4, "the conversation as it was, and the message");
+        assert_eq!(failures(&events.borrow()).len(), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `/compact` typed: never sent to the model; one summary call, the event marked manual, a result that ends the turn,
+    /// the conversation the summary and its acknowledgement; the marks with the old history. With nothing to compact
+    /// (nothing yet, or the summary alone), said, no call. A focus goes with the instruction; tazuna's own "/compact" is a
+    /// message like any. The summary alone at the threshold turns auto-compaction off, said once.
+    #[test]
+    fn compact_typed_is_tazunas_and_never_the_models() {
+        let dir = std::env::temp_dir().join(format!("tazuna-compact-cmd-{}", std::process::id()));
+        let (mut l, sent, events) = compact_loop(Api::Chat, vec![Ok(json!({"choices": [{"message": {"content": "S"}}], "usage": {"prompt_tokens": 9000, "completion_tokens": 300}}))], &dir);
+        let id = with_file(&mut l, "cmd");
+        l.msgs.extend([json!({"role": "user", "content": "fix it"}), json!({"role": "assistant", "content": "done"})]);
+        (l.marks, l.comp.last_input, l.comp.at) = (vec![("u1".into(), 0), ("u2".into(), 2)], 9000, Some(5));
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("/compact keep the API notes"), false, &rx);
+        assert_eq!(sent.borrow().len(), 1);
+        assert!(!sent.borrow()[0].to_string().contains("/compact"), "{}", sent.borrow()[0]);
+        assert_eq!(history(&sent.borrow()[0]).last().unwrap()["content"], json!(format!("{SUMMARY_PROMPT}\nThe user asks the summary to focus on: keep the API notes")));
+        assert_eq!(l.msgs, vec![json!({"role": "system", "content": "sys"}), json!({"role": "user", "content": format!("{SUMMARY_HEAD}\n\nS")}), json!({"role": "assistant", "content": SUMMARY_ACK})]);
+        assert!(l.marks.is_empty());
+        assert_eq!(before_of(&l)["marks"], json!([["u1", 0], ["u2", 2]]));
+        {
+            let events = events.borrow();
+            let b = boundaries(&events);
+            assert_eq!((&b[0]["trigger"], &b[0]["pre_tokens"]), (&json!("manual"), &json!(9000)));
+            let r = events.last().unwrap();
+            assert_eq!((r["subtype"].as_str(), r["is_error"].as_bool(), &r["usage"]["input_tokens"]), (Some("success"), Some(false), &json!(9000)));
+            let notes: Vec<&str> = events.iter().filter(|e| e["subtype"] == "compact_note").filter_map(|e| e["message"].as_str()).collect();
+            assert_eq!((l.comp.at, notes, failures(&events).len()), (None, vec!["Auto-compact off for this conversation: the summary alone reaches its threshold"], 0));
+        }
+        // the summary alone: nothing to compact
+        l.run(&json!("/compact"), false, &rx);
+        assert_eq!((sent.borrow().len(), events.borrow().last().unwrap()["result"].as_str()), (1, Some("Nothing to compact yet")));
+        drop_files(&id);
+        let (mut l, sent, _) = compact_loop(Api::Chat, vec![Ok(json!({"choices": [{"message": {"content": "ok"}}], "usage": {}}))], &dir);
+        l.run(&json!("/compact"), true, &rx);
+        assert_eq!(sent.borrow()[0]["messages"][1]["content"], "/compact");
+        let (mut l, sent, events) = compact_loop(Api::Chat, vec![], &dir);
+        l.run(&json!("/compact"), false, &rx);
+        assert_eq!((sent.borrow().len(), events.borrow().last().unwrap()["result"].as_str()), (0, Some("Nothing to compact yet")));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The summary's output cap leaves the window room for its input (a 16k vLLM server counts the cap against it); a
+    /// refusal that names a field the summary added goes again without it (ChatGPT's Codex backend takes no
+    /// max_output_tokens), all in one call's row.
+    #[test]
+    fn the_summary_fits_the_window_and_drops_a_refused_field() {
+        let dir = std::env::temp_dir().join(format!("tazuna-compact-cap-field-{}", std::process::id()));
+        let replies = vec![Err("HTTP 400: Unsupported parameter: 'tool_choice' is not supported with this model.".to_string()),
+            Err("HTTP 400: Unsupported parameter: max_tokens (invalid_request_error)".to_string()), Ok(say_reply(Api::Chat, "S", 12_000))];
+        let (mut l, sent, events) = compact_loop(Api::Chat, replies, &dir);
+        l.msgs.extend([json!({"role": "user", "content": "fix it"}), json!({"role": "assistant", "content": "done"})]);
+        (l.comp.window, l.comp.last_input) = (Some((60_000, false)), 40_000);
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("/compact"), false, &rx);
+        let sent = sent.borrow();
+        assert_eq!(sent.len(), 3);
+        assert_eq!((&sent[0]["max_tokens"], &sent[0]["tool_choice"]), (&json!(60_000 - 41_000 - 1000 - 1200), &json!("none")));
+        assert!(sent[1].get("tool_choice").is_none() && sent[1].get("max_tokens").is_some() && sent[2].get("max_tokens").is_none());
+        let events = events.borrow();
+        assert_eq!((events.iter().filter(|e| e["event"]["type"] == "message_start").count(), boundaries(&events).len()), (1, 1));
+        // near the end of a 16k window: 8k at least; a window of input alone (272k for GPT): the whole 20k
+        let cap = |window: (u64, bool), input: u64| {
+            let (mut l, _, _) = compact_loop(Api::Chat, vec![], &dir);
+            (l.comp.window, l.comp.last_input) = (Some(window), input);
+            let mut body = json!({});
+            l.cap_summary(&mut body, input + 1000);
+            body["max_tokens"].as_u64().unwrap()
+        };
+        assert_eq!((cap((16_000, false), 12_000), cap((272_000, true), 270_000), cap((1_000_000, false), 100_000)), (8_000, SUMMARY_MAX_OUT, SUMMARY_MAX_OUT));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A compacted session on disk: the main file names the old history's file (written once, not again with every
+    /// message); a resume reads the summary; "edit from here" (and a rewind or a retry, `--resume-before`) on a message from
+    /// before a compaction brings that history back up to it, two compactions back too; on one after it the summary stays.
+    #[test]
+    fn a_rewind_past_a_compaction_brings_the_old_history_back() {
+        let dir = std::env::temp_dir().join(format!("tazuna-compact-disk-{}", std::process::id()));
+        let summary = |text: &str| Ok(json!({"choices": [{"message": {"content": text}}], "usage": {"prompt_tokens": 100}}));
+        let (mut l, _, _) = compact_loop(Api::Chat, vec![summary("S1"), summary("S2")], &dir);
+        let id = with_file(&mut l, "disk");
+        l.msgs.extend([json!({"role": "user", "content": "one"}), json!({"role": "assistant", "content": "1"})]);
+        l.marks = vec![("u1".into(), 0), ("u2".into(), 2)];
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("/compact"), false, &rx);
+        l.msgs.extend([json!({"role": "user", "content": "two"}), json!({"role": "assistant", "content": "2"})]);
+        l.marks.extend([("u3".into(), 2), ("u4".into(), 4)]);
+        l.run(&json!("/compact"), false, &rx);
+        l.save();
+        let main: Value = serde_json::from_str(&std::fs::read_to_string(super::history_file(&id).unwrap()).unwrap()).unwrap();
+        assert!(main["before"].as_str().is_some_and(|b| b.starts_with(&id)), "{main}");
+        let h = super::load_history(&id, Api::Chat).unwrap();
+        assert_eq!(h.msgs, vec![json!({"role": "user", "content": format!("{SUMMARY_HEAD}\n\nS2")}), json!({"role": "assistant", "content": SUMMARY_ACK})], "a resume goes on from the summary");
+        let cut = |uuid: &str| {
+            let mut h = History { msgs: h.msgs.clone(), marks: h.marks.clone(), before: h.before.clone() };
+            let found = h.cut_before(uuid);
+            (found, h.msgs.iter().map(|m| m["content"].as_str().unwrap().replace(SUMMARY_HEAD, "").replace(SUMMARY_ACK, "ack").trim().to_string()).collect::<Vec<_>>())
+        };
+        assert_eq!(cut("u4"), (true, vec!["S1".to_string(), "ack".into(), "two".into(), "2".into()]));
+        assert_eq!(cut("u3"), (true, vec!["S1".to_string(), "ack".into()]));
+        assert_eq!(cut("u2"), (true, vec!["one".to_string(), "1".into()]));
+        assert_eq!(cut("u1"), (true, vec![]));
+        assert_eq!(cut("never"), (false, vec!["S2".to_string(), "ack".into()]), "an id it never saw leaves it whole");
+        drop_files(&id);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Old histories nothing names (a crash between writing one and the main file naming it) and half-written ones go when
+    /// the session resumes; the chain's stay, and so does another session's.
+    #[test]
+    fn unnamed_old_histories_go_at_a_resume() {
+        let id = format!("own-test-sweep-{}", std::process::id());
+        let f = |n: &str| super::history_file(n).unwrap();
+        std::fs::create_dir_all(f(&id).parent().unwrap()).unwrap();
+        let (a, b, orphan, other) = (format!("{id}-ba"), format!("{id}-bb"), format!("{id}-bc"), format!("{id}x-bd"));
+        std::fs::write(f(&a), json!({"msgs": [], "marks": [], "before": b}).to_string()).unwrap();
+        std::fs::write(f(&b), json!({"msgs": [], "marks": [], "before": null}).to_string()).unwrap();
+        std::fs::write(f(&orphan), "{}").unwrap();
+        std::fs::write(f(&other), "{}").unwrap();
+        let half = f(&format!("{id}-be")).with_extension("json.tmp");
+        std::fs::write(&half, "{").unwrap();
+        super::sweep_befores(&id, Some(&a));
+        assert!(f(&a).exists() && f(&b).exists() && f(&other).exists() && !f(&orphan).exists() && !half.exists());
+        drop_files(&id);
+        drop_files(&format!("{id}x"));
+    }
+
+    /// The summary calls leave the route's speed and cache rules alone (an uncached summary is no route that stopped
+    /// caching); the explorer starts each question afresh, compaction state and old history included.
+    #[test]
+    fn summary_calls_are_not_route_calls_and_the_explorer_starts_fresh() {
+        let dir = std::env::temp_dir().join(format!("tazuna-compact-route-{}", std::process::id()));
+        let replies = vec![Ok(read_reply(Api::Chat, 1000)), Ok(say_reply(Api::Chat, "S", 900)), Ok(say_reply(Api::Chat, "done", 300))];
+        let (mut l, _, _) = compact_loop(Api::Chat, replies, &dir);
+        (l.routes, l.comp.at) = (VecDeque::from([("https://b.example/v1".to_string(), "k".to_string())]), Some(500));
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("what is in a.txt?"), false, &rx);
+        assert_eq!(l.route_calls.iter().map(|c| c.1).collect::<Vec<_>>(), [1000, 300]);
+        (l.comp.before, l.comp.failed_at, l.marks) = (Some("own-x-b1".into()), Some(9), vec![("u".into(), 0)]);
+        l.fresh();
+        assert!(l.marks.is_empty() && l.comp.before.is_none() && l.comp.failed_at.is_none() && l.comp.last_input == 0 && l.msgs.len() == 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Cut off at the cap, said as an unstreamed reply says it: Chat's "length", Messages' "max_tokens" (a summary then
+    /// cannot stand); Gemini's MAX_TOKENS as "length".
+    #[test]
+    fn streamed_replies_keep_their_stop_reason() {
+        let chat = from_stream(&[json!({"choices": [{"delta": {"content": "1. Req"}}]}), json!({"choices": [{"delta": {}, "finish_reason": "length"}]})], Api::Chat).unwrap();
+        let messages = from_stream(&[json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
+            json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "1. Req"}}),
+            json!({"type": "message_delta", "delta": {"stop_reason": "max_tokens"}, "usage": {"output_tokens": 9}})], Api::Messages).unwrap();
+        assert_eq!((&chat["choices"][0]["finish_reason"], &messages["stop_reason"]), (&json!("length"), &json!("max_tokens")));
+        let plain = from_stream(&[json!({"choices": [{"delta": {"content": "hi"}}]})], Api::Chat).unwrap();
+        assert!(plain["choices"][0].get("finish_reason").is_none(), "none where the stream names none");
+        let (l, _, _) = compact_loop(Api::Chat, vec![], &std::env::temp_dir().join(format!("tazuna-compact-stop-reason-{}", std::process::id())));
+        assert_eq!(l.summary_of(&chat), None);
+        let gemini = from_gemini(&[json!({"response": {"candidates": [{"content": {"parts": [{"text": "1. Req"}]}, "finishReason": "MAX_TOKENS"}]}})]).unwrap();
+        assert_eq!(gemini["choices"][0]["finish_reason"], "length");
+        // Responses cut at max_output_tokens ends with response.incomplete: that response, not an error tried 12 times
+        let incomplete = from_stream(&[json!({"type": "response.output_text.delta", "delta": "1. Req"}),
+            json!({"type": "response.incomplete", "response": {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"},
+                "output": [{"type": "message", "content": [{"type": "output_text", "text": "1. Req"}]}], "usage": {"input_tokens": 9}}})], Api::Responses).unwrap();
+        let (r, _, _) = compact_loop(Api::Responses, vec![], &std::env::temp_dir().join(format!("tazuna-compact-stop-reason-r-{}", std::process::id())));
+        assert_eq!((incomplete["status"].as_str(), r.summary_of(&incomplete)), (Some("incomplete"), None));
+    }
+
+    /// The text form: tool calls and results cut, words whole (a long spec), an earlier summary whole, no acknowledgement.
+    #[test]
+    fn the_text_form_cuts_tool_output_only() {
+        let long_summary = format!("{SUMMARY_HEAD}\n\n{}", "a decision kept. ".repeat(800));
+        let spec = "the parser must accept nested lists. ".repeat(140);
+        let parts = transcript(&[json!({"role": "user", "content": long_summary}), json!({"role": "assistant", "content": SUMMARY_ACK}),
+            json!({"role": "user", "content": spec}), json!({"role": "tool", "tool_call_id": "c", "content": "y".repeat(5000)})], 1000);
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0], long_summary);
+        assert_eq!(parts[1], format!("User: {spec}"));
+        assert!(parts[2].starts_with("Tool result: ") && parts[2].contains("3000 characters left out") && parts[2].len() < 2200, "{}", parts[2]);
+    }
+
+    /// What the view makes of an own-loop compaction: the model's window from the engine's init (its share, the warning
+    /// colour and Compact work), /compact on offer, "compacting" while the summary runs, the summary call's row marked
+    /// "Compaction", the context the summary's after the boundary and the notice in the conversation, Claude's cache still
+    /// none; a failed compaction said as an error notice.
+    #[test]
+    fn the_view_shows_an_own_loop_compaction() {
+        let dir = std::env::temp_dir().join(format!("tazuna-compact-view-{}", std::process::id()));
+        let (mut l, _, events) = compact_loop(Api::Chat, vec![Ok(json!({"choices": [{"message": {"content": "S"}}], "usage": {"prompt_tokens": 120_000, "completion_tokens": 400}}))], &dir);
+        l.msgs.extend([json!({"role": "user", "content": "fix it"}), json!({"role": "assistant", "content": "done"})]);
+        l.comp.last_input = 120_000;
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("/compact"), false, &rx);
+        let mut s = crate::session::Session::new("", "");
+        s.apply(&json!({"type": "system", "subtype": "init", "model": "m", "price_per_m": [1, 0.1, 4], "provider": "SubRouter", "slash_commands": ["compact"], "context_window": 128_000}), 0.0);
+        s.apply(&json!({"type": "harness_user", "text": "/compact"}), 1.0);
+        s.context = 120_000;
+        assert_eq!((s.view()["context_window"].as_u64(), s.view()["compact"].as_bool()), (Some(128_000), Some(true)));
+        let (mut compacting, mut context, mut bounded) = (vec![], vec![], false);
+        for (i, e) in events.borrow().iter().enumerate() {
+            s.apply(e, 2.0 + i as f64);
+            compacting.push(s.view()["compacting"] == true);
+            bounded |= e["subtype"] == "compact_boundary";
+            if !bounded {
+                context.push(s.context);
+            }
+        }
+        assert!(compacting.iter().any(|c| *c) && !compacting.last().unwrap(), "compacting while it runs, not after");
+        assert!(context.iter().all(|c| *c == 120_000), "the summary call's input is not the conversation's: {context:?}");
+        let v = s.view();
+        let post = boundaries(&events.borrow())[0]["post_tokens"].as_u64().unwrap();
+        assert!(post > 0 && post < 1000, "{post}");
+        assert_eq!((v["context"].as_u64(), &v["cache"]), (Some(post), &Value::Null));
+        let calls = v["calls"].as_array().unwrap();
+        assert_eq!((calls.len(), &calls[0]["role"], &calls[0]["fresh"]), (1, &json!("Compaction"), &json!(120_000)), "{calls:?}");
+        let notices: Vec<&str> = v["blocks"].as_array().unwrap().iter().filter(|b| b["kind"] == "notice").filter_map(|b| b["text"].as_str()).collect();
+        assert!(notices.contains(&"── context compacted: earlier turns are now a summary ──"), "{}", v["blocks"]);
+        s.apply(&json!({"type": "system", "subtype": "compact_failed", "message": "Compaction failed: HTTP 500: boom"}), 50.0);
+        let b = s.view()["blocks"].as_array().unwrap().last().unwrap().clone();
+        assert_eq!((&b["kind"], &b["text"], &b["error"]), (&json!("notice"), &json!("Compaction failed: HTTP 500: boom"), &json!(true)));
+        s.apply(&json!({"type": "system", "subtype": "compact_note", "message": "Auto-compact off for this conversation: the summary alone reaches its threshold"}), 51.0);
+        assert_eq!(s.view()["blocks"].as_array().unwrap().last().unwrap()["error"], json!(false), "no error");
+        // a failed /compact: its words once, as the failure (not a text block as well)
+        let mut f = crate::session::Session::new("", "");
+        f.apply(&json!({"type": "system", "subtype": "init", "model": "m", "price_per_m": [1, 0.1, 4], "slash_commands": ["compact"], "context_window": 136_000, "context_window_full": 200_000}), 0.0);
+        assert_eq!((f.view()["context_window"].as_u64(), f.view()["context_window_full"].as_u64()), (Some(136_000), Some(200_000)), "what fits and the whole window");
+        f.apply(&json!({"type": "harness_user", "text": "/compact"}), 1.0);
+        f.apply(&json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "Compaction failed: HTTP 500: boom", "num_turns": 0, "total_cost_usd": 0.0}), 2.0);
+        let said = f.view()["blocks"].as_array().unwrap().iter().filter(|b| b.to_string().contains("HTTP 500: boom")).count();
+        assert_eq!(said, 1, "{}", f.view()["blocks"]);
+        let mut g = crate::session::Session::new("", "");
+        g.apply(&json!({"type": "system", "subtype": "init", "model": "m", "context_window": 128_000, "context_window_full": 128_000}), 0.0);
+        assert!(g.view()["context_window_full"].is_null(), "the same figure is said once");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

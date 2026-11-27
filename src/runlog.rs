@@ -41,6 +41,9 @@ pub struct Run {
     pub review: Option<Value>,
     /// The cheaper lane's part of an escalated run (`escalated`).
     lane: Option<Value>,
+    /// Times the conversation was compacted in this run (a `compact_boundary`: claude's, or the own loop's since
+    /// 2026-11-27), so benchmarks can see them.
+    compactions: u32,
 }
 
 pub type SharedBaseline = std::sync::Arc<std::sync::Mutex<Baseline>>;
@@ -88,6 +91,7 @@ impl Run {
             reviewed: false,
             review: None,
             lane: None,
+            compactions: 0,
         }
     }
 
@@ -158,6 +162,7 @@ impl Run {
                     self.tools.entry(name).or_default().0 += 1;
                 }
             }
+            Some("system") if e["subtype"] == "compact_boundary" => self.compactions += 1,
             Some("user") => {
                 for c in e["message"]["content"].as_array().into_iter().flatten().filter(|c| c["type"] == "tool_result" && c["is_error"] == true) {
                     if let Some(t) = c["tool_use_id"].as_str().and_then(|id| self.ids.get(id)).and_then(|n| self.tools.get_mut(n)) {
@@ -220,6 +225,7 @@ impl Run {
             "terminal_reason": result.map(|r| r["terminal_reason"].clone()).unwrap_or(Value::Null),
             "secs": ((at_ms - self.started_ms) / 100.0).round() / 10.0,
             "turns": self.turns.len(),
+            "compactions": self.compactions,
             "cost_usd": (self.cost * 1e6).round() / 1e6,
             "escalated": self.escalated,
             "review": self.review,
@@ -355,6 +361,18 @@ mod tests {
         assert_eq!(line["tokens"]["output"], 5988);
         assert!(line["cache_hit"].as_f64().unwrap() > 0.85);
         assert_eq!(line["git"], Value::Null); // not a repo
+    }
+
+    /// Compactions in a run are counted (claude's `compact_boundary` and the own loop's, the same event), so benchmarks see them.
+    #[test]
+    fn counts_the_runs_compactions() {
+        let mut run = Run::new("long task", 0.0, Path::new("/nonexistent"));
+        let boundary = json!({"type": "system", "subtype": "compact_boundary", "compact_metadata": {"trigger": "auto", "pre_tokens": 900, "post_tokens": 40}});
+        assert_eq!(Run::new("x", 0.0, Path::new("/nonexistent")).finish(None, 1.0, &json!({}), Path::new("/nonexistent"))["compactions"], 0);
+        run.observe(&boundary);
+        run.observe(&json!({"type": "system", "subtype": "init"}));
+        run.observe(&boundary);
+        assert_eq!(run.finish(None, 1.0, &json!({}), Path::new("/nonexistent"))["compactions"], 2);
     }
 
     #[test]

@@ -227,7 +227,7 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   it wins, find which plugin does it and borrow the idea. Never with company code (it calls DeepSeek's API). Cost:
   likely above the $0.50 weekly SubRouter cap; estimate first.
 - Hand-off to a fresh session with a structured summary instead of compaction (Amp, pi): not needed yet (decision log
-  2026-10-29).
+  2026-10-29); the own loop compacts near its window since 2026-11-27 (a safety net).
 - Checkpoints and rewind (OMP).
 - A careful lane (phased effort): 7.17 vs 6.33 judge at 2.5-3× the cost of Opus medium, in an early test.
 - A heavy profile with subagents (Haiku explorer, Opus planner, Sonnet implementer).
@@ -301,6 +301,16 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | t3code as a rival (0.1.7, 2026-11-08, one-line fix, Opus 5.5 medium) | first call 34.7k tokens vs 17.6k for stock `claude -p`, ~725 MB RAM vs 250 MB (its server alone 418 MB idle) | on Claude it runs the `claude` CLI through the Agent SDK with Claude Code's full prompt plus its own Artifact tool (33.7k chars); nothing leaner to borrow. Its idle compaction before the cache expires is parked |
 
 ## Decision log
+
+- 2026-11-27: own-loop compaction built as a safety net, not a saving (the user approved it): a session that reached its
+  model's window failed, since only claude compacts by itself. Three triggers: `/compact` typed (never sent to the model),
+  auto before a call once the last input reaches the Auto-compact setting's share of the window (90% by default; none
+  where the window is unknown), and compact-and-retry once on a provider's too-long error. One summary call to the same
+  model (the request as it went plus the instruction, so it reads the cache; the conversation as text when that does not
+  fit); the new history keeps system prompt and tools and starts with the summary, the old one stays in the history file
+  for a rewind. No early compaction (2026-10-09: at most ~9% of reads). Measured by the run log's `compactions` and an A/B
+  of long tasks forced to compact against none (plan: out/review-14/compaction-design.md); until then it is a net, not a
+  default to lower.
 
 - 2026-11-25: replace the desktop's Pixel Hand with Stroke Order. Four separate strokes keep 手 and give the working row
   a clear order to write; the sidebar pulses the complete mark, and the terminal keeps its glyph and colour pulse.

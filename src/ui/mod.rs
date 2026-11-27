@@ -1671,6 +1671,8 @@ pub fn activity(s: &Session, v: &View, th: &Theme) -> (&'static str, String, Col
         Activity::Ready | Activity::Done if v.bg_running > 0 => (spin, format!("{} working in background · ctrl-b", v.bg_running), th.accent),
         Activity::Ready if let Some(why) = v.cant_run => ("!", why.into(), th.warn),
         Activity::Ready => ("", "ready".into(), th.dim),
+        // a compaction (claude's or the own loop's): its own word, not "thinking" nor the provider's queue in warn
+        Activity::Starting | Activity::Waiting | Activity::Thinking if s.compacting => (spin, "compacting".into(), th.accent),
         // keep-alive pings and no output (the own loop's provider queueing it): said, so it does not look like tazuna hangs
         Activity::Waiting if s.waiting_note.is_some() => (spin, "provider still processing (no output yet)".into(), th.warn),
         // from Enter to the first output it reads "thinking" throughout: "starting", "waiting for model" and then "thinking"

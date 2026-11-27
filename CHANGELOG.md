@@ -16,6 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.235 (2026-11-27): compaction for the own loop
+
+A safety net for sessions near their model's window (the own loop had none: such a session failed). Runs that stay below
+the threshold are unchanged (same requests, no extra calls); the quality of a run that compacts is measured by an A/B
+on Mistral Vibe's DeepSeek V4.1 Flash 1017 (forced compaction at 80k vs none), recorded here when it is done.
+- `/compact` in an own-loop session, auto-compaction at the Auto-compact setting's share of the usable window (default
+  90%; headless runs 90%), and one compact-and-retry on a too-long error (no more 15-minute retries or fallback routes for
+  those). One summary call on the same model and key (cache read, output fitted to the window, rejected when it calls a
+  tool or is cut off, a text-form fallback twice at most); the new history keeps the system prompt and tools byte-stable,
+  then the summary, an acknowledgement and the message. A failed attempt says so and waits until the input grows.
+- The summary call counts like any call (cost, the dollar cap, the run log's new `compactions`); the earlier history
+  goes to its own file, so rewind, edit and retry from before a compaction still work.
+- Context windows for the own loop: a sixth column of models.dev data (input-only windows marked), else the provider's
+  own model list; the view shows the usable share ("136k usable (200k window)" where output room is held back).
+
 ## 0.1.234 (2026-11-27): Claude's cache warmth, compaction, auto-compact
 
 For the desktop's context and cache numbers (no measurable metric moves: nothing in the prompt, tools or routing of a

@@ -251,6 +251,8 @@ struct CallBill {
     cost: Option<f64>,
     unreported: bool,
     uncounted: u32,
+    /// What the call was for when not the agent's turn: the own loop's compaction ("Compaction" on its row).
+    role: Option<&'static str>,
 }
 
 /// Claude's list prices per million (uncached input, cached input, output) where the core has them: Opus 5.5's, the
@@ -359,9 +361,11 @@ pub struct Session {
     pub provider: Option<String>,
     /// Tokens in the latest request: how full the context is.
     pub context: u64,
-    /// The model's context window, as claude's result reports it; None until then and after a switch (the own loop's
-    /// providers report none).
+    /// The model's context window, as claude's result reports it; None until then and after a switch. The own loop's
+    /// engine says what of it a request's input may fill (less the output Anthropic or a Chat cap counts against it), and
+    /// the model's whole window beside it (`context_window_full`) where they differ.
     pub context_window: Option<u64>,
+    pub context_window_full: Option<u64>,
     /// The live thinking count before its latest step and when that step came (ms): the screen counts up between them.
     think_from: (u64, f64),
     now_ms: f64,
@@ -428,6 +432,9 @@ pub struct Session {
     first_token: Option<f64>,
     /// The own loop's provider is sending keep-alive comments and no output yet (cleared when the call answers or ends).
     pub waiting_note: Option<String>,
+    /// A compaction runs (claude's `status: "compacting"`, the own loop's the same since 2026-11-27): the screens say
+    /// "compacting" while it lasts, not "thinking".
+    pub compacting: bool,
     /// The retry block of the call being tried again now (its place in `blocks`); None once it answered or the run ended.
     retry: Option<usize>,
     /// Each subagent's own messages, by the call that started it: ctrl-b opens one as a conversation of its own.
@@ -563,6 +570,7 @@ impl Session {
             context: 0,
             // unknown (null in the view, no stand-in) until a result reports it
             context_window: None,
+            context_window_full: None,
             think_from: (0, 0.0),
             now_ms: 0.0,
             model: String::new(),
@@ -598,6 +606,7 @@ impl Session {
             first_token: None,
             sub_events: Default::default(),
             waiting_note: None,
+            compacting: false,
             retry: None,
             call_est: 0.0,
             call_in: None,
@@ -644,7 +653,7 @@ impl Session {
     pub fn fresh(&self) -> Session {
         let mut s = Session::new("", &self.effort);
         (s.model, s.cwd, s.profile, s.mode, s.commands) = (self.model.clone(), self.cwd.clone(), self.profile.clone(), self.mode.clone(), self.commands.clone());
-        (s.limits, s.limits_at, s.balance, s.context_window) = (self.limits, self.limits_at, self.balance, self.context_window);
+        (s.limits, s.limits_at, s.balance, s.context_window, s.context_window_full) = (self.limits, self.limits_at, self.balance, self.context_window, self.context_window_full);
         s.credits = self.credits.clone();
         s
     }
@@ -862,17 +871,18 @@ impl Session {
         // the messages waiting their turn, after what runs now
         let blocks: Vec<Value> = blocks.into_iter().chain(self.queued.iter().map(|t| json!({"kind": "prompt", "text": t, "queued": true}))).collect();
         // Claude's cache (null on the own loop and before claude's first call): its life, until when it stays warm (Unix
-        // ms), what the next message re-reads once it is cold (`rebuild`; null where that gives none), whether the plan pays
-        // (not an API key, Bedrock or a gateway), and whether claude takes /compact here (its init lists no command at all
-        // under --disable-slash-commands: plain chats, the Lean profile)
+        // ms), what the next message re-reads once it is cold (`rebuild`; null where that gives none), and whether the plan
+        // pays (not an API key, Bedrock or a gateway)
         let rebuild = self.rebuild();
         let cache = self.warm_until().map(|until| json!({"ttl_ms": self.cache_ttl_ms, "warm_until": (self.epoch_ms + until).round() as u64,
-            "rebuild": rebuild.map(|r| r.0), "rebuild_usd": rebuild.and_then(|r| r.1), "plan": !self.claude_billed,
-            "compact": self.commands.iter().any(|c| c == "compact")}));
+            "rebuild": rebuild.map(|r| r.0), "rebuild_usd": rebuild.and_then(|r| r.1), "plan": !self.claude_billed}));
         json!({"type": "view", "blocks": blocks, "model": self.model, "effort": self.effort, "cwd": self.cwd, "profile": self.profile,
             "mode": self.mode, "activity": format!("{:?}", self.activity), "cost": self.cost(), "usage": usage(&self.usage), "turns": self.turns,
-            "context": self.context, "context_window": self.context_window, "limits": self.limits, "limits_at": self.limits_at, "limits_reset": self.limits_reset, "balance": self.balance,
-            "calls": self.calls_view(), "live": self.live_view(), "cache": cache})
+            "context": self.context, "context_window": self.context_window, "context_window_full": self.context_window_full, "limits": self.limits, "limits_at": self.limits_at, "limits_reset": self.limits_reset, "balance": self.balance,
+            "calls": self.calls_view(), "live": self.live_view(), "cache": cache,
+            // /compact taken here: the own loop's always (its init lists it), claude's where its init lists it (none under
+            // --disable-slash-commands: plain chats, the Lean profile); `compacting` while one runs
+            "compact": self.commands.iter().any(|c| c == "compact"), "compacting": self.compacting})
     }
 
     /// The call in flight, for the window's live numbers (desktop/DESIGN.md, Motion): the agent's, else a router chat
@@ -938,6 +948,9 @@ impl Session {
             }
             if let Some(b) = b.filter(|b| !b.model.is_empty() && (price.is_some() || claude_list(&b.model).is_some())) {
                 (v["model"], v["role"], v["provider"]) = (json!(b.model), Value::Null, json!(b.provider));
+            }
+            if let Some(r) = b.and_then(|b| b.role) {
+                v["role"] = json!(r);
             }
             // on a plan (at API prices, not billed): a reply still running says so as a finished one does
             if b.is_some_and(|b| b.plan) {
@@ -1293,19 +1306,31 @@ impl Session {
                 cmds.sort();
                 cmds.dedup();
                 self.commands = cmds;
+                // the own loop says its model's window (claude's comes with its result): what fits, and the whole of it
+                if let Some(w) = e["context_window"].as_u64() {
+                    (self.context_window, self.context_window_full) = (Some(w), e["context_window_full"].as_u64().filter(|f| *f != w));
+                }
                 self.activity = Activity::Waiting;
                 self.mcp_failures(e);
             }
             (Some("system"), Some("mcp_status")) => self.mcp_failures(e),
             (Some("system"), Some("call_waiting")) => self.waiting_note = e["message"].as_str().map(String::from),
             (Some("system"), Some("status")) => {
+                self.compacting = e["status"] == "compacting";
                 // review and auto run as acceptEdits underneath: claude's report of that does not rename them
                 if let Some(m) = e["permissionMode"].as_str() && !(matches!(self.mode.as_str(), "review" | "auto") && m == "acceptEdits") {
                     self.mode = mode_name(m).to_string();
                 }
                 self.activity = Activity::Waiting;
             }
+            // the own loop's compaction did not take: said where the turn is, in its words; auto-compaction going off for the
+            // conversation is no error (`compact_note`)
+            (Some("system"), Some(sub @ ("compact_failed" | "compact_note"))) if e["message"].is_string() => {
+                self.compacting = false;
+                self.push(Block::Notice { text: s(&e["message"]), error: sub == "compact_failed", ended: false });
+            }
             (Some("system"), Some("compact_boundary")) => {
+                self.compacting = false;
                 // the context is the summary now: its result has no usage and no call ends after it, so the old size (and the
                 // strip's 94% with its Compact) stayed until the next message
                 if let Some(n) = e["compact_metadata"]["post_tokens"].as_u64() {
@@ -1654,7 +1679,7 @@ impl Session {
                     *text = lane_text(&lane);
                 }
                 (self.provider, self.price_m) = (None, None); // the next process says its own
-                self.context_window = None; // the next model reports its own (the own loop's: none)
+                (self.context_window, self.context_window_full) = (None, None); // the next model reports its own
                 // claude going on with another Claude model (`goes_on`) writes its cache anew: cold from here, its life kept
                 // (the part vanished, just when the next message re-reads the most); to or from the own loop, none known
                 if e["goes_on"] == true {
@@ -1759,7 +1784,7 @@ impl Session {
                 self.activity = Activity::Waiting;
             }
             (Some("result"), _) => {
-                self.waiting_note = None;
+                (self.waiting_note, self.compacting) = (None, false);
                 self.end_live();
                 // a call still open when the run ends was cut off (a stop, an error) and gets no result: it ends here, as
                 // stopped. It kept its spinner in the terminal and went on counting seconds in the window: "Asked a
@@ -1783,7 +1808,8 @@ impl Session {
                         self.todos.clear();
                         self.context = 0;
                         self.push(Block::Notice { text: "── conversation cleared: claude starts fresh from here ──".into(), error: false, ended: false });
-                    } else if !text.trim().is_empty() {
+                    } else if !text.trim().is_empty() && e["is_error"] != true {
+                        // a refusal is said once, as the failure below (a failed /compact showed it twice)
                         self.push(Block::Text { text, live: false });
                     }
                 }
@@ -1879,7 +1905,8 @@ impl Session {
                 self.turn_usage.push(Usage::default());
                 self.call_row = self.turn_usage.len() - 1;
                 self.call_blocks.push(self.blocks.len());
-                self.call_bill.push(CallBill { model: self.model.clone(), price: self.price_m, provider: self.provider.clone(), cost: None, unreported: false, uncounted: 0, timing: None, plan: self.on_plan(false) });
+                self.call_bill.push(CallBill { model: self.model.clone(), price: self.price_m, provider: self.provider.clone(), cost: None, unreported: false, uncounted: 0, timing: None, plan: self.on_plan(false),
+                    role: (ev["tazuna_role"] == "compaction").then_some("Compaction") });
                 // a call with nothing running (a queued message's, after the run before it ended): work begins here
                 self.clock_on(self.now_ms);
             }
@@ -1958,8 +1985,10 @@ impl Session {
                 self.usage.cache_write += t.cache_write;
                 self.usage.cache_read += t.cache_read;
                 self.usage.output += t.output;
-                // a router chat answer's call (`in_chat`) is its own process's: the conversation's context and cache stay
-                if !self.in_chat {
+                // a router chat answer's call (`in_chat`) is its own process's: the conversation's context and cache stay;
+                // so do they through a compaction's summary call (its input is the old conversation, the boundary says the new)
+                let summary = self.call_bill.get(self.call_row).is_some_and(|b| b.role.is_some());
+                if !self.in_chat && !summary {
                     self.context = t.total_in();
                     // the cache's life: claude splits what it wrote by 5-minute and 1-hour entries (a call that wrote
                     // nothing keeps the last one known)
@@ -2727,7 +2756,7 @@ mod tests {
         call(&mut s, 1_000.0, 600_000);
         let warm = until(&s).unwrap();
         assert!(warm > wall_ms() + 290_000.0, "warm after a call");
-        assert!(s.view()["cache"]["plan"] == true && s.view()["cache"]["compact"] == true, "{}", s.view()["cache"]);
+        assert!(s.view()["cache"]["plan"] == true && s.view()["compact"] == true, "{}", s.view()["cache"]);
         // an effort change: cold at once, its life kept; the next call's end makes it warm again
         s.apply(&json!({"type": "harness_effort", "effort": "high", "text": "effort: high"}), 5_000.0);
         // (cold since the change itself, where the window's clock is: before now)
@@ -2782,7 +2811,7 @@ mod tests {
         let mut b = Session::new("", "medium");
         b.apply(&json!({"type": "system", "subtype": "init", "model": "claude-opus-5-5", "session_id": "b", "apiKeySource": "ANTHROPIC_API_KEY", "slash_commands": []}), 0.0);
         call(&mut b, 1_000.0, 60_000);
-        assert!(b.view()["cache"]["plan"] == false && b.view()["cache"]["compact"] == false, "{}", b.view()["cache"]);
+        assert!(b.view()["cache"]["plan"] == false && b.view()["compact"] == false, "{}", b.view()["cache"]);
     }
 
     #[test]

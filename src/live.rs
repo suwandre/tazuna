@@ -445,9 +445,11 @@ pub fn spend_cap() -> Option<f64> {
     }
 }
 
-/// Claude's auto-compact threshold, a percent of its auto-compact window (Settings: Claude auto-compact):
-/// ~/.config/tazuna/claude-autocompact, None (Claude's default) when missing or not a whole number from 1 to 100. Claude
-/// Code reads it as CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, which only lowers its threshold (code.claude.com/docs/en/env-vars).
+/// The auto-compact threshold, a percent (Settings: Auto-compact): ~/.config/tazuna/claude-autocompact (its name from when
+/// only Claude read it, kept so a saved value stays), None (the default) when missing or not a whole number from 1 to 100.
+/// Claude Code reads it as CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, a percent of its auto-compact window that only lowers its
+/// threshold (code.claude.com/docs/en/env-vars); the own loop as its share of the model's window, 90 by default
+/// (engine.rs `compact_at`, 2026-11-27).
 pub fn autocompact() -> Option<u8> {
     autocompact_in(&std::fs::read_to_string(autocompact_file()?).ok()?)
 }
@@ -1045,11 +1047,12 @@ impl Live {
     /// built-in ones. Without them the window's menu held only /create and /agent before a first turn (the user,
     /// 2026-11-20).
     pub fn commands(&self, session: &[String]) -> Vec<String> {
-        // on another provider tazuna's own only: claude's list stayed after a switch until the own loop's first init (/compact
-        // and skills under "Claude" on GLM, design review 14)
-        let mut all: Vec<String> = session.iter().filter(|c| self.provider.is_none() || crate::session::OWN_COMMANDS.contains(&c.as_str())).cloned().collect();
+        // on another provider tazuna's own only: claude's list stayed after a switch until the own loop's first init (skills
+        // under "Claude" on GLM, design review 14); /compact is the own loop's too (2026-11-27)
+        let mut all: Vec<String> = session.iter().filter(|c| self.provider.is_none() || crate::session::OWN_COMMANDS.contains(&c.as_str()) || *c == "compact").cloned().collect();
         // (not without the claude CLI: nothing of Claude's runs then, design review 14)
-        if self.provider.is_none() && crate::accounts::claude_installed() && session.iter().all(|c| crate::session::OWN_COMMANDS.contains(&c.as_str())) {
+        // (the own loop's init lists /compact: still tazuna's own list, so Claude's saved ones come after a switch to it)
+        if self.provider.is_none() && crate::accounts::claude_installed() && session.iter().all(|c| crate::session::OWN_COMMANDS.contains(&c.as_str()) || c == "compact") {
             let kept = crate::labels::dir().ok().and_then(|d| claude_commands(&d.join(CLAUDE_COMMANDS), &self.cwd.to_string_lossy()));
             all.extend(kept.unwrap_or_else(|| crate::editor::CLAUDE_COMMON.map(String::from).to_vec()));
         }
@@ -3161,6 +3164,14 @@ mod tests {
         assert_eq!(live.commands(&own), sorted);
         // switched there from Claude: claude's list from its init is not the own loop's
         assert_eq!(live.commands(&listed), sorted);
+        // but /compact is (its engine lists it: the own loop compacts by itself, 2026-11-27)
+        let engine = [own.clone(), vec!["compact".to_string()]].concat();
+        assert!(live.commands(&engine).contains(&"compact".to_string()));
+        // back on Claude before its init, the own loop's list still in the session: Claude's saved or common ones come too
+        live.provider = None;
+        assert!(live.commands(&engine).len() > engine.len(), "{:?}", live.commands(&engine));
+        live.provider = Some(("https://api.example".into(), "KEY".into()));
+        assert!(live.commands(&[listed, vec!["compact".to_string()]].concat()).iter().all(|c| c != "my-skill"));
     }
 
     #[test]

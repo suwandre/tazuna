@@ -97,7 +97,9 @@ this provider (company code to a third party).
 
 ## Later (after the minimum version)
 
-- Hand-off instead of compaction near the context limit: a summary turn, then a fresh conversation (parked idea).
+- Hand-off instead of compaction near the context limit: a summary turn, then a fresh conversation (parked idea). Built
+  as compaction in place (2026-11-27, ROADMAP decision log): `/compact`, auto at the setting's share of the window, and once
+  on a too-long error.
 - Cross-provider pairs: a cheap implementer here with a Claude reviewer through `--review-model` (works already).
 - Per-step models: a cheap model for exploration, a strong one for edits (the parked "heavy profile").
 

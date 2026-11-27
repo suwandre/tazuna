@@ -238,6 +238,14 @@ impl Server {
         self
     }
 
+    /// No read seen yet, no call repeated yet (the own loop compacted its conversation: what they returned is no longer in it).
+    pub(crate) fn forget_reads(&mut self) {
+        if let Some(s) = self.seen.as_mut() {
+            s.clear();
+        }
+        self.last = (0, 0);
+    }
+
     fn read(&mut self, path: PathBuf, offset: u64, limit: Option<u64>) -> Result<String, String> {
         let text = cap(&read(&path, offset, Some(limit.unwrap_or(READ_WINDOW)), self.max)?, self.max);
         self.reads += 1;
@@ -796,6 +804,12 @@ mod tests {
         assert_eq!(call("echo hi"), "hi\n");
         assert!(call("echo hi").starts_with("[the same call 3 times in a row"));
         assert_eq!(call("echo other"), "other\n", "a different call starts over");
+        // after the own loop compacted: what came back is gone, so a repeat is not named as one
+        let mut s = Server::new(std::env::temp_dir()).with_read_dedupe();
+        s.call(&json!({"name": "bash", "arguments": {"command": "echo hi"}})).unwrap();
+        s.call(&json!({"name": "bash", "arguments": {"command": "echo hi"}})).unwrap();
+        s.forget_reads();
+        assert_eq!(s.call(&json!({"name": "bash", "arguments": {"command": "echo hi"}})).unwrap()["content"][0]["text"], "hi\n");
     }
 
     #[test]

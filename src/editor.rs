@@ -564,7 +564,8 @@ pub fn describe(cmd: &str) -> &'static str {
         "usage" => "The plan's 5-hour and weekly use, the API balance; /usage track <provider>",
         "vim" => "Vim keys in the message box (on, off)",
         "clear" => "Claude: clear the conversation",
-        "compact" => "Claude: summarise the conversation to free context",
+        // the own loop's too (2026-11-27): not in the menu's Claude group
+        "compact" => "Summarise the conversation to free context",
         "context" => "Claude: what fills the context",
         "config" => "Claude: its settings",
         "init" => "Claude: write a CLAUDE.md for this repository",
@@ -592,9 +593,9 @@ mod tests {
         assert_eq!(m[0].1, "A review of each finished change (on, off, a model)");
         assert_eq!(super::command_menu("", &cmds, &[]).len(), 7);
         assert_eq!(super::command_menu("my", &cmds, &[])[0].1, "Claude: a command or skill");
-        // tazuna's own first, then Claude's
+        // tazuna's own first (/compact among them: the own loop's too), then Claude's
         let all: Vec<String> = super::command_menu("", &cmds, &[]).into_iter().map(|r| r.0).collect();
-        assert_eq!(all, ["/diff", "/model", "/new", "/review", "/compact", "/my-skill", "/security-review"]);
+        assert_eq!(all, ["/compact", "/diff", "/model", "/new", "/review", "/my-skill", "/security-review"]);
         // the user's own command: its description, and claude's plugin name for it left out
         let with = [cmds.clone(), vec!["tazuna:standup".into()]].concat();
         let m = super::command_menu("st", &with, &[("standup".into(), "Write today's standup".into())]);
