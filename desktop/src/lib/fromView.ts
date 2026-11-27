@@ -192,6 +192,18 @@ export function messages(v: View, refused: ReadonlyMap<number, string> = new Map
     else if (b.kind === "notice" && !b.error && b.text.startsWith("This conversation ran on ")) { (current().info ??= []).push(b.text); }
     // a model switch that went on in a new session (core C5): a quiet divider, the conversation above it stays
     else if (b.kind === "notice" && !b.error && /^─+\s*continued on /.test(b.text)) out.push({ role: "notice", text: b.text.replace(/^[─\s]+|[─\s]+$/g, "") });
+    // the context compacted (claude's /compact or its own, the own loop's since 2026-11-27): the same divider where it
+    // happened; a turn that goes on after it does so in a block below it (its steps, notes and answer above it read as if
+    // they came first), the part above done
+    else if (b.kind === "notice" && !b.error && /^─+\s*context compacted/.test(b.text)) {
+      // (set in `current`, a closure: the narrowing here does not see it)
+      const was = agent as Extract<Message, { role: "agent" }> | null;
+      if (was) was.cut = true;
+      out.push({ role: "notice", text: "Context compacted" });
+      agent = null;
+    }
+    // the own loop's auto-compaction gone off for the conversation: a quiet line under the turn, no error
+    else if (b.kind === "notice" && !b.error && b.text.startsWith("Auto-compact off")) { (current().info ??= []).push(b.text); }
     else if (b.kind === "text") { if (b.text.trim()) { current().prose.push(b.text); delete current().retrying; delete current().retryAt; } }
     // ToolSearch is Claude Code loading a deferred tool before using it ("select:mcp__lean__bash"): plumbing, not a step
     // (it showed in every hand-off and added "used 1 other tool" to the summary; real window, 2026-11-22)
@@ -326,6 +338,13 @@ export function demoView() {
     { kind: "notice", text: "Not logged in · Please run /login", error: true }, { ...done, ok: false }] } as View)
     .map((x) => (x.role === "user" ? `user:${x.text}` : x.role === "notice" ? `notice:${x.text}` : `agent:${x.tools!.map((t) => t.kind).join("+")}|${x.prose.join("+")}|${x.failure?.text ?? ""}`));
   if (shaped.join(" / ") !== "user:a / agent:said+tool|Done.| / user:c / agent:tool|All set.| / notice:continued on Mock Coder 7B / user:b / agent:||Please run /login") throw new Error(`shapes: ${shaped.join(" / ")}`);
+  const compacted = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "/compact" }, { kind: "notice", text: "── context compacted: earlier turns are now a summary ──", error: false }, done] } as View);
+  if (compacted[1]?.role !== "notice" || compacted[1].text !== "Context compacted") throw new Error(`compacted: ${JSON.stringify(compacted)}`);
+  // compacted inside a turn: its steps before the divider above it, the rest of the turn below it (the failure, the answer)
+  const midRun = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "a" }, bash, { kind: "notice", text: "── context compacted: earlier turns are now a summary ──", error: false },
+    { ...bash, id: "2" }, { kind: "notice", text: "Compaction failed: boom", error: true }, { kind: "text", text: "Done.", live: false }, done] } as View)
+    .map((x) => (x.role === "agent" ? `agent:${x.tools!.length}|${(x.notes ?? []).join()}|${x.prose.join()}|${x.cut ? "cut" : ""}` : `${x.role}:${x.text}`));
+  if (midRun.join(" / ") !== "user:a / agent:1|||cut / notice:Context compacted / agent:1|Compaction failed: boom|Done.|") throw new Error(`mid-run: ${midRun.join(" / ")}`);
   // a step's title drops a cd into the project or a folder in it, and keeps one elsewhere (review of review 14)
   const cmd = (id: string, command: string) => ({ ...bash, id, input: { command } });
   const titles = messages({ ...v, cwd: "/p", calls: [], blocks: [{ kind: "prompt", text: "a" }, cmd("1", 'cd "/p" && ls'), cmd("2", "cd /p/src && make"), cmd("3", "cd /tmp && rm -rf build"), done] } as View)
@@ -482,14 +501,18 @@ export function heldTurn(v: View | null, last: { prompts: number; at: number } |
 /** The messages waiting behind the reply now running (sent during it; the core holds them until it ends). */
 export const queued = (v: View) => messages(v).flatMap((m) => (m.role === "user" && m.queued ? [m.text] : []));
 
+/** The window the context's share is of, said whole: "136k usable (200k window)" where that is less than the model's (the
+ * own loop's input room), else "the model's 200k window". */
+export const windowSaid = (u: Pick<Usage, "contextMax" | "contextFull">) => (u.contextFull ? `${u.contextMax} usable (${u.contextFull} window)` : `the model's ${u.contextMax} window`);
+
 /** Tokens said short: "514k", "1.2M". */
 export const short = (n: number) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
 /** The share of the model's window from which the context is drawn in the warning colour (the bar and the percent: the
  * composer's strip, Stats, the status bar), and Claude's Compact button shows. */
 export const CONTEXT_WARN = 85;
-/** Claude's Compact button shows (the strip's and the status bar's): claude takes /compact here, the context is from
- * CONTEXT_WARN of a known window, and no reply runs. */
-export const compactable = (cache: View["cache"], u: Pick<Usage, "contextPct" | "contextMax">, busy: boolean) => !!cache?.compact && !!u.contextMax && u.contextPct >= CONTEXT_WARN && !busy;
+/** The Compact button shows (the strip's and the status bar's): the session takes /compact (the view's `compact`: the own
+ * loop always, Claude where its claude lists it), the context is from CONTEXT_WARN of a known window, and no reply runs. */
+export const compactable = (can: boolean | undefined, u: Pick<Usage, "contextPct" | "contextMax">, busy: boolean) => !!can && !!u.contextMax && u.contextPct >= CONTEXT_WARN && !busy;
 
 export function usage(v: View): Usage {
   // a window the core does not know (null, core C9: a local model) has no share: "context 1% of 200k" was made up
@@ -497,6 +520,7 @@ export function usage(v: View): Usage {
   const k = short;
   const u = v.usage, read = u.input + u.cache_write + u.cache_read;
   return { contextPct: win ? Math.min(100, Math.round((100 * v.context) / win)) : 0, contextUsed: k(v.context), contextMax: win ? k(win) : "",
+    contextFull: win && v.context_window_full ? k(v.context_window_full) : "",
     plan5h: v.limits ? Math.round(v.limits[0]) : null, plan5hReset: resetIn(v.limits_reset), planWeek: v.limits ? Math.round(v.limits[1]) : null,
     threadCost: v.cost, threadTurns: v.turns, cachedPct: read ? pct1(u.cache_read, read) : 0, saved: 0, today: v.cost, todayTurns: v.turns, todaySeries: [], balance: v.balance };
 }

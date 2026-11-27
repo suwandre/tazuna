@@ -6,11 +6,11 @@ import { ChatSlip, priceSaid, type Turn } from "./Receipt";
 import { exactly, untilShort, urgent, whenReset, worst, type Item, type Level } from "../lib/health";
 import { Sep } from "./Sep";
 import { checkUpdate, useUpdate } from "../lib/update";
-import { CONTEXT_WARN, compactable } from "../lib/fromView";
+import { CONTEXT_WARN, compactable, windowSaid } from "../lib/fromView";
 import { useWarm, warmSaid } from "../lib/live";
 import type { View } from "../lib/tazuna";
 
-/** Claude's Compact pressed (the strip's and the status bar's): pending while the conversation has the blocks it had then
+/** Compact pressed (the strip's and the status bar's): pending while the conversation has the blocks it had then
  * (its message comes with the turn's start; a refusal brings a notice), let go when the send fails or after 15 s (a core
  * that never answered). `send` sends /compact. */
 export function useCompact(blocks: number, busy: boolean, send?: () => Promise<unknown>): [boolean, () => void] {
@@ -30,7 +30,7 @@ function BarCompact({ blocks, busy, send }: { blocks: number; busy: boolean; sen
 /** The Compact button: small and quiet, "Compacting…" with a spinner while pending (it goes once the turn runs). */
 export function CompactButton({ pending, onClick, className }: { pending: boolean; onClick: () => void; className: string }) {
   // tabIndex: WebKit's Tab skips buttons
-  return <button tabIndex={0} aria-busy={pending || undefined} title="Summarise the conversation to free context (Claude's /compact)" onClick={onClick}
+  return <button tabIndex={0} aria-busy={pending || undefined} title="Summarise the conversation to free context (/compact)" onClick={onClick}
     className={`flex flex-none items-center gap-1.5 rounded-md border border-line-strong bg-card text-ink-2 hover:bg-hover hover:text-ink ${className}`}>
     {pending && <LoaderCircle size={12} strokeWidth={2} className="animate-spin text-faint" aria-hidden="true" />}{pending ? "Compacting…" : "Compact"}</button>;
 }
@@ -163,10 +163,11 @@ function Version({ version }: { version: string }) {
 /** "just now", "4 min ago", "2 h ago". */
 const ago = (at: number) => { const m = Math.floor((Date.now() - at) / 60_000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.floor(m / 60)} h ago`; };
 
-export function StatusBar({ usage: u, version, idle, numbers = true, accounts = [], here = [], onRefresh, refreshing, readAt, turns = [], busy, cache, blocks = 0, onCompact, thread }: { usage: Usage; version: string;
-  /** Claude's cache (the view's `cache`): how long it stays warm, after the cache's share; and Claude's Compact (sends
-   * /compact) by the context, as in the strip, with the conversation's block count for its pending state and its thread */
-  cache?: View["cache"]; blocks?: number; onCompact?: () => Promise<unknown>; thread?: string;
+export function StatusBar({ usage: u, version, idle, numbers = true, accounts = [], here = [], onRefresh, refreshing, readAt, turns = [], busy, cache, canCompact, blocks = 0, onCompact, thread }: { usage: Usage; version: string;
+  /** Claude's cache (the view's `cache`): how long it stays warm, after the cache's share; and Compact (sends /compact) where
+   * the session takes it (the view's `compact`) by the context, as in the strip, with the conversation's block count for
+   * its pending state and its thread */
+  cache?: View["cache"]; canCompact?: boolean; blocks?: number; onCompact?: () => Promise<unknown>; thread?: string;
   /** the conversation's context, cache and cost here (Settings › Appearance › Conversation numbers: In the status bar); else
    * they are the composer's, or nowhere: each number once */
   numbers?: boolean;
@@ -228,9 +229,9 @@ export function StatusBar({ usage: u, version, idle, numbers = true, accounts = 
       )}
       <span className="flex-1" />
       {/* a zero says nothing yet (a conversation before its first reply, a provider that reports no cache): not shown */}
-      {numbers && !idle && u.contextPct > 0 && <span className={`${item} max-[900px]:hidden`} title="This conversation's context">context <span className={u.contextPct >= CONTEXT_WARN ? "font-medium text-warn" : b}>{u.contextPct}%</span> of {u.contextMax}</span>}
-      {/* Claude's own compaction by the context it frees, gone with it on a narrow bar */}
-      {numbers && !idle && onCompact && compactable(cache, u, !!busy) && <BarCompact key={thread} blocks={blocks} busy={!!busy} send={onCompact} />}
+      {numbers && !idle && u.contextPct > 0 && <span className={`${item} max-[900px]:hidden`} title={u.contextFull ? `This conversation's context, of ${windowSaid(u)}` : "This conversation's context"}>context <span className={u.contextPct >= CONTEXT_WARN ? "font-medium text-warn" : b}>{u.contextPct}%</span> of {u.contextMax}</span>}
+      {/* compaction by the context it frees, gone with it on a narrow bar */}
+      {numbers && !idle && onCompact && compactable(canCompact, u, !!busy) && <BarCompact key={thread} blocks={blocks} busy={!!busy} send={onCompact} />}
       {numbers && !idle && u.cachedPct > 0 && <span className={`${item} max-[1100px]:hidden`} title="Input read from the cache in this conversation">cache <span className={b}>{pctText(u.cachedPct)}%</span></span>}
       {/* Claude's cache: under a minute and cold in the warning colour (the next message re-reads the whole context); on a
           narrow bar it goes last, after the context */}

@@ -19,7 +19,7 @@ import { prChip, type Pr } from "./lib/pr";
 import { checkUpdate, watchUpdates } from "./lib/update";
 import { routeLine } from "./lib/route";
 import { lastDays, today as todayOf, type Row } from "./lib/usage";
-import { PANEL, capital, filesApp, usd, type ChangedFile, type Message, escFor, keysOf, panelChoice, panelState } from "./lib/types";
+import { PANEL, capital, filesApp, unDot, usd, type ChangedFile, type Message, escFor, keysOf, panelState } from "./lib/types";
 import { Sep } from "./components/Sep";
 import type { Turn } from "./components/Receipt";
 import { PanelEdge, Rail, UserPanel, WorkCtx, openUsage, type Work } from "./components/Rail";
@@ -42,7 +42,7 @@ import { Parts } from "./components/Sep";
 const MENUS = ".tz-pop:not([data-panel]):not(.tz-out), [role=menu], [role=listbox], [role=dialog]:not(.tz-out), dialog[open]";
 
 // the work panel's width, dragged by its edge (lib/types.ts `panelState`)
-const PANEL_W = "tazuna.panel-width";
+const PANEL_W = "tazuna.panel-width", PANEL_OPEN = "tazuna.panel-open";
 // the route line under the box ("→ DeepSeek V4.1 Flash on DeepSeek, paid, about $0.005 a message") is hidden for now (design
 // review 14: the user is unsure); `localStorage["tazuna.route-line"] = "on"` brings it back. What shares its line stays: the
 // plan running low, Claude signed out, a model not restored
@@ -574,10 +574,18 @@ export default function App() {
   const [openApps, setOpenApps] = useState<string[]>([]);
   useEffect(() => { if (inTauri) core.openIn().then((a) => setOpenApps(a ?? [])).catch(() => {}); }, []);
   useEffect(() => { if (inTauri) getVersion().then(setAppVersion).catch(() => {}); }, []);
-  // the work panel (the right column): by rule (lib/types.ts `panelState`), and by hand per conversation (⌘\, the header's
-  // button, the tab): one choice for the whole window put the panel into plain chats and stopped the fold everywhere
-  // (design review 11)
-  const [panelBy, setPanelBy] = useState<Record<string, boolean>>({});
+  // the work panel (the right column): by rule (lib/types.ts `panelState`), and by hand (⌘\, the header's button): one
+  // choice for the window, kept like its width, so moving to another conversation keeps the layout (the user, 2026-11-27:
+  // it shut at every switch; per conversation since design review 11, when a plain chat's panel was empty: it has Stats
+  // and the messages now). Over the conversation (a narrow window) it is a sheet: a click on another conversation shuts it
+  const [panelOn, setPanelOn] = useState(() => localStorage.getItem(PANEL_OPEN) === "1");
+  const setPanel = (on: boolean) => { setPanelOn(on); setPanelAsked(true); localStorage.setItem(PANEL_OPEN, on ? "1" : "0"); };
+  // opened or shut by hand in this run: the sheet over the conversation shows only then (a choice kept from before did not
+  // pop it over the conversation at launch)
+  const [panelAsked, setPanelAsked] = useState(false);
+  // the sheet over the conversation shut by Esc, a click outside or a jump: in this run only, the kept choice stays (a
+  // glance at 1300 px shut the docked panel everywhere); another conversation, or a window that narrows, starts it shut
+  const dismissSheet = () => setPanelAsked(false);
   // the window's width: the work panel closes by itself below 1280 px, and below 1000 px the sidebar opens over the
   // conversation from the header's button (at 980 px the panel left the conversation 430 px and the composer's pills
   // wrapped; design review, 2026-11-18)
@@ -600,18 +608,21 @@ export default function App() {
   const [panelW, setPanelW] = useState(() => Number(localStorage.getItem(PANEL_W)) || PANEL.base);
   const sizePanel = (w: number) => { setPanelW(w); localStorage.setItem(PANEL_W, String(w)); };
   // where scrollbars always show the transcript's takes its width from the text (lib/chrome.ts measures it)
-  const col = panelState({ project: !!folder, width, choice: panelBy[active], panel: panelW, sbw: parseFloat(document.documentElement.style.getPropertyValue("--tz-sbw")) || 0 });
+  const col = panelState({ project: !!folder, width, choice: panelOn || undefined, panel: panelW, sbw: parseFloat(document.documentElement.style.getPropertyValue("--tz-sbw")) || 0 });
   useLayoutEffect(() => { document.documentElement.style.setProperty("--tz-panel", `${col.w}px`); }, [col.w]);
-  const panelOpen = col.open;
+  const panelOpen = col.open && (!col.over || panelAsked);
   // the control pressed (the tab, the header's button), where focus goes back when the panel over the conversation shuts:
   // WebKit does not focus a button on a click, so what had focus then was the page
   const opener = useRef<HTMLElement | null>(null);
   const togglePanel = (e?: { currentTarget: EventTarget | null }) => {
     opener.current = (e?.currentTarget as HTMLElement | undefined) ?? (document.activeElement as HTMLElement | null);
-    setPanelBy(({ [active]: _, ...m }) => { const c = panelChoice(panelOpen); return c === undefined ? m : { ...m, [active]: c }; });
+    setPanel(!panelOpen);
   };
   const toggleNow = useRef(togglePanel);
   toggleNow.current = togglePanel;
+  const dismissNow = useRef(dismissSheet);
+  dismissNow.current = dismissSheet;
+  useEffect(() => { if (col.over) setPanelAsked(false); }, [active, col.over]);
   // a click on one of the composer's numbers: the panel open at Stats over its scope (Stats.tsx `openStats`), the number
   // the focus goes back to; nothing while a side chat or a subagent has the column (it opened by itself when they shut)
   const [statsAsk, setStatsAsk] = useState<{ scope: "turn" | "all"; n: number }>({ scope: "all", n: 0 });
@@ -620,7 +631,7 @@ export default function App() {
       const { scope, from } = (e as CustomEvent<{ scope: "turn" | "all"; from: HTMLElement }>).detail;
       if (paneOwns.current) return;
       opener.current = from;
-      setPanelBy((m) => ({ ...m, [active]: true }));
+      setPanel(true);
       setStatsAsk((a) => ({ scope, n: a.n + 1 }));
     };
     window.addEventListener("tazuna-stats", open);
@@ -755,11 +766,11 @@ export default function App() {
     (pop?.querySelector<HTMLElement>(FOCUSABLE) ?? pop)?.focus({ preventScroll: true });
     const key = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || escFor({ menu: !!document.querySelector(MENUS), over: true }) !== "panel") return;
-      e.stopPropagation(); toggleNow.current();
+      e.stopPropagation(); dismissNow.current();
     };
-    const away = (e: MouseEvent) => { if (!(e.target as Element).closest?.("[data-panel]")) toggleNow.current(); };
+    const away = (e: MouseEvent) => { if (!(e.target as Element).closest?.("[data-panel]")) dismissNow.current(); };
     // A timeline jump reveals the conversation, not a target left under this floating panel. The docked rail stays put.
-    const jump = (e: Event) => { const i = Number((e as CustomEvent).detail); if (Number.isInteger(i) && i >= 0) toggleNow.current(); };
+    const jump = (e: Event) => { const i = Number((e as CustomEvent).detail); if (Number.isInteger(i) && i >= 0) dismissNow.current(); };
     window.addEventListener("keydown", key, true); window.addEventListener("mousedown", away, true);
     window.addEventListener("tazuna-jump", jump);
     return () => {
@@ -933,7 +944,7 @@ export default function App() {
       a.push(...MODES.map(([m, about]) => ({ id: `m:${m}`, group: "Permission mode", label: capital(m), hint: m === view.mode ? `${about} (now)` : about, keywords: `mode permission ${m}`, run: () => core.setMode(m) })));
       const cur = models?.choices.find((c) => c.current);
       a.push(...(cur?.efforts ?? []).map((e) => ({ id: `e:${e}`, group: "Effort", label: capital(e), hint: e === view.effort ? "current" : undefined, keywords: "effort thinking", run: () => core.setEffort(e) })));
-      a.push(...(models?.choices ?? []).filter((c) => !c.why_not).map((c) => ({ id: `mo:${c.model}|${c.url}|${c.key_env}|${c.label}`, group: "Model", label: modelLabel(c.model), hint: c.current ? "current" : c.place, keywords: `model ${c.provider}`, run: () => pickModel(c) })));
+      a.push(...(models?.choices ?? []).filter((c) => !c.why_not).map((c) => ({ id: `mo:${c.model}|${c.url}|${c.key_env}|${c.label}`, group: "Model", label: modelLabel(c.model), hint: c.current ? "current" : unDot(c.place ?? ""), keywords: `model ${c.provider}`, run: () => pickModel(c) })));
     }
     a.push({ id: "create-behaviour", group: "Creator mode", label: "Make a command, skill or tool…", hint: "/create what it should do", keywords: "skill command mcp tool creator",
         run: () => setDraft({ text: "/create ", n: Date.now() }) });
@@ -1003,7 +1014,7 @@ export default function App() {
     } satisfies Record<string, [string, () => void]> : {}),
   } : {};
   const modelRestore = view?.model_restore;
-  /** Claude's Compact (the strip's or the status bar's): /compact to the core as it is, never through the box's ways (an
+  /** Compact (the strip's or the status bar's): /compact to the core as it is, never through the box's ways (an
    * edit's rewind, a refusal put back in the draft); none while an earlier message is being edited */
   const compact = inTauri && !modelRestore && !editing ? () => core.send("/compact") : undefined;
   const composer = (
@@ -1066,7 +1077,7 @@ export default function App() {
   const more = at < 0 ? "" : firstAsked.slice(at + said.length).replace(/^[\s.?!,;:]+/, "");
   const sidebar = <Sidebar active={inTauri ? listedId(threads.find((t) => t.tid === active)) ?? folder ?? "" : "t1"}
     chats={inTauri ? rowsOf(home ? sessions[home] : undefined) : demo.chats}
-    projects={inTauri ? projects.map((p) => ({ name: isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} / ${base(p)}` : base(p), path: p, open: p === folder, threads: rowsOf(sessions[p], isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), p) })) : demo.projects}
+    projects={inTauri ? projects.map((p) => ({ name: isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} / ${base(p)}` : base(p), path: p, open: p === folder, threads: rowsOf(sessions[p], isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} / ${base(p)}` : base(p), p) })) : demo.projects}
     onNewChat={inTauri ? () => open(null) : undefined} onOpenFolder={inTauri ? pick : undefined} onOpenProject={inTauri ? (p) => p.path && open(p.path) : undefined}
     onOpenThread={inTauri ? (t, p) => open(p?.path ?? null, t.id) : undefined} onSearch={() => setOverlay("palette")} onSettings={inTauri ? () => setOverlay("settings") : undefined}
     open={inTauri ? threads.filter((t) => t.tid === active || asked(t.view, refusedIn(t.tid, t.view)).length).map((t) => ({ tid: t.tid, id: listedId(t), model: t.view?.model, title: nameOf(t) ?? titleOf(asked(t.view, refusedIn(t.tid, t.view))[0]), place: t.folder ? base(t.folder) : "chat",
@@ -1084,7 +1095,7 @@ export default function App() {
       refreshSessions();
     }) : undefined}
     onDismiss={narrow ? () => setNavOpen(false) : undefined}
-    planLeft={view?.limits ? `${Math.round(100 - view.limits[0])}% left` : inTauri ? "" : "Max · 62% left"} />;
+    planLeft={view?.limits ? `${Math.round(100 - view.limits[0])}% left` : inTauri ? "" : "Max, 62% left"} />;
   return (
     // paper on the desk (design review 10): the window is the desk; the conversation (and a side chat or subagent beside it)
     // is a sheet on it; the sidebar, the work panel and the status bar lie on the desk
@@ -1123,7 +1134,7 @@ export default function App() {
           </div>
         </header>
         {!inTauri && <div role="note" aria-label="Read-only demo" className="flex flex-none items-center gap-4 border-b border-line-soft bg-field/40 px-7 py-2 text-[12px] text-muted">
-          <div className="min-w-0 flex-1"><span className="font-medium text-ink-2">Read-only demo</span><span className="block">Example conversation · no agent connected. Nothing is sent.</span></div>
+          <div className="min-w-0 flex-1"><span className="font-medium text-ink-2">Read-only demo</span><span className="block">Example conversation, no agent connected. Nothing is sent.</span></div>
           <button onClick={flipTheme} title="Switch light and dark theme" className="flex-none rounded-md border border-line px-2 py-1 text-ink-2 hover:bg-hover">Light / dark</button>
         </div>}
         <div key={`view:${active}`} className="tz-enter flex min-h-0 flex-1 flex-col">
@@ -1136,7 +1147,7 @@ export default function App() {
           onEdit={inTauri ? (e, text) => {
             const files = new Set((view?.changes ?? []).filter((c) => c.at_block > e.block && !c.undone).flatMap((c) => c.files.map((f) => f.path))).size;
             setEditing({ ...e, files, keep: files > 0 }); setDraft({ text, n: Date.now() });
-          } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} asking={!!view?.asking} since={since} out={liveOut} live={busy ? view?.live : null} onSendToAgent={inTauri ? (text) => say(text) : undefined} onRetry={inTauri ? () => { core.retry().catch(() => {}); } : undefined}
+          } : undefined} busy={busy} activity={view?.asking ? undefined : view?.compacting ? "Compacting" : view?.activity} asking={!!view?.asking} since={since} out={liveOut} live={busy ? view?.live : null} onSendToAgent={inTauri ? (text) => say(text) : undefined} onRetry={inTauri ? () => { core.retry().catch(() => {}); } : undefined}
           onImage={inTauri ? (p) => core.imageData(p, folder ?? undefined) : undefined}
           onDiff={inTauri ? (turn, path) => setReviewing({ scope: "turn", turn, path }) : undefined} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={inTauri ? (turn) => core.undo(turn) : undefined}
           onStop={inTauri ? stop : undefined} onChangeModel={inTauri ? () => { stop(); chooseModel(); } : undefined} />}
@@ -1253,9 +1264,9 @@ export default function App() {
         onRemove={(id) => widgets.remove(id).then(reloadWidgets).catch(() => {})} onChanged={reloadWidgets} />}
     </div>
     {inTauri ? <StatusBar usage={usage} version={appVersion} idle={fresh || failed} numbers={numbersAt === "bar"} accounts={accts} here={hereAccts} turns={turnsOf(messages)} busy={busy} cache={view?.cache}
-      blocks={view?.blocks.length} onCompact={compact} thread={active}
+      canCompact={view?.compact} blocks={view?.blocks.length} onCompact={compact} thread={active}
       onRefresh={haveView ? () => readAccounts() : undefined} refreshing={acct.busy} readAt={readAt} />
-      : <footer aria-label="Demo status" className="flex h-7 flex-none items-center bg-desk px-3.5 text-[12px] text-muted">Example data · not live usage</footer>}
+      : <footer aria-label="Demo status" className="flex h-7 flex-none items-center bg-desk px-3.5 text-[12px] text-muted">Example data, not live usage</footer>}
     </div>
   );
 }
@@ -1368,7 +1379,7 @@ function PrChip() {
 function CostChip() {
   const h = useContext(HeaderCtx);
   // nothing until there is a cost (a new chat showed $0.000)
-  return h.cost ? <button onClick={openUsage} title={`This conversation's cost · Usage (${keysOf("⌘⇧U")})`} className="rounded-md px-2 py-1 text-[12.5px] tabular-nums text-muted hover:text-ink">{usd(h.cost)}</button> : null;
+  return h.cost ? <button onClick={openUsage} title={`This conversation's cost. Opens Usage (${keysOf("⌘⇧U")})`} className="rounded-md px-2 py-1 text-[12.5px] tabular-nums text-muted hover:text-ink">{usd(h.cost)}</button> : null;
 }
 /** The work panel's switch, with the files this conversation changed beside it as they land (the panel never opens by
  * itself). One control: a "Changes" tab on the sheet's edge did the same until desktop 0.1.139 (the user, 2026-11-27: "it

@@ -62,7 +62,7 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
       <h2 className="mb-1.5 text-center font-prose text-[27px] font-normal leading-tight tracking-[-0.01em] text-ink">
         {place ? <>What are we working on in {place}?</> : "What are we working on?"}</h2>
       {today ? (
-        <button onClick={onUsage} title="Today on this machine, from the run log · opens the usage page" className="mb-3 flex items-center rounded-md px-2 py-0.5 text-[13px] tabular-nums text-muted hover:bg-hover">
+        <button onClick={onUsage} title="Today on this machine, from the run log. Opens the usage page" className="mb-3 flex items-center rounded-md px-2 py-0.5 text-[13px] tabular-nums text-muted hover:bg-hover">
           <span className="mr-2.5 text-faint">Today</span>
           <b className="mr-1 font-medium text-ink">{today.runs}</b>{today.runs === 1 ? "run" : "runs"}
           {today.paid > 0 && <><Sep /><b className="mr-1 font-medium text-ink">{usd(today.paid)}</b>paid</>}

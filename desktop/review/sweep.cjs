@@ -1079,7 +1079,7 @@ const log = [];
   // warning colour from 85% (84, 85, 94, 99, 100%) with Claude's Compact button, pending until the turn runs and then gone;
   // how long the cache stays warm ("warm 59m" of an hour, "warm <1m" and "cold" in the warning colour), its tooltip, and the
   // cold box's placeholder; an own-loop conversation with neither; narrow rows dropping the cache's share before its warmth;
-  // the status bar's placement; Stats' Context bar and row; Settings' Claude auto-compact and its pending state; the Changes
+  // the status bar's placement; Stats' Context bar and row; Settings' Auto-compact and its pending state; the Changes
   // section's long branch wrapped, never cut
   if (!process.env.ONLY || process.env.ONLY === "ctx") {
     const ok = (c, what) => { if (!c) throw new Error(what); };
@@ -1096,12 +1096,13 @@ const log = [];
     // `ttl`, the next message re-reading `re` tokens once cold (at Opus's cache-write price unless `usd`)
     // (the strip's context is the last call's input and output: 200 out, so 940,000 reads "940.2k"); its turns on the Claude
     // plan, so the cost says "at API prices, not billed", the longest words it has
-    // `more`: the cache's own flags otherwise (plan false: billed by an API key; compact false: claude takes no commands)
-    const at = (p, c, left, ttl = 300_000, re = c, usd = null, more = {}) => p.evaluate(([c, left, ttl, re, usd, more]) => window.__again((v) => ({ ...v, model: "claude-opus-5-5", activity: "Done", context: c, context_window: 1_000_000, cost: 1.84,
+    // `more`: the cache's own flags otherwise (plan false: billed by an API key), and the view's compact (false: claude takes
+    // no commands)
+    const at = (p, c, left, ttl = 300_000, re = c, usd = null, { compact = true, ...more } = {}) => p.evaluate(([c, left, ttl, re, usd, compact, more]) => window.__again((v) => ({ ...v, model: "claude-opus-5-5", activity: "Done", context: c, context_window: 1_000_000, cost: 1.84, compact,
       usage: { input: 14_000, cache_write: 60_000, cache_read: 1_120_000, output: 9_000 },
       blocks: v.blocks.map((b) => (b.kind === "done" ? { ...b, cost: 1.84, run_cost: 1.84, model: "claude-opus-5-5", plan: true, provider: null, price_m: [5, 0.5, 25] } : b)),
       calls: [{ block: 1, fresh: 60_000, cached: 1_120_000, out: 200, cost: 1.84, first_ms: 1400, tps: 74, total_ms: 9000, model: "claude-opus-5-5", estimate: true, plan: true }],
-      cache: { ttl_ms: ttl, warm_until: Date.now() + left, rebuild: re >= 50_000 ? re : null, rebuild_usd: usd ?? (re >= 50_000 ? (re / 1e6) * 4 * (ttl < 3_600_000 ? 1.25 : 2) : null), plan: true, compact: true, ...more } })), [c, left, ttl, re, usd, more]);
+      cache: { ttl_ms: ttl, warm_until: Date.now() + left, rebuild: re >= 50_000 ? re : null, rebuild_usd: usd ?? (re >= 50_000 ? (re / 1e6) * 4 * (ttl < 3_600_000 ? 1.25 : 2) : null), plan: true, ...more } })), [c, left, ttl, re, usd, compact, more]);
     const colour = (p, c) => p.evaluate((c) => { const d = document.createElement("i"); d.style.color = c; document.body.append(d); const r = getComputedStyle(d).color; d.remove(); return r; }, c);
     // what the strip shows: its text, whether it runs over, the percent's and the bar's colours, the warmth and Compact
     const strip = (p) => p.evaluate(() => { const g = document.querySelector(".tz-nums"); if (!g) return null;
@@ -1123,7 +1124,7 @@ const log = [];
           await at(p, c, left, ttl, re, usd); await p.waitForTimeout(300);
           const s = await strip(p), hot = c >= 850_000; log.push(`${T} ${n}: ${JSON.stringify(s)}`);
           ok((s.pct === warn) === hot && (s.bar === warn) === hot, `${n}: the percent ${s.pct}, the bar ${s.bar} (warn ${warn})`);
-          ok(!!s.compact === hot && (!hot || s.compactTitle === "Summarise the conversation to free context (Claude's /compact)"), `${n}: Compact ${s.compact} "${s.compactTitle}"`);
+          ok(!!s.compact === hot && (!hot || s.compactTitle === "Summarise the conversation to free context (/compact)"), `${n}: Compact ${s.compact} "${s.compactTitle}"`);
           ok(s.warm === said && (s.warmColour === warn) === /<1m|cold/.test(said), `${n}: the warmth "${s.warm}" in ${s.warmColour}`);
           ok(s.over <= 0 && +s.drop < 4, `${n}: the strip runs over by ${s.over} (drop ${s.drop})`);
           ok(n !== "100-cold" || s.placeholder === "Cache cold: the next message re-reads 1.2M tokens", `${n}: the placeholder "${s.placeholder}"`);
@@ -1225,10 +1226,11 @@ const log = [];
         const a = (await strip(p)).compact; await p.waitForTimeout(15_200); const b = (await strip(p)).compact;
         ok(a === "Compacting…" && b === "Compact", `released: ${a} -> ${b}`);
       });
+      // the own loop: no cache's warmth; its own Compact since 2026-11-27 (ONLY=cmp has the rest of it)
       await step(p, `${T}-own-loop`, async () => {
-        await p.evaluate(() => window.__again((v) => ({ ...v, model: "deepseek-v4.1-flash", activity: "Done", context: 940_000, context_window: 1_000_000, cache: null }))); await p.waitForTimeout(300);
+        await p.evaluate(() => window.__again((v) => ({ ...v, model: "deepseek-v4.1-flash", activity: "Done", context: 940_000, context_window: 1_000_000, cache: null, compact: true }))); await p.waitForTimeout(300);
         const s = await strip(p); log.push(`${T} own loop: ${JSON.stringify(s)}`);
-        ok(!s.warm && !s.compact && s.pct === warn && s.placeholder === "/ for commands, @ for files", `own loop: ${JSON.stringify(s)}`);
+        ok(!s.warm && s.compact === "Compact" && s.pct === warn && s.placeholder === "/ for commands, @ for files", `own loop: ${JSON.stringify(s)}`);
         await box(p, `${T}-own-loop-box`);
       });
       // narrow rows: the strip never runs over; the cache's share goes before its warmth, which goes last
@@ -1317,12 +1319,12 @@ const log = [];
         await sec.screenshot({ path: `${OUT}/${T}-stats-cost-large.png` });
       });
       await esc(p);
-      // Settings › Providers: Claude auto-compact, the choice at once with a spinner until the settings come back
+      // Settings › Providers: Auto-compact, the choice at once with a spinner until the settings come back
       await step(p, `${T}-settings-autocompact`, async () => {
         await p.evaluate(() => { window.__SETTINGS_MS__ = 1500; localStorage.setItem("tazuna.settings.tab", "Providers"); });
         await side(p).locator("button", { hasText: "Settings" }).last().click(); await p.waitForTimeout(1900);
-        const group = p.getByRole("radiogroup", { name: "Claude auto-compact" }), dialog = p.locator("[role=dialog][aria-label=Settings]");
-        ok(await group.getByRole("radio", { name: "Claude's default" }).getAttribute("aria-checked") === "true", "Claude's default is not chosen at first");
+        const group = p.getByRole("radiogroup", { name: "Auto-compact" }), dialog = p.locator("[role=dialog][aria-label=Settings]");
+        ok(await group.getByRole("radio", { name: "Default" }).getAttribute("aria-checked") === "true", "the default is not chosen at first");
         await dialog.screenshot({ path: `${OUT}/${T}-settings-default.png` });
         await group.getByRole("radio", { name: "80%" }).click(); await p.waitForTimeout(200);
         ok(await group.getByRole("radio", { name: "80%" }).getAttribute("aria-checked") === "true" && await dialog.locator("[aria-label=Saving]").count() === 1, "no pending state on 80%");
@@ -1330,13 +1332,13 @@ const log = [];
         await p.waitForTimeout(1700);
         ok(await p.evaluate(() => window.__AUTOCOMPACT__) === 80 && await dialog.locator("[aria-label=Saving]").count() === 0 && await group.getByRole("radio", { name: "80%" }).getAttribute("aria-checked") === "true", "80% not saved");
         await dialog.screenshot({ path: `${OUT}/${T}-settings-80.png` });
-        await group.getByRole("radio", { name: "Claude's default" }).click(); await p.waitForTimeout(1900);
-        ok(await p.evaluate(() => window.__AUTOCOMPACT__) === null, `Claude's default sent as ${await p.evaluate(() => window.__AUTOCOMPACT__)}`);
+        await group.getByRole("radio", { name: "Default" }).click(); await p.waitForTimeout(1900);
+        ok(await p.evaluate(() => window.__AUTOCOMPACT__) === null, `the default sent as ${await p.evaluate(() => window.__AUTOCOMPACT__)}`);
         // not written: the settings come back without it, and after 6 s the row says so and shows what holds
         await p.evaluate(() => { window.__AUTOCOMPACT_FAIL__ = true; window.__SETTINGS_MS__ = 20; });
         await group.getByRole("radio", { name: "50%" }).click(); await p.waitForTimeout(6400);
         ok(await dialog.getByText("Not saved").count() === 1 && await dialog.locator("[aria-label=Saving]").count() === 0
-          && await group.getByRole("radio", { name: "Claude's default" }).getAttribute("aria-checked") === "true", "a value not written is not said");
+          && await group.getByRole("radio", { name: "Default" }).getAttribute("aria-checked") === "true", "a value not written is not said");
         await dialog.screenshot({ path: `${OUT}/${T}-settings-not-saved.png` });
         // the settings coming back later with it after all: the note goes, the value shows
         await p.evaluate(() => { window.__AUTOCOMPACT_FAIL__ = false; window.__AUTOCOMPACT__ = 50; window.__TAURI_INTERNALS__.invoke("op", { tid: window.__lastView.tid, msg: { op: "settings" } }); });
@@ -1366,6 +1368,164 @@ const log = [];
       await ctx.close();
     }
     if (process.env.ONLY === "ctx") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok"); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
+  }
+
+  // own-loop compaction (2026-11-27; ONLY=cmp: these alone): an own-loop conversation (no Claude cache) on a known window,
+  // no Compact at 84%; from 85% the warning colour and Compact, its pending state, none while the reply runs; after it the
+  // context the summary left, the divider in the conversation and the summary call's row on the receipt; a mid-run
+  // compaction's divider under the turn; the status bar's Compact; a window not known (a local model): no share, no Compact
+  if (!process.env.ONLY || process.env.ONLY === "cmp") {
+    const ok = (c, what) => { if (!c) throw new Error(what); };
+    const LC = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T);
+      T.emit = (e, p) => { if (p?.msg?.type === "view") window.__lastView = p; return emit(e, p); };
+      window.__again = (f) => { const { tid, msg } = window.__lastView; T.view(tid, f({ ...msg, from: 0 })); }; })();`;
+    const DS = "deepseek-v4.1-flash", NOTICE = "── context compacted: earlier turns are now a summary ──";
+    const run = (b) => ({ kind: "done", ok: true, secs: 41, turns: 6, cost: 0.0213, run_cost: 0.0213, usage: { input: 52_000, cache_write: 0, cache_read: 888_000, output: 2_100 }, stopped: false,
+      model: DS, plan: false, provider: "SubRouter", price_m: [0.15, 0.003, 0.6], ...b });
+    // the conversation on the own loop at `c` tokens of a 1M window (the view's compact: its engine lists /compact), between replies
+    const own = (p, c, more = {}) => p.evaluate(([c, more, DS, run]) => window.__again((v) => ({ ...v, model: DS, effort: "high", activity: "Done", context: c, context_window: 1_000_000,
+      cache: null, compact: true, cost: 0.0213, usage: run.usage, blocks: [{ kind: "prompt", text: "Names for a grey cat" }, { kind: "text", text: "Ash, Smoke, Pebble, Earl Grey.", live: false }, run],
+      calls: [{ block: 1, fresh: 52_000, cached: 888_000, out: 2_100, cost: 0.0213, first_ms: 900, tps: 120, total_ms: 18_000, model: DS, provider: "SubRouter" }], ...more })), [c, more, DS, run({})]);
+    const strip = (p) => p.evaluate(() => { const g = document.querySelector(".tz-nums"); if (!g) return null;
+      const pct = [...g.querySelectorAll("span")].find((e) => /^\d+%$/.test(e.textContent.trim())), compact = [...g.querySelectorAll("button")].find((b) => /^Compact/.test(b.textContent.trim()));
+      const warm = [...g.querySelectorAll("button")].find((b) => /^(warm|cold)/.test(b.textContent.trim()));
+      return { text: g.innerText.replace(/\s+/g, " ").trim(), over: g.scrollWidth - g.clientWidth, pct: pct && getComputedStyle(pct).color, compact: compact ? compact.innerText.trim() : null,
+        title: compact?.title ?? null, warm: !!warm }; });
+    const colour = (p, c) => p.evaluate((c) => { const d = document.createElement("i"); d.style.color = c; document.body.append(d); const r = getComputedStyle(d).color; d.remove(); return r; }, c);
+    const box = (p, name) => p.locator("[data-composer]").screenshot({ path: `${OUT}/${name}.png` });
+    // the reading column from its last messages to the box: the divider and the strip in one picture
+    const column = async (p, name) => { const b = await p.locator("[data-composer]").boundingBox();
+      const top = await p.evaluate(() => { const m = [...document.querySelectorAll("[data-msg]")].slice(-4); return m.length ? m[0].getBoundingClientRect().top : 0; });
+      const y = Math.max(0, Math.floor(top) - 16); await p.screenshot({ path: `${OUT}/${name}.png`, clip: { x: b.x - 20, y, width: b.width + 40, height: b.y + b.height + 10 - y } }); };
+    for (const theme of ["dark", "light"]) {
+      const T = `cmp-${theme[0]}`, [ctx, p] = await ctxOf({ theme, extra: LC, scale: 2 });
+      const warn = await colour(p, "var(--warn)");
+      await open(p, "Names for a grey cat");
+      await step(p, `${T}-84`, async () => {
+        await own(p, 840_000); await p.waitForTimeout(300);
+        const s = await strip(p); log.push(`${T} 84: ${JSON.stringify(s)}`);
+        ok(!s.compact && s.pct !== warn && !s.warm && s.over <= 0 && /84%/.test(s.text), `84%: ${JSON.stringify(s)}`);
+        await box(p, `${T}-84-box`);
+      });
+      await step(p, `${T}-94`, async () => {
+        await own(p, 940_000); await p.waitForTimeout(300);
+        const s = await strip(p); log.push(`${T} 94: ${JSON.stringify(s)}`);
+        ok(s.compact === "Compact" && s.title === "Summarise the conversation to free context (/compact)" && s.pct === warn && !s.warm && s.over <= 0, `94%: ${JSON.stringify(s)}`);
+        await box(p, `${T}-94-box`);
+      });
+      await step(p, `${T}-pending`, async () => {
+        await p.locator(".tz-nums button").filter({ hasText: "Compact" }).click(); await p.waitForTimeout(150);
+        const s = await strip(p), sent = await p.evaluate(() => window.__SENT__.filter(([c]) => c === "send").pop());
+        ok(s.compact === "Compacting…" && sent?.[1]?.text === "/compact" && sent[1].draft == null, `pending: ${JSON.stringify(s)} sent ${JSON.stringify(sent)}`);
+        await box(p, `${T}-pending-box`);
+      });
+      // the summary call runs (the view's `compacting`): no Compact, the working row says "compacting", not "thinking"
+      await step(p, `${T}-running`, async () => {
+        await p.evaluate(() => window.__again((v) => ({ ...v, activity: "Thinking", compacting: true, blocks: [...v.blocks, { kind: "prompt", text: "/compact" }] }))); await p.waitForTimeout(300);
+        const s = await strip(p); ok(!s.compact, `Compact while the summary runs: ${JSON.stringify(s)}`);
+        const row = await p.evaluate(() => document.querySelector("[role=status]")?.innerText.replace(/\s+/g, " ") ?? "");
+        log.push(`${T} running: ${row}`);
+        ok(/^compacting/.test(row) && !/thinking/.test(row), `the working row: "${row}"`);
+        await column(p, `${T}-running-column`);
+      });
+      // done: the context the summary left (compact_boundary's post_tokens), the divider, the call's row on the receipt
+      await step(p, `${T}-done`, async () => {
+        await p.evaluate(([DS, NOTICE, done]) => window.__again((v) => ({ ...v, activity: "Done", compacting: false, live: null, context: 31_240, cost: 0.0295,
+          blocks: [...v.blocks, { kind: "notice", text: NOTICE, error: false }, done],
+          calls: [...v.calls, { block: v.blocks.length, fresh: 6_100, cached: 934_000, out: 1_650, cost: 0.0082, first_ms: 2100, tps: 95, total_ms: 19_500, model: DS, provider: "SubRouter", role: "Compaction" }] })),
+          [DS, NOTICE, run({ secs: 21, turns: 1, cost: 0.0082, run_cost: 0.0082, usage: { input: 6_100, cache_write: 0, cache_read: 934_000, output: 1_650 } })]);
+        await p.waitForTimeout(400);
+        const s = await strip(p); log.push(`${T} done: ${JSON.stringify(s)}`);
+        ok(!s.compact && s.pct !== warn && /^32\.9k of 1M 3%/.test(s.text), `after compaction: ${JSON.stringify(s)}`);
+        const divider = await p.locator("[data-msg]").filter({ hasText: /^Context compacted$/ }).count();
+        ok(divider === 1, `the divider: ${divider}`);
+        const dots = await p.evaluate(() => [...document.querySelectorAll("[data-msg]")].map((e) => e.innerText).filter((t) => t.includes("·")));
+        ok(!dots.length, `a middle dot: ${dots}`);
+        await column(p, `${T}-done-column`);
+      });
+      await step(p, `${T}-receipt`, async () => {
+        await p.getByTitle(/^The receipt/).last().click(); await p.waitForTimeout(500);
+        const t = await p.evaluate(() => [...document.querySelectorAll(".tz-slip")].pop()?.innerText ?? "");
+        log.push(`${T} receipt: ${t.replace(/\s+/g, " ")}`);
+        ok(/Compaction/.test(t) && !/Answer/.test(t), `the receipt: ${t}`);
+        const s = await p.locator(".tz-slip").last().boundingBox(); await p.screenshot({ path: `${OUT}/${T}-receipt-slip.png`, clip: { x: s.x - 12, y: s.y - 8, width: s.width + 24, height: s.height + 16 } });
+        await p.getByTitle(/^The receipt/).last().click(); await p.waitForTimeout(400);
+      });
+      // compacting inside a run: the turn's fold says "Compacting" while the summary runs
+      await step(p, `${T}-mid-run-compacting`, async () => {
+        await p.evaluate(() => window.__again((v) => ({ ...v, activity: "Thinking", compacting: true, blocks: [...v.blocks, { kind: "prompt", text: "Now add a test for the names" },
+          { kind: "tool", id: "r1", name: "read", input: { path: "cat_names.py" }, result: "NAMES = [...]", error: false, secs: 0.1, running: false }] }))); await p.waitForTimeout(400);
+        const fold = await p.evaluate(() => [...document.querySelectorAll("[data-msg] button[aria-expanded]")].pop()?.innerText.replace(/\s+/g, " ") ?? "");
+        log.push(`${T} mid-run compacting: ${fold}`);
+        ok(/^Compacting/.test(fold), `the fold: "${fold}"`);
+        await column(p, `${T}-mid-run-compacting-column`);
+      });
+      // compacted inside a run: the divider under the turn, its steps above it, the run going on
+      await step(p, `${T}-mid-run`, async () => {
+        await p.evaluate(([DS, NOTICE]) => window.__again((v) => ({ ...v, activity: "Thinking", compacting: false, context: 28_900, blocks: [...v.blocks.slice(0, -2), { kind: "prompt", text: "Now add a test for the names" },
+          { kind: "tool", id: "r1", name: "read", input: { path: "cat_names.py" }, result: "NAMES = [...]", error: false, secs: 0.1, running: false },
+          { kind: "notice", text: NOTICE, error: false },
+          { kind: "tool", id: "r2", name: "read", input: { path: "cat_names.py" }, result: "NAMES = [...]", error: false, secs: 0.1, running: false }] })), [DS, NOTICE]); await p.waitForTimeout(400);
+        // the turn's steps before the divider above it (done there), the rest of it below, still at work
+        const order = await p.evaluate(() => [...document.querySelectorAll("[data-msg]")].slice(-4).map((e) => e.innerText.split("\n")[0].replace(/\s+/g, " ")));
+        log.push(`${T} mid-run: ${JSON.stringify(order)}`);
+        ok(order[0] === "Now add a test for the names" && /^Worked/.test(order[1]) && order[2] === "Context compacted" && /^Working/.test(order[3]), `mid-run order: ${JSON.stringify(order)}`);
+        await column(p, `${T}-mid-run-column`);
+      });
+      // then a failed auto-compaction, the answer and the turn's end: all under the divider, in that order
+      await step(p, `${T}-failed`, async () => {
+        await p.evaluate(([done]) => window.__again((v) => ({ ...v, activity: "Done", blocks: [...v.blocks, { kind: "notice", text: "Compaction failed: HTTP 500: upstream error", error: true },
+          { kind: "text", text: "Added three tests for the names.", live: false }, done] })), [run({ secs: 64, turns: 4 })]); await p.waitForTimeout(400);
+        const tail = await p.evaluate(() => [...document.querySelectorAll("[data-msg]")].slice(-3).map((e) => e.innerText.replace(/\s+/g, " ")));
+        log.push(`${T} failed: ${JSON.stringify(tail)}`);
+        const below = tail[2] ?? "";
+        // the /compact turn's cost line above stays in the flow, under the divider, never over the next message
+        const overlap = await p.evaluate(() => { const ms = [...document.querySelectorAll("[data-msg]")], u = ms.find((e) => e.innerText.startsWith("Now add a test for the names"));
+          const line = [...document.querySelectorAll("[data-msg] button[title^='The receipt']")].map((b) => b.getBoundingClientRect()), r = u?.getBoundingClientRect();
+          return r ? line.filter((b) => b.bottom > r.top && b.top < r.bottom && b.width > 0).length : -1; });
+        ok(overlap === 0, `a cost line over the next message: ${overlap}`);
+        // (in a block its notes come after its answer, as always)
+        ok(tail[1] === "Context compacted" && ["read 1 file", "Compaction failed: HTTP 500: upstream error", "Added three tests", "2.1k out"].every((t) => below.includes(t))
+          && !/Compaction failed|Added three tests|2\.1k out/.test(tail[0]), `the order: ${JSON.stringify(tail)}`);
+        await column(p, `${T}-failed-column`);
+      });
+      // a window the request may fill only part of (Claude on Messages asks 64k out of 200k): the share of 136k, and
+      // the hover says both
+      await step(p, `${T}-usable`, async () => {
+        await own(p, 120_000, { model: "claude-haiku-4.5", context_window: 136_000, context_window_full: 200_000 }); await p.waitForTimeout(300);
+        const s = await strip(p), title = await p.evaluate(() => document.querySelector(".tz-nums button")?.title ?? "");
+        log.push(`${T} usable: ${JSON.stringify(s)} "${title}"`);
+        ok(/^122\.1k of 136k 90%/.test(s.text) && /^Compact/.test(s.compact ?? "") && title.startsWith("Context: 122.1k of 136k usable (200k window), 90%") && !title.includes("·"), `usable: ${JSON.stringify(s)} "${title}"`);
+        await box(p, `${T}-usable-box`);
+        await p.locator(".tz-nums button").first().click(); await p.waitForTimeout(700);
+        const sub = await p.evaluate(() => document.querySelector("section[aria-label=Stats]")?.innerText.replace(/\s+/g, " ") ?? "");
+        log.push(`${T} usable stats: ${sub}`);
+        ok(sub.includes("of 136k usable (200k window)"), `Stats: "${sub}"`);
+        const sec = p.locator("section[aria-label=Stats]"); await sec.screenshot({ path: `${OUT}/${T}-usable-stats.png` });
+        await esc(p);
+      });
+      // the status bar's Compact on the own loop, the same pending state
+      await step(p, `${T}-bar`, async () => {
+        await toBar(p); await own(p, 940_000); await p.waitForTimeout(300);
+        const bar = p.locator("footer[aria-label=Status]"), t = (await bar.innerText()).replace(/\s+/g, " ");
+        ok(/context 94% of 1M/.test(t) && await bar.getByRole("button", { name: "Compact" }).count() === 1 && !/warm|cold/.test(t), `the bar: "${t}"`);
+        await bar.screenshot({ path: `${OUT}/${T}-bar-strip.png` });
+        await bar.getByRole("button", { name: "Compact" }).click(); await p.waitForTimeout(150);
+        ok(await bar.getByText("Compacting…").count() === 1, "the bar's pending state");
+        await bar.screenshot({ path: `${OUT}/${T}-bar-pending-strip.png` });
+        await p.evaluate(() => { localStorage.setItem("tazuna.numbers", "under"); window.dispatchEvent(new Event("tz-looks")); });
+      });
+      // a model whose window is not known (a local one): the context alone, no share and no Compact
+      await step(p, `${T}-no-window`, async () => {
+        await own(p, 940_000, { model: "qwen3.8-flash", context_window: null }); await p.waitForTimeout(300);
+        const s = await strip(p); log.push(`${T} no window: ${JSON.stringify(s)}`);
+        ok(!s.compact && !s.pct && /^942\.1k \$/.test(s.text), `no window: ${JSON.stringify(s)}`);
+        await box(p, `${T}-no-window-box`);
+      });
+      if (p.errs.length) log.push(`FAIL ${T} page errors: ${p.errs.join(" | ")}`);
+      await ctx.close();
+    }
+    if (process.env.ONLY === "cmp") { fs.writeFileSync(`${OUT}/log.txt`, log.join("\n")); console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok"); await browser.close(); if (log.some((l) => l.startsWith("FAIL"))) process.exitCode = 1; return; }
   }
   // review 14, a step's insides (ONLY=steps: these alone; review/mock.js "Order the summary lines"): every kind of step
   // unfolded, its code drawn as code: a read's numbers in a gutter (none in a copy) and its long lines hanging under their
@@ -1454,7 +1614,7 @@ const log = [];
           if (k === "multi-edit") ok(await box.locator(":scope > div").count() === 2, "the multi-edit is not two pieces");
         }
         if (k === "write") {
-          ok(text.includes("new file · 10 lines") && (await guts(el)).join(",") === "1,2,3,4,5,6,7,8,9,10" && !text.includes("created successfully"), `the write: ${text.slice(0, 120)}`);
+          ok(text.includes("new file, 10 lines") && (await guts(el)).join(",") === "1,2,3,4,5,6,7,8,9,10" && !text.includes("created successfully"), `the write: ${text.slice(0, 120)}`);
           // its blank lines copy as nothing, not a space
           const c = await copied(el.locator(".bg-card"));
           ok(c.includes("as const;\n\nexport type") && !/\n[ \u200b]+\n/.test(c), `a copy of the write: ${JSON.stringify(c.slice(0, 160))}`);
@@ -1490,7 +1650,7 @@ const log = [];
         const t = await card.innerText();
         ok(t.includes("src/routes/orders/") && !t.includes("/Users/x/api-gateway"), `the card's path: ${t.slice(0, 120)}`);
         // before its result a write may be over a file: "whole file", never "new file" (review of review 14)
-        ok(kind === "write" ? t.includes("whole file · 10 lines") && !t.includes("new file") : await card.locator(".bg-diff-add").count() > 0, `the card's change: ${t.slice(0, 200)}`);
+        ok(kind === "write" ? t.includes("whole file, 10 lines") && !t.includes("new file") : await card.locator(".bg-diff-add").count() > 0, `the card's change: ${t.slice(0, 200)}`);
         await card.screenshot({ path: `${OUT}/${T}-approval-${kind}-card.png` });
       });
       // a path outside the project, long: wrapped in the card, its "~/" kept (it was cut from the left and read as inside)
@@ -1508,7 +1668,7 @@ const log = [];
           for (let i = 0; i < 400 && !document.querySelector("[data-asking] [title$='vendor.min.js']"); i++) await new Promise((r) => setTimeout(r, 5));
           await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0))); return performance.now() - t0; });
         const card = p.locator("[data-asking]");
-        ok(ms < 1500 && !(await card.locator("span[class*=tok-]").count()) && (await card.innerText()).includes("whole file · 1 line"), `the huge write took ${Math.round(ms)} ms`);
+        ok(ms < 1500 && !(await card.locator("span[class*=tok-]").count()) && (await card.innerText()).includes("whole file, 1 line"), `the huge write took ${Math.round(ms)} ms`);
         log.push(`${theme} a 476 KB one-line write in the card: ${Math.round(ms)} ms`);
       });
       // the review pane on the shared rows: its numbers, tints and marks as before, and a click on a line still comments
@@ -2524,7 +2684,7 @@ const log = [];
         await pill.click(); await p.getByRole("menuitemradio").filter({ hasText: new RegExp(`^${m}`, "i") }).click(); await p.mouse.move(5, 400); await p.waitForTimeout(300);
         const s = await pill.evaluate((b) => ({ tint: (b.className.match(/tz-mode-\w+/) ?? [""])[0], text: b.innerText.trim(), fill: b.querySelector("svg").getAttribute("fill"), color: getComputedStyle(b).color }));
         log.push(`${N} ${m}: ${JSON.stringify(s)}`);
-        const want = { full: ["tz-mode-full", "Full · never asks", "currentColor"], plan: ["tz-mode-plan", "Plan", "none"], ask: ["", "Ask", "none"] }[m];
+        const want = { full: ["tz-mode-full", "Full, never asks", "currentColor"], plan: ["tz-mode-plan", "Plan", "none"], ask: ["", "Ask", "none"] }[m];
         must(s.tint === want[0] && s.text === want[1] && s.fill === want[2], `${m}: ${JSON.stringify(s)}, wanted ${want}`);
         await p.locator("[data-composer]").screenshot({ path: `${OUT}/${N}-mode-${m}-box.png` });
       });

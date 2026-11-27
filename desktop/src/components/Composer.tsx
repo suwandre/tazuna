@@ -289,7 +289,7 @@ export function Composer({ session, where, chat, busy, sendBlocked, onSend, onSe
         </div>
         {!numbersTop && numbers}
       </div>
-      {readOnly && <p id="demo-draft-help" className="mx-auto mt-1.5 max-w-[700px] px-1 text-[11.5px] text-muted">Draft only · copy it before leaving this page.</p>}
+      {readOnly && <p id="demo-draft-help" className="mx-auto mt-1.5 max-w-[700px] px-1 text-[11.5px] text-muted">Draft only. Copy it before leaving this page.</p>}
       {below && <div className="mx-auto mt-1.5 max-w-[700px] px-1">{below}</div>}
     </footer>
   );
@@ -397,7 +397,7 @@ export function ModePill({ composer: c }: { composer: ComposerBag }) {
       <button disabled={!c.onMode} onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open} title={c.readOnly ? "Permission mode — available in the desktop app" : "Permission mode (shift-tab)"}
         className={`${pill} ${full ? "tz-mode-full" : c.session.mode === "plan" ? "tz-mode-plan" : ""}`}>
         <Shield size={14} strokeWidth={1.5} fill={full ? "currentColor" : "none"} />
-        <span>{capital(c.session.mode)}{full && <span className="hidden @min-[520px]:inline"> · never asks</span>}</span><ChevronDown size={13} strokeWidth={1.5} className={full ? undefined : "text-faint"} />
+        <span>{capital(c.session.mode)}{full && <span className="hidden @min-[520px]:inline">, never asks</span>}</span><ChevronDown size={13} strokeWidth={1.5} className={full ? undefined : "text-faint"} />
       </button>
       {open && (
         <Menu onClose={() => setOpen(false)} width={320}>

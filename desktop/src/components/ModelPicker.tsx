@@ -1,7 +1,7 @@
 import { Check, Columns3, Search } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import type { ModelChoice, Models } from "../lib/tazuna";
-import { capital, matchesWords, modelLabel } from "../lib/types";
+import { capital, matchesWords, modelLabel, unDot } from "../lib/types";
 import { Segmented } from "./Controls";
 import { Sep } from "./Sep";
 
@@ -186,7 +186,7 @@ export function ModelPicker({ models, current, onPick, onClose, onKey, onRefresh
             {caution?.note && <div className={`px-3 pb-0.5 text-[11.5px] ${caution.warn ? "text-warn" : "text-faint"}`}>{caution.note}</div>}
             {rows.map((c) => { const toKey = c.no_key && onKey; return (
               <button key={`${c.model}|${c.url}|${c.key_env}|${c.label}`} data-row disabled={!!c.why_not && !toKey} onClick={() => (toKey ? onKey(c.provider) : onPick(c))}
-                title={toKey ? NO_KEY[c.why_not ?? ""] ?? NO_KEY["no key"] : c.why_not ?? c.place}
+                title={toKey ? NO_KEY[c.why_not ?? ""] ?? NO_KEY["no key"] : unDot(c.why_not ?? c.place ?? "")}
                 className="flex w-full items-center gap-2 px-3 py-[5px] text-left outline-offset-[-2px] hover:bg-hover focus-visible:bg-hover disabled:cursor-default disabled:hover:bg-transparent">
                 <span className="w-3.5 flex-none text-accent">{c.current && <Check size={14} strokeWidth={1.75} />}</span>
                 <span className="min-w-0 flex-1">

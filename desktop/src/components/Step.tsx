@@ -169,7 +169,7 @@ function given({ name, input, cap, cwd, result, unsure }: Parameters<typeof Give
     const made = /^File created successfully at: /.test(result ?? "");
     return (
       <div {...scroll} className={frame}>
-        {boxNote(`${made ? "new file" : "whole file"} · ${lines.length} line${lines.length === 1 ? "" : "s"}`)}
+        {boxNote(`${made ? "new file" : "whole file"}, ${lines.length} line${lines.length === 1 ? "" : "s"}`)}
         {shown.map((l, i) => <CodeRow key={i} text={l} language={tint(b, l, lang)} nums={[i + 1]} width={w} className="pl-1.5" />)}
         <More n={lines.length - shown.length} />
       </div>
@@ -282,7 +282,7 @@ export function Step({ t }: { t: ToolStep }) {
           : t.stopped || t.declined ? <Square size={10} strokeWidth={2} fill="currentColor" className="mx-0.5 flex-none text-faint" aria-label={t.declined ? "declined" : "stopped"} />
           : t.ok ? <Check size={14} strokeWidth={1.5} className="flex-none text-ok" />
           : <X size={14} strokeWidth={1.75} className="flex-none text-bad" aria-label="failed" />}
-        <span className={t.running && !t.waiting ? "tz-live" : ""}>{t.waiting ? `${WAIT[t.verb] ?? t.verb} · waits for you` : t.running ? (NOW[t.verb] ?? t.verb) : t.declined ? (WAIT[t.verb] ?? t.verb) : t.verb}</span>
+        <span className={t.running && !t.waiting ? "tz-live" : ""}>{t.waiting ? `${WAIT[t.verb] ?? t.verb}: waits for you` : t.running ? (NOW[t.verb] ?? t.verb) : t.declined ? (WAIT[t.verb] ?? t.verb) : t.verb}</span>
         {/* a file from the conversation's folder, its name in ink; anything else as the core named it */}
         {file ? <PathLabel path={file} cwd={t.cwd} className="text-[11.5px]" /> : t.target && <span className="truncate font-mono text-[11.5px] text-ink-2">{t.target}</span>}
         {/* (-ml-2 takes back the row's gap: the hairline has the same room on both sides) */}
@@ -311,8 +311,8 @@ export async function demo() {
   const must = (ok: unknown, what: string) => { if (!ok) throw new Error(`step: ${what}`); };
   // "new file" only where the result says it made one; before it, or after the own loop's "ok", it may have written over one
   const write = (result?: string) => html(<Given name="Write" input={{ file_path: "/p/a.ts", content: "a\n\nb\n" }} result={result} />);
-  must(write().includes("whole file · 3 lines") && write("ok").includes("whole file") && write("The file /p/a.ts has been updated successfully.").includes("whole file")
-    && write("File created successfully at: /p/a.ts").includes("new file · 3 lines"), "new file or whole file");
+  must(write().includes("whole file, 3 lines") && write("ok").includes("whole file") && write("The file /p/a.ts has been updated successfully.").includes("whole file")
+    && write("File created successfully at: /p/a.ts").includes("new file, 3 lines"), "new file or whole file");
   // a blank line is a <br> (a blank line in a copy, no space)
   must(/data-n="2"[^>]*><\/span><span class="[^"]*"[^>]*><br\/><\/span>/.test(write()), "a blank line is not a <br>");
   // long lines plain and unmarked, rows capped, all of it quick (a 200 KB line took 12 s in the approval)

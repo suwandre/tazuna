@@ -64,7 +64,10 @@ export type View = {
   blocks: ViewBlock[]; model: string; effort: string; cwd: string; profile: string; mode: string; activity: string;
   model_restore?: { model: string; waiting: boolean } | null;
   /** `context_window` null: the model's window is not known (a local model), and no share of it is shown */
-  cost: number; usage: Usage; turns: number; context: number; context_window?: number | null; tasks?: Task[]; limits?: [number, number]; limits_at?: number | null; limits_reset?: number | null; balance?: number | null;
+  cost: number; usage: Usage; turns: number; context: number; context_window?: number | null;
+  /** the model's whole window where `context_window` is what of it a request may fill (the own loop: less the output the
+   * provider counts against it), else absent */
+  context_window_full?: number | null; tasks?: Task[]; limits?: [number, number]; limits_at?: number | null; limits_reset?: number | null; balance?: number | null;
   /** what an untrusted folder's config would run (it runs lean until trusted) */
   untrusted?: string | null;
   /** the conversation's session: claude's id, or the own loop's ("own-...") (null before the first reply, and right after a
@@ -102,7 +105,12 @@ export type View = {
    * once it is cold, in tokens and ≈ dollars at API prices (null: too small to mention, or no price for the model), whether
    * the plan pays (not an API key, Bedrock or a gateway), and whether claude takes /compact here (none in a plain chat or
    * the Lean profile: claude starts there with no commands) */
-  cache?: { ttl_ms: number; warm_until: number; rebuild: number | null; rebuild_usd: number | null; plan: boolean; compact: boolean } | null;
+  cache?: { ttl_ms: number; warm_until: number; rebuild: number | null; rebuild_usd: number | null; plan: boolean } | null;
+  /** the session takes /compact: the own loop always (its engine compacts, 2026-11-27), Claude where its claude lists it
+   * (none in a plain chat or the Lean profile) */
+  compact?: boolean;
+  /** a compaction runs (claude's or the own loop's summary call): the Working row says "compacting" */
+  compacting?: boolean;
 };
 /** `key`: where its key comes from ("logged in", "key in the environment", …), empty: no key */
 export type Provider = { name: string; host: string; page: string; place: string; example: string; key: string; trusted: boolean;

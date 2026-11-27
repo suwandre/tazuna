@@ -307,13 +307,14 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
           {st && <>
             <Section title="Providers" label="Yours" note="Claude runs on your subscription; other providers take a key or a sign-in.">
               <Row title="Claude" note={<ClaudeNote s={claude} />}><ClaudeButtons s={claude} check={checkClaude} checking={checkingClaude} /></Row>
-              {/* the percent of Claude's auto-compact window where it compacts by itself (CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, which
-                  only lowers Claude's own threshold); a core before it has no such setting */}
-              {st.autocompact !== undefined && <Row title="Claude auto-compact">
+              {/* where a conversation compacts by itself: on Claude a percent of its auto-compact window
+                  (CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, which only lowers Claude's own threshold), on the own loop of the model's
+                  window (90% by default, 2026-11-27); a core before it has no such setting */}
+              {st.autocompact !== undefined && <Row title="Auto-compact">
                 {compactAt != null ? <LoaderCircle size={12} strokeWidth={2} className="animate-spin text-faint" aria-label="Saving" />
                   : compactNote && <span role="status" className="text-[12px] text-bad">Not saved</span>}
-                <Segmented label="Claude auto-compact" value={compactAt ?? compactSaid(st.autocompact)}
-                  options={[["default", "Claude's default"], ["50", "50%"], ["70", "70%"], ["80", "80%"], ["90", "90%"]]}
+                <Segmented label="Auto-compact" value={compactAt ?? compactSaid(st.autocompact)}
+                  options={[["default", "Default"], ["50", "50%"], ["70", "70%"], ["80", "80%"], ["90", "90%"]]}
                   onChange={(v) => { compactAsk.current = compactLast.current = v; setCompactAt(v); setCompactNote(false);
                     core.setAutocompact(v === "default" ? null : Number(v)).then(refresh, () => { if (compactAsk.current === v) compactEnd(false); }); }} />
               </Row>}

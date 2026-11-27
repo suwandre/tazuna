@@ -222,10 +222,17 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   has ended the last reply's average writing speed ("210 t/s", "Average writing speed of the last reply"; `writing`; where
   that reply wrote too little to time, the last one before it that could be timed, and its tooltip says so), and
   none before any reply (the reply's "↓ tokens" stay on its Working row). From 85% of the window (`CONTEXT_WARN`) the
-  context's bar and percent are `warn`, here, in Stats and in the status bar, no glow; on Claude between replies a quiet
-  Compact button follows them (here and in the status bar), sending `/compact` to the core as it is, never through the
+  context's bar and percent are `warn`, here, in Stats and in the status bar, no glow; between replies a quiet Compact
+  button follows them (here and in the status bar) where the session takes /compact (the view's `compact`: the own loop
+  always, since 2026-11-27; Claude where its claude lists it), sending `/compact` to the core as it is, never through the
   box's edit or its draft ("Compacting…" until the turn runs, then gone); none while an earlier message is being edited,
-  nor where claude takes no commands (a plain chat, the Lean profile).
+  nor where claude takes no commands (a plain chat, the Lean profile), nor where the model's window is not known. A
+  compaction (Claude's or the own loop's) is a quiet divider in the conversation, "Context compacted", where it happened;
+  while it runs the working row and the turn's fold say "Compacting"; the own loop's summary call is a row of its own on
+  the receipt, "Compaction"; one that failed is said under the turn in words ("Compaction failed: ..."); a turn that goes
+  on after the divider does so below it. Where a request may fill only part of the model's window (the own loop on
+  Anthropic's API asks 64k out of 200k) the share is of that part: "of 136k", the hovers and Stats "136k usable of the
+  model's 200k window".
   They start at the box's text edge; a short row drops the cache's share, then the cost's words, then "of 128k", then
   the cache's warmth (last: with Compact and a plan's cost words a 700 px row had no room for it at 85%), and never
   wraps. Each is a button (a Tab stop; with the strip above the box, Shift+Tab from the box reaches it): the cost opens the
@@ -276,9 +283,10 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   the answer (a click shows it whole); nothing loads from the network.
 - Settings is one part at a time, chosen in a list on its left (Appearance first: theme, accent, text size, the type answers
   are set in, the Stats as tiles or rows, where the conversation's numbers stand, Live stats on or off; its rows have no line under them, the
-  labels and controls say it: design review 14); a provider's key field shows when asked for. Claude is the first of your providers, Claude auto-compact
-  under it (Claude's default, 50, 70, 80 or 90% of its auto-compact window: CLAUDE_AUTOCOMPACT_PCT_OVERRIDE as each claude
-  starts, a spinner by it until the settings come back with it, "Not saved" where it did not take): signed in, or how to sign
+  labels and controls say it: design review 14); a provider's key field shows when asked for. Claude is the first of your providers, Auto-compact
+  under it (Default, 50, 70, 80 or 90%: on Claude of its auto-compact window, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE as each claude
+  starts; on the own loop of the model's window, 90% by default, as each engine starts; a spinner by it until the settings
+  come back with it, "Not saved" where it did not take). Claude itself: signed in, or how to sign
   in (`claude auth login` with Copy, and Check again), or its install page; the first-run dialog ticks it only when it is
   signed in. A provider's row has a Usage line under it (review 14, usage sources, and its fix after the user's review): the
   Track switch and, while it is on, how the usage is read (a Segmented where there are several: API, CLI, Console, Count

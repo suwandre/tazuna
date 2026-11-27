@@ -204,8 +204,8 @@ export function AnswerSlip({ meta, tools = [], toolsSaid }: { meta: Meta; tools?
           <tbody>
             {calls.map((c, i) => (
               <tr key={i}>
-                <td className={`${first} max-w-0`} title={c.tools || "It wrote the answer"}><span className="inline-block text-faint" style={gutter(calls.length)}>{i + 1}</span>
-                  {c.model ? <>{modelLabel(c.model)} <span className="text-faint">{c.role || c.tools || "Answer"}</span></> : c.tools || "Answer"}</td>
+                <td className={`${first} max-w-0`} title={c.role === "Compaction" ? "It summarised the conversation" : c.tools || "It wrote the answer"}><span className="inline-block text-faint" style={gutter(calls.length)}>{i + 1}</span>
+                  {c.model ? <>{modelLabel(c.model)} <span className="text-faint">{c.role || c.tools || "Answer"}</span></> : c.role || c.tools || "Answer"}</td>
                 <td className={num}>{tok(c.fresh + c.cached)}</td><td className={num}>{tok(c.cached)}<Share part={c.cached} whole={c.fresh + c.cached} /></td><td className={num}>{tok(c.out)}</td>
                 <td className={`${num} ${ttft}`}>{took(c.firstMs) || "–"}</td><td className={`${num} ${speed}`}>{c.tps ? perSec(c.tps) : "–"}</td>
                 {/* what a narrow slip leaves out, on hover */}

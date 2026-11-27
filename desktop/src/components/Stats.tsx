@@ -1,7 +1,7 @@
 import { Activity, Coins, Database, Gauge, Timer } from "lucide-react";
 import { useContext, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { LIVE, STATS, useLook } from "../lib/chrome";
-import { CONTEXT_WARN, compactable, costSaid, stats, usage, type Point } from "../lib/fromView";
+import { CONTEXT_WARN, compactable, costSaid, stats, usage, windowSaid, type Point } from "../lib/fromView";
 import { blend, lastSpeed, liveRow, outNow, settled, still, useFrame, useLive, useWarm, warmSaid, type Live } from "../lib/live";
 import type { ModelChoice, View } from "../lib/tazuna";
 import { median, pctText, tenths, usd } from "../lib/types";
@@ -141,7 +141,7 @@ function Spark({ points, fmt, name, max, live, follow }: { points: Point[]; fmt:
         {head && <i className="absolute size-[7px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-live shadow-[0_0_0_2px_var(--main)]" style={{ left: `${head[0]}%`, top: `${head[1]}%` }} />}
         {/* the tip goes along with its call, its edges inside the chart's (left x% less x% of its own width) */}
         {tip && <div className="tz-float pointer-events-none absolute bottom-[calc(100%+6px)] z-10 whitespace-nowrap rounded-md border border-line-strong px-2 py-[3px] text-[11.5px] tabular-nums text-ink"
-          style={{ left: `${xy(at!)[0]}%`, transform: `translateX(-${xy(at!)[0]}%)` }}>call {tip[0]} · {fmt(tip[1])}</div>}
+          style={{ left: `${xy(at!)[0]}%`, transform: `translateX(-${xy(at!)[0]}%)` }}>call {tip[0]}: {fmt(tip[1])}</div>}
       </div>
     </div>
   );
@@ -235,7 +235,7 @@ function Numbers({ view: core, scope, live, rows }: { view: View; scope: Scope; 
       ["Cost", s.how, <>{about}{usd(t.cost)}</>, s.cost],
       ["Calls", undefined, String(Math.round(t.calls)), s.calls],
       ["Working", undefined, dur(t.secs), s.secs || null],
-      ["Context", undefined, `${tok(Math.round(t.ctx))}${u.contextMax ? ` of ${u.contextMax}` : ""}`, view.context],
+      ["Context", undefined, `${tok(Math.round(t.ctx))}${u.contextMax ? ` of ${u.contextFull ? windowSaid(u) : u.contextMax}` : ""}`, view.context],
     ];
     return (
       <div className="pt-0.5 text-[12.5px]">
@@ -267,7 +267,7 @@ function Numbers({ view: core, scope, live, rows }: { view: View; scope: Scope; 
           <Spark name="Cache hit rate" points={s.hits} fmt={share} max={100} live={live} follow={f} /></Metric>}
         {/* the last call's input against the model's window (with the call in flight's output so far, live); a window the
             core does not know (a local model) has no bar */}
-        <Metric name="Context" value={tok(Math.round(t.ctx))} zero={!view.context} est={f} sub={u.contextMax ? `of ${u.contextMax}` : undefined}>
+        <Metric name="Context" value={tok(Math.round(t.ctx))} zero={!view.context} est={f} sub={u.contextMax ? `of ${u.contextFull ? windowSaid(u) : u.contextMax}` : undefined}>
           {u.contextMax && <Bar pct={u.contextPct} warn={u.contextPct >= CONTEXT_WARN} />}</Metric>
       </div>
     </div>
@@ -309,12 +309,12 @@ export function ConvNumbers({ view: core, choice, busy, turns, top, onCompact }:
   // [its name, the tooltip, what it shows, its text: the row is fitted again when a text's length changes]
   const parts: [string, string, ReactNode, string][] = [];
   const full = !!u.contextMax && u.contextPct >= CONTEXT_WARN;
-  if (ctx > 0) parts.push(["context", `Context: ${tok(settled(core).context)}${cu.contextMax ? ` of the model's ${cu.contextMax} window, ${cu.contextPct}%` : ""}${live}`, <>
+  if (ctx > 0) parts.push(["context", `Context: ${tok(settled(core).context)}${cu.contextMax ? ` of ${windowSaid(cu)}, ${cu.contextPct}%` : ""}${live}`, <>
     <Gauge size={14} strokeWidth={1.5} className="text-faint" /><Num hold={settle} est={est} className={`font-medium ${est ? "" : "text-ink"}`}>{tok(ctx)}</Num>
     {u.contextMax && <><span className="tz-n3 -ml-0.5">of {u.contextMax}</span><span className="h-[5px] w-10 flex-none overflow-hidden rounded-[3px] bg-line-strong">
       <i className={`block h-full rounded-[3px] ${full ? "bg-warn" : "bg-live"}`} style={{ width: `${u.contextPct}%` }} /></span><Num hold={settle} className={full ? "text-warn" : ""}>{u.contextPct}%</Num></>}</>, `${tok(ctx)}${u.contextPct}`]);
-  // Claude's own compaction, between replies (CompactButton draws it)
-  if (ctx > 0 && onCompact && compactable(core.cache, u, busy)) parts.push(["compact", "", null, compacting ? "Compacting…" : "Compact"]);
+  // compaction (Claude's own, or the own loop's), between replies (CompactButton draws it)
+  if (ctx > 0 && onCompact && compactable(core.compact, u, busy)) parts.push(["compact", "", null, compacting ? "Compacting…" : "Compact"]);
   if (paid) parts.push(["cost", paid[2] + live, <><Coins size={14} strokeWidth={1.5} className="text-faint" /><Num hold={settle} est={est} className={`font-medium ${est ? "" : "text-ink"}`}>{paid[0]}</Num>
     {paid[1] && <span className="tz-n2 -ml-0.5">{paid[1]}</span>}</>, paid.join()]);
   if (u.cachedPct > 0) parts.push(["cache", "Input read from the provider's cache in this conversation", <>
@@ -335,7 +335,7 @@ export function ConvNumbers({ view: core, choice, busy, turns, top, onCompact }:
   const part = "flex h-6 items-center gap-1.5 rounded-md px-[7px] hover:bg-hover hover:text-ink-2";
   return (
     <div ref={row} aria-label="This conversation's numbers" role="group"
-      className={`tz-nums -ml-4 -mr-3 flex h-8 items-center whitespace-nowrap bg-[color-mix(in_srgb,var(--field)_40%,var(--card))] pl-[9px] pr-[5px] text-[12.5px] tabular-nums text-muted ${top ? "-mt-3 mb-2.5 rounded-t-[11px] border-b border-line" : "-mb-2 mt-2 rounded-b-[11px] border-t border-line"}`}>
+      className={`tz-nums -ml-4 -mr-3 flex h-8 items-center whitespace-nowrap bg-[color-mix(in_srgb,var(--field)_40%,var(--card))] pl-[9px] pr-[5px] text-[12.5px] tabular-nums text-muted ${top ? "-mt-3 mb-2.5 rounded-t-[calc(var(--radius-xl)-1px)] border-b border-line" : "-mb-2 mt-2 rounded-b-[calc(var(--radius-xl)-1px)] border-t border-line"}`}>
       {parts.map(([k, title, inner], i) => (
         <span key={k} className={`flex flex-none items-center ${k === "cache" ? "tz-n1" : k === "warm" ? "tz-n4" : ""}`}>
           {i > 0 && k !== "compact" && <i aria-hidden="true" className="mx-[3px] h-3.5 w-px bg-line" />}

@@ -128,7 +128,7 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide, opened, onClose,
   return (
     <>
     <a ref={row} data-flip={sub ? undefined : t.id} data-tip-clip={(t.full ?? t.title).toLowerCase() === t.title.toLowerCase() ? "" : undefined} onClick={onClick} {...press(onClick)}
-      onContextMenu={openMenu} onKeyDownCapture={openMenu} aria-haspopup={onRename ? "menu" : undefined} title={onClick ? t.full ?? t.title : "Example conversation · available in the desktop app"} className={`group flex items-center gap-2 truncate rounded-md px-[9px] ${twoLines ? "py-[5px]" : "py-1.5"} text-ink-2 transition-colors duration-150 ${onClick ? "hover:bg-hover" : "cursor-default"} ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
+      onContextMenu={openMenu} onKeyDownCapture={openMenu} aria-haspopup={onRename ? "menu" : undefined} title={onClick ? t.full ?? t.title : "Example conversation, in the desktop app"} className={`group flex items-center gap-2 truncate rounded-md px-[9px] ${twoLines ? "py-[5px]" : "py-1.5"} text-ink-2 transition-colors duration-150 ${onClick ? "hover:bg-hover" : "cursor-default"} ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
       {sub && <span className={`size-1.5 flex-none rounded-full ${t.running ? "bg-live shadow-[0_0_0_3px_var(--live-soft)]" : "bg-faint"}`} />}
       {twoLines ? (
         <span className="min-w-0 flex-1">

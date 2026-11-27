@@ -64,6 +64,9 @@ export const pct = (part: number, whole: number) => (part >= whole ? 100 : Math.
  * for anything from 98.5 to 99.9): "99.8%", only all of it "100%", never rounded up to it ("99.9%" at most short of all). */
 export const pct1 = (part: number, whole: number) => (part >= whole ? 100 : Math.min(99.9, Math.round((1000 * part) / whole) / 10));
 /** A share as written: always one decimal ("86.0", beside "85.3" a bare "86" read as never changed), only none and all whole ("0", "100"). */
+/** A text from the core or claude with its " · " joins as commas ("Claude · subscription" is "Claude, subscription"): the
+ * terminal's way, not the window's (the user, 2026-11-27: middle dots read as AI slop). */
+export const unDot = (s: string) => s.replace(/\s+·\s+/g, ", ");
 export const pctText = (n: number) => (n <= 0 ? "0" : n >= 100 ? "100" : n.toFixed(1));
 /** The middle value (of two, their mean); null for none. */
 export const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b), m = s.length >> 1; return !s.length ? null : s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
@@ -90,8 +93,11 @@ export type Message =
       /** a call being tried again while the reply runs, as the core says it ("…: 2 tries failed, trying again (HTTP 429…)");
        * `retryAt` (epoch ms) and `tries` where the core sends them (old cores send neither: no countdown) */
       retrying?: string; retryAt?: number; tries?: number;
-      /** what the core says about the conversation itself, not an error: a saved one whose model cannot run here now */
-      info?: string[] }
+      /** what the core says about the conversation itself, not an error: a saved one whose model cannot run here now, the
+       * own loop's auto-compaction gone off for the conversation */
+      info?: string[];
+      /** its turn went on under a "Context compacted" divider: this part is done, its steps go on in the block below */
+      cut?: boolean }
   /** what the core says between turns: a model switch that went on in a new session ("continued on X"), a quiet divider */
   | { role: "notice"; text: string };
 /** `text` is the error's message alone ("[404]: … not found."), `raw` the notice as the core wrote it; both empty for a
@@ -99,7 +105,9 @@ export type Message =
 export type Failure = { text: string; raw: string; stopped: boolean; /** the message it answered, for Retry */ ask: string;
   /** stopped by you while a call was being tried again */
   retrying?: boolean };
-export type Usage = { contextPct: number; contextUsed: string; contextMax: string; plan5h: number | null; plan5hReset: string; planWeek: number | null;
+export type Usage = { contextPct: number; contextUsed: string; contextMax: string;
+  /** the model's whole window where the share is of less (`contextMax` usable: the own loop's input room), else empty */
+  contextFull?: string; plan5h: number | null; plan5hReset: string; planWeek: number | null;
   threadCost: number; threadTurns: number; cachedPct: number; saved: number; today: number; todayTurns: number; todaySeries: number[];
   /** SubRouter's balance in dollars, where a key is set */
   balance?: number | null };

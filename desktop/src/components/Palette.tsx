@@ -108,7 +108,7 @@ export function Shortcuts({ onClose, readOnly = false }: { onClose: () => void; 
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim">
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className={`${dialogShell(420)} overflow-y-auto! px-4 py-3`}>
         <div className="mb-2 text-[11.5px] font-medium text-faint">Keyboard shortcuts</div>
-        {readOnly && <p className="mb-2 text-[12px] text-muted">Read-only demo · shortcuts for this preview</p>}
+        {readOnly && <p className="mb-2 text-[12px] text-muted">Read-only demo: shortcuts for this preview</p>}
         {(readOnly ? SHORTCUTS.filter(([k]) => ["⌘K", "⌘/", "⇧Enter", "⌘\\", "⌘⇧L"].includes(k)) : SHORTCUTS).map(([k, what]) => (
           <div key={k} className="flex items-center py-[5px] text-ink-2">
             <span className="flex-1">{what}</span>

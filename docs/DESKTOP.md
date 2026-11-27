@@ -813,6 +813,12 @@ a list cut at nine rows); it scrolls inside, and keeps up to nine rows when the 
 0.1.139: one switch for the work panel: the header's panel button counts the files changed beside its icon, and the
 "Changes" tab on the sheet's edge, which opened the same panel, is gone.
 
+0.1.140 (with tazuna 0.1.235): compaction for conversations on other providers (Compact at 85%, "Compacting" while it
+runs, a "Context compacted" divider, "Compaction failed" when it could not, a Compaction row on the receipt); Settings
+"Auto-compact" covers both; the work panel stays open or shut across conversations and restarts (the sheet over a
+narrow window shuts for the moment only); no middle dots in any text or tooltip; the numbers strip's corners match the
+box's.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

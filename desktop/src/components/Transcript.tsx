@@ -16,7 +16,8 @@ function inlineCode(text: string) {
 }
 
 // one "thinking" from send to the first output (no "starting", then "waiting", then "thinking")
-const doing: Record<string, string> = { Starting: "thinking", Waiting: "thinking", Thinking: "thinking", Writing: "writing", Tool: "working", Verifying: "running the checks" };
+// "Compacting": the view's `compacting` (App passes it as the activity): a summary call, Claude's or the own loop's
+const doing: Record<string, string> = { Starting: "thinking", Waiting: "thinking", Thinking: "thinking", Writing: "writing", Tool: "working", Verifying: "running the checks", Compacting: "compacting" };
 
 type Props = {
   messages: Message[]; busy?: boolean; activity?: string;
@@ -172,7 +173,7 @@ export function Transcript({ messages, activity, jumps = true, ...props }: Props
                   </span>
                 </div>
               )}
-              {m.tools && m.tools.length > 0 && <WorkFold tools={m.tools} secs={m.meta?.secs} live={!!busy && !m.meta} asking={rest.asking} since={rest.since} out={rest.out} liveCall={rest.live} retry={m.retrying ? m.retryAt ?? 0 : undefined} />}
+              {m.tools && m.tools.length > 0 && <WorkFold tools={m.tools} secs={m.meta?.secs} live={!!busy && !m.meta && !m.cut} asking={rest.asking} since={rest.since} out={rest.out} liveCall={rest.live} retry={m.retrying ? m.retryAt ?? 0 : undefined} compacting={activity === "Compacting"} />}
               <div className="prose-answer text-ink">{m.prose.map((p, j) => <Slot key={j} name="message.text" props={{ text: p }} only />)}</div>
               <Slot name="message.after" props={{ message: m, index: hidden + i }} />
             </>
@@ -275,7 +276,7 @@ function useFold(shown: boolean, set: (open: boolean) => void) {
 
 /** A reply's steps as one line, "Worked 41 s · read 2 files, ran 3 commands ›": open while the reply runs, folded once it
  * is done (a click keeps it as chosen). Until desktop 0.1.64 each step was a line of its own above every answer. */
-function WorkFold({ tools, secs, live, asking, since, out, liveCall, retry }: { tools: ToolStep[]; secs?: number; live: boolean; asking?: boolean; since?: number; out?: number; liveCall?: Live | null;
+function WorkFold({ tools, secs, live, asking, since, out, liveCall, retry, compacting }: { tools: ToolStep[]; secs?: number; live: boolean; asking?: boolean; since?: number; out?: number; liveCall?: Live | null; compacting?: boolean;
   /** a call being tried again: when the next try is (epoch ms; 0 where the core does not say) */
   retry?: number }) {
   const [open, setOpen] = useState<boolean | null>(null);
@@ -297,7 +298,7 @@ function WorkFold({ tools, secs, live, asking, since, out, liveCall, retry }: { 
         {live && !asking && <span className="mr-1.5 flex flex-none"><Mark size={MARK_AT_WORK} motion="write" /></span>}
         <span className={`flex-none ${live && asking ? "font-medium text-warn" : ""}`}>{live ? (asking ? "Waiting for you"
           : retry != null ? <><span className="tz-shimmer font-medium">Waiting to retry</span>{retry > 0 && <> <span className="tabular-nums"><Countdown at={retry} /></span></>}</>
-          : <><span className="tz-shimmer font-medium">Working</span>{since && <> <Ticking since={since} /></>}</>) : `Worked${took}`}</span>
+          : <><span className="tz-shimmer font-medium">{compacting ? "Compacting" : "Working"}</span>{since && <> <Ticking since={since} /></>}</>) : `Worked${took}`}</span>
         {live && !asking && <span className="flex flex-none items-center text-faint"><Tokens out={out} live={liveCall} /></span>}
         {what && <span className="flex min-w-0 items-center truncate text-faint"><Sep />{what}</span>}
         {failed > 0 && <span className="flex flex-none items-center text-bad"><Sep />{failed} failed</span>}
@@ -525,7 +526,9 @@ export function MessageMeta({ message: m, index }: { message: Message; index?: n
   // in a plain chat the last answer keeps its line and older ones show theirs on hover or focus, as their actions do
   // (design review 13, D3 of mockups/v10.html: every chat answer's numbers read as noise); an agent's run keeps it, its
   // cost is the work's
-  const quiet = m.chat && index !== lastChatReceipt && !open;
+  // (a reply with no words, a /compact's, has no gap under it to lie in: its line stays in the flow, or it lay over the next
+  // message on hover)
+  const quiet = m.chat && !!text.trim() && index !== lastChatReceipt && !open;
   return (
     // the answer's receipt: one faint line, always there (design review 11, variant A of mockups/v8.html; until then its
     // numbers showed on the answer's hover only), a click unfolds every model call and what it cost. Copy stays on hover

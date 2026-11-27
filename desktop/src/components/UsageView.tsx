@@ -3,7 +3,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "
 import { core, type Accounts, type ClaudeSetup, type ModelChoice, type UsageSource } from "../lib/tazuna";
 import { useDialog } from "../lib/dialog";
 import { RANGES, barName, fieldOf, floorTo, fromField, needOf, perUnit, planName, rangeWords, spanOf, summarize, used, type Bar, type Choice, type Row, type Unit } from "../lib/usage";
-import { modelLabel, pct1, pctText, usd } from "../lib/types";
+import { modelLabel, pct1, pctText, unDot, usd } from "../lib/types";
 import { creditLevel, exactly, fallbackCredit, parseReset, trackedOnly, whenReset, type Credit } from "../lib/health";
 import { Sep } from "./Sep";
 import { MenuRule, PopMenu, Segmented, dialogShell, menuItem, quietButton } from "./Controls";
@@ -373,7 +373,7 @@ function Contributing({ notes }: { notes: string[] }) {
         <div className="border-t border-line-soft pb-1.5">
           <div className="flex items-center gap-3 px-3.5 pb-1 pt-2.5">
             {all.length > 1 && <Segmented label="Period" value={String(all.indexOf(p))} options={all.map((q, i) => [String(i), `Last ${name(q.period)}`] as const)} onChange={(i) => setAt(Number(i))} />}
-            <span className="ml-auto text-[11.5px] tabular-nums text-faint">{p.stats}</span>
+            <span className="ml-auto text-[11.5px] tabular-nums text-faint">{unDot(p.stats)}</span>
           </div>
           {p.items.map((it) => (
             <div key={it.title} className="flex items-center gap-3.5 px-3.5 py-[7px] text-[12.5px]">
