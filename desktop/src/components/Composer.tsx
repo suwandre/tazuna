@@ -73,7 +73,7 @@ type Props = {
   complete?: Completions | null; onComplete?: () => void;
   /** an attached image as a data URL, for its chip's thumbnail */
   onImage?: (path: string) => Promise<string>;
-  /** where the box's text is kept (the conversation's id, or "new:<folder>" before it has one): it comes back after a
+  /** where the box's text is kept (the conversation's id, or "new" before it has one, wherever it is to go): it comes back after a
    * restart, and goes along when the conversation gets its id */
   draftKey?: string;
   /** the window's own commands (`/mcp`, `/model`…): what each does, and what runs when one is taken or sent alone */
@@ -82,6 +82,13 @@ type Props = {
 };
 
 export const DRAFT = "tazuna.draft.";
+// drafts kept per place before desktop 0.1.142 ("new:<folder>", "new:chat"): the first one left becomes the one draft
+try {
+  if (typeof localStorage !== "undefined" && !localStorage.getItem(`${DRAFT}new`)) {
+    const old = Object.keys(localStorage).find((k) => k.startsWith(`${DRAFT}new:`) && localStorage.getItem(k));
+    if (old) { localStorage.setItem(`${DRAFT}new`, localStorage.getItem(old)!); localStorage.removeItem(old); }
+  }
+} catch { /* storage unavailable */ }
 /** The window event that opens the box's model picker (once no reply runs): `window.dispatchEvent(new Event(PICK_MODEL))`. */
 export const PICK_MODEL = "tazuna-pick-model";
 const DRAFT_FILES = "tazuna.draft-files.";

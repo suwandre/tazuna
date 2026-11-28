@@ -826,6 +826,9 @@ at most every 15 minutes with the window's own sign-in; only the numbers leave t
 short usage lines on the usage page alone, every digit masked; Forget sign-in removes them. A signed-out reading says
 "sign in again"; nothing is read before a sign-in or after Forget.
 
+0.1.142: a conversation not started yet keeps one draft wherever it is to go: changing Chat to a folder and back keeps
+the words in the box (each place had its own, and switching swapped them).
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

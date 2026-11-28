@@ -99,7 +99,9 @@ function useCore(onDraftRejected: (draft: SendDraft) => void) {
   // one selected, the one a click on that row shows (not a second copy)
   const earlier = useRef<Record<string, string[]>>({});
   const idsOf = (t: Thread) => sessionIds(t.view, earlier.current[t.tid]);
-  const draftKeyOf = (t: Thread) => idsOf(t)[0] ?? t.resume ?? `new:${t.folder ?? "chat"}`;
+  // a conversation not started yet has one draft wherever it is to go: changing Chat to a folder and back keeps the words
+  // in the box (one per place swapped them, the user 2026-11-28); a started one keeps its own under its id
+  const draftKeyOf = (t: Thread) => idsOf(t)[0] ?? t.resume ?? "new";
   // the window's queue: when its last message went (and how many of yours the view had then), and the wait set for the next
   const sent = useRef<Record<string, { prompts: number; at: number }>>({});
   // each running reply's clock (`clockOf`), from every view of its conversation
@@ -518,7 +520,7 @@ export default function App() {
   const editPanel = (id: string) => {
     widgets.path(id).then((path) => {
       // the new conversation's box starts with this (its draft, before it has an id)
-      localStorage.setItem(`${DRAFT}new:${path}`, "Change this panel: ");
+      localStorage.setItem(`${DRAFT}new`, "Change this panel: ");
       open(path, undefined, { creator: "edit", then: (tid) => { core.allowRootIn(tid, path).catch(() => {}); } });
     }).catch(() => {});
   };
